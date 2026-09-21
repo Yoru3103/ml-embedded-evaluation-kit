@@ -114,7 +114,7 @@ def download_file(
 
 
 def call_command(
-        command: str,
+        command: typing.Union[str, typing.Sequence[str]],
         buffer_logs: bool = False,
         capture_output: bool = True,
         **kwargs
@@ -124,7 +124,7 @@ def call_command(
 
     Parameters:
     ----------
-    command (string):       Specifies the command to run.
+    command (str or sequence): Command to run. Sequences bypass the shell.
     buffer_logs (bool):     When True, output will be buffered and written to the log
                             when the command has finished running.
                             When False, output will be written to the log
@@ -137,7 +137,7 @@ def call_command(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        shell=True,
+        shell=isinstance(command, str),
         text=True,
         **kwargs
     ) as proc:

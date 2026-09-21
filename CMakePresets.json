@@ -6,6 +6,7 @@
         "patch": 0
     },
     "include": [
+        "scripts/cmake/windows-presets.json",
         "scripts/cmake/configuration_options/options-preset.json",
         "scripts/cmake/platforms/platforms-preset.json",
         "scripts/cmake/toolchains/toolchain-preset.json",

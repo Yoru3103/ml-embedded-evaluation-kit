@@ -1,0 +1,81 @@
+{
+    "version": 4,
+    "configurePresets": [
+        {
+            "name": "windows-mps4-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "TARGET_PLATFORM": "mps4",
+                "TARGET_SUBSYSTEM": "sse-320",
+                "FPGA_PLATFORM_SSE_320": true,
+                "ML_FRAMEWORK": "tflm",
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true,
+                "RESOURCES_PATH": "${sourceDir}/resources_downloaded/windows",
+                "MLEK_PYTHON_VENV": "${sourceDir}/resources_downloaded/windows/env"
+            },
+            "environment": {
+                "PATH": "${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+            }
+        },
+        {
+            "name": "windows-ac6-mps4",
+            "inherits": "windows-mps4-base",
+            "displayName": "Windows MPS4 SSE-320 / AC6 / TFLM",
+            "toolchainFile": "${sourceDir}/scripts/cmake/toolchains/bare-metal-armclang.cmake",
+            "environment": {
+                "PATH": "$env{MLEK_AC6_BIN};${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+            }
+        },
+        {
+            "name": "windows-atfe-mps4",
+            "inherits": "windows-mps4-base",
+            "displayName": "Windows MPS4 SSE-320 / ATfE / TFLM",
+            "toolchainFile": "${sourceDir}/scripts/cmake/toolchains/bare-metal-llvm.cmake",
+            "environment": {
+                "PATH": "$env{MLEK_ATFE_BIN};${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+            }
+        },
+        {
+            "name": "windows-ac6-fvp",
+            "inherits": "windows-ac6-mps4",
+            "displayName": "Windows SSE-320 FVP / AC6 / TFLM",
+            "cacheVariables": {
+                "FPGA_PLATFORM_SSE_320": false
+            }
+        },
+        {
+            "name": "windows-atfe-fvp",
+            "inherits": "windows-atfe-mps4",
+            "displayName": "Windows SSE-320 FVP / ATfE / TFLM",
+            "cacheVariables": {
+                "FPGA_PLATFORM_SSE_320": false
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-ac6-mps4",
+            "configurePreset": "windows-ac6-mps4"
+        },
+        {
+            "name": "windows-atfe-mps4",
+            "configurePreset": "windows-atfe-mps4"
+        },
+        {
+            "name": "windows-ac6-fvp",
+            "configurePreset": "windows-ac6-fvp"
+        },
+        {
+            "name": "windows-atfe-fvp",
+            "configurePreset": "windows-atfe-fvp"
+        }
+    ]
+}

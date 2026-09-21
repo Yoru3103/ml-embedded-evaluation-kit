@@ -19,7 +19,6 @@ import fnmatch
 import itertools
 import logging
 import os
-import shlex
 import tempfile
 import typing
 from pathlib import Path
@@ -87,26 +86,21 @@ def run_vela(
         optimized_model_path.unlink()
 
     work_parent_dir.mkdir(parents=True, exist_ok=True)
-    vela_exe = python_env.bin_dir / "vela"
 
     with tempfile.TemporaryDirectory(
             prefix=f"{model.stem}_",
             dir=work_parent_dir,
     ) as work_dir_name:
         work_dir = Path(work_dir_name)
-        vela_args = " ".join(
-            shlex.quote(arg)
-            for arg in optimizer_config.to_vela_cli_args(config.memory_mode)
-        )
-        vela_command = (
-            f'"{vela_exe}" {shlex.quote(str(model))} '
-            + f"--accelerator-config={config.config_name} "
-            + "--optimise Performance "
-            + f"--memory-mode={config.memory_mode} "
-            + f"--system-config={config.system_config} "
-            + f"--output-dir={shlex.quote(str(work_dir))} "
-            + vela_args
-        )
+        vela_command = [
+            str(python_env.python), "-m", "ethosu.vela", str(model),
+            f"--accelerator-config={config.config_name}",
+            "--optimise", "Performance",
+            f"--memory-mode={config.memory_mode}",
+            f"--system-config={config.system_config}",
+            f"--output-dir={work_dir}",
+            *optimizer_config.to_vela_cli_args(config.memory_mode),
+        ]
 
         call_command(vela_command, buffer_logs=True)
 
@@ -116,7 +110,8 @@ def run_vela(
                 f"{vela_output.suffix}"
             )
             logging.info("Renaming %s to %s.", vela_output.name, new_file_name)
-            vela_output.rename(output_dir / new_file_name)
+            # Windows rename refuses existing reports when a model is rebuilt.
+            vela_output.replace(output_dir / new_file_name)
     try:
         work_parent_dir.rmdir()
     except OSError:

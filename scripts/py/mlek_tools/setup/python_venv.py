@@ -18,7 +18,6 @@
 PythonEnv dataclass and helper for creating Python virtual environments.
 """
 import os
-import shlex
 import subprocess
 import sys
 import typing
@@ -114,7 +113,7 @@ class PythonEnv:
         process_environment = os.environ.copy()
         if environment is not None:
             process_environment.update(environment)
-        call_command(shlex.join(command), env=process_environment)
+        call_command(command, env=process_environment)
 
     def pip_install_if_needed(
             self,

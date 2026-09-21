@@ -19,6 +19,18 @@ include_guard()
 
 set(SCRIPTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/scripts)
 
+# Quote this value at command call sites: Windows uses a semicolon path list.
+if(CMAKE_HOST_WIN32)
+    set(MLEK_PYTHONPATH_SEPARATOR ";")
+else()
+    set(MLEK_PYTHONPATH_SEPARATOR ":")
+endif()
+set(MLEK_GENERATOR_PYTHONPATH "${CMAKE_CURRENT_LIST_DIR}/../py")
+if(NOT "$ENV{PYTHONPATH}" STREQUAL "")
+    string(APPEND MLEK_GENERATOR_PYTHONPATH
+        "${MLEK_PYTHONPATH_SEPARATOR}$ENV{PYTHONPATH}")
+endif()
+
 ##############################################################################
 # This function generates C++ files for images located in the directory it is
 # pointed at. NOTE: uses python
@@ -32,7 +44,7 @@ function(generate_images_code input_dir gen_dir img_size)
     message(STATUS "Generating image files from ${input_dir_abs}")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
-            PYTHONPATH=${MLEK_SCRIPTS_DIR}/py:$ENV{PYTHONPATH}
+            "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
             ${PYTHON} -m mlek_tools.gen.gen_rgb_cpp
             --image_path ${input_dir_abs}
             --package_gen_dir ${gen_out_abs}
@@ -60,7 +72,7 @@ function(generate_audio_code input_dir gen_dir s_rate_opt mono_opt off_opt durat
     message(STATUS "Generating audio files from ${input_dir_abs}")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
-            PYTHONPATH=${MLEK_SCRIPTS_DIR}/py:$ENV{PYTHONPATH}
+            "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
             ${PYTHON} -m mlek_tools.gen.gen_audio_cpp
             --audio_path ${input_dir_abs}
             --package_gen_dir ${gen_dir_abs}
@@ -125,7 +137,7 @@ function(generate_model_code)
 
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
-            PYTHONPATH=${MLEK_SCRIPTS_DIR}/py:$ENV{PYTHONPATH}
+            "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
             ${PYTHON} -m mlek_tools.gen.gen_model_cpp
             --model_path ${ABS_MODEL_PATH}
             --output_dir ${ABS_DESTINATION} ${py_arg_exp}
@@ -170,7 +182,7 @@ function(generate_labels_code)
     message(STATUS "writing to ${hdr_out_abs}/${PARSED_OUTPUT_FILENAME}.hpp and ${src_out_abs}/${PARSED_OUTPUT_FILENAME}.cc")
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
-            PYTHONPATH=${MLEK_SCRIPTS_DIR}/py:$ENV{PYTHONPATH}
+            "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
             ${PYTHON} -m mlek_tools.gen.gen_labels_cpp
             --labels_file ${input_abs}
             --source_folder_path ${src_out_abs}
@@ -237,7 +249,7 @@ function(generate_test_data_code)
         message(STATUS "Generating test ifm and ofm files from ${input_dir_abs}")
         execute_process(
             COMMAND ${CMAKE_COMMAND} -E env
-                PYTHONPATH=${MLEK_SCRIPTS_DIR}/py:$ENV{PYTHONPATH}
+                "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
                 ${PYTHON} -m mlek_tools.gen.gen_test_data_cpp
                 --data_folder_path ${input_dir_abs}
                 --source_folder_path ${src_out_abs}
@@ -262,24 +274,25 @@ function(setup_source_generator)
     # If a virtual env has been created in the resources_downloaded directory,
     # use it for source generator. Else, fall back to creating a virtual env
     # in the current build directory.
-    if (EXISTS ${RESOURCES_PATH}/env)
+    if(CMAKE_HOST_WIN32)
+        set(PYTHON_RELATIVE_PATH "Scripts/python.exe")
+    else()
+        set(PYTHON_RELATIVE_PATH "bin/python3")
+    endif()
+
+    if (DEFINED MLEK_PYTHON_VENV)
+        set(DEFAULT_VENV_DIR "${MLEK_PYTHON_VENV}")
+    elseif (EXISTS "${RESOURCES_PATH}/env/${PYTHON_RELATIVE_PATH}")
         set(DEFAULT_VENV_DIR ${RESOURCES_PATH}/env)
     else()
         set(DEFAULT_VENV_DIR ${CMAKE_BINARY_DIR}/venv)
     endif()
 
-    if (${CMAKE_HOST_WIN32})
-        # Windows Python3 is python.exe
-        set(PY_EXEC python)
-        set(PYTHON ${DEFAULT_VENV_DIR}/Scripts/${PY_EXEC})
-    else()
-        set(PY_EXEC python3)
-        set(PYTHON ${DEFAULT_VENV_DIR}/bin/${PY_EXEC})
-    endif()
+    set(PYTHON "${DEFAULT_VENV_DIR}/${PYTHON_RELATIVE_PATH}")
     set(PYTHON ${PYTHON} PARENT_SCOPE)
     set(PYTHON_VENV ${DEFAULT_VENV_DIR} PARENT_SCOPE)
 
-    if (EXISTS ${PYTHON})
+    if (EXISTS "${PYTHON}")
         message(STATUS "Using existing python at ${PYTHON}")
         return()
     endif ()
