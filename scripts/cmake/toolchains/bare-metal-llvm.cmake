@@ -18,6 +18,9 @@
 # specify the cross compiler
 set(CMAKE_C_COMPILER                clang)
 set(CMAKE_CXX_COMPILER              clang)
+find_program(LLVM_OBJCOPY_EXECUTABLE
+    NAMES llvm-objcopy
+    REQUIRED)
 set(LINKER_SCRIPT_SUFFIX            ".llvm.ld")
 set(CMAKE_C_LINKER_PREFERENCE       clang)
 set(CMAKE_ASM_LINKER_PREFERENCE     clang)
@@ -176,7 +179,7 @@ function(add_bin_generation_command)
 
         add_custom_command(TARGET ${PARSED_TARGET_NAME}
             POST_BUILD
-            COMMAND llvm-objcopy -O binary
+            COMMAND ${LLVM_OBJCOPY_EXECUTABLE} -O binary
             --only-section ${SECTION_PATTERN} ${PARSED_AXF_PATH}
             ${PARSED_OUTPUT_DIR}/${OUTPUT_BIN_NAME})
     endforeach()
