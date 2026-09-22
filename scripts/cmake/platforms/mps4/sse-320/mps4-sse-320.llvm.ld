@@ -70,6 +70,8 @@ SECTIONS
         . = ALIGN(8);
 
         /* contructors and destructors */
+        /* Picolibc in ATFE 22 traverses the combined initializer range. */
+        PROVIDE_HIDDEN (__bothinit_array_start = .);
         PROVIDE_HIDDEN (__preinit_array_start = .);
         KEEP(*(.preinit_array))
         PROVIDE_HIDDEN (__preinit_array_end = .);
@@ -79,6 +81,7 @@ SECTIONS
         KEEP(*(SORT(.init_array.*) SORT(.ctors.*)))
         KEEP(*(.init_array .ctors))
         PROVIDE_HIDDEN (__init_array_end = .);
+        PROVIDE_HIDDEN (__bothinit_array_end = .);
 
         . = ALIGN(4);
         PROVIDE_HIDDEN (__fini_array_start = .);
@@ -90,7 +93,11 @@ SECTIONS
     .lcxx_override.at_bram :
     {
         . = ALIGN(8);
-        *(__lcxx_override*)
+        /* This output section is renamed, so define libc++'s boundaries
+         * explicitly and retain its overridable functions under gc-sections. */
+        __start___lcxx_override = .;
+        KEEP(*(__lcxx_override*))
+        __stop___lcxx_override = .;
         . = ALIGN(8);
     } > BRAM AT > BRAM
 

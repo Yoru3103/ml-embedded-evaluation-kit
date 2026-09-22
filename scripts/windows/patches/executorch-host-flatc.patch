@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-License-Identifier: Apache-2.0
+
+diff --git a/third-party/CMakeLists.txt b/third-party/CMakeLists.txt
+--- a/third-party/CMakeLists.txt
++++ b/third-party/CMakeLists.txt
+@@ -22,4 +22,11 @@
+ # MARK: - flatbuffers
+ 
++if(CMAKE_HOST_WIN32 AND DEFINED MLEK_HOST_FLATC)
++  if(NOT EXISTS "${MLEK_HOST_FLATC}")
++    message(FATAL_ERROR "MLEK_HOST_FLATC does not exist: ${MLEK_HOST_FLATC}")
++  endif()
++  add_executable(flatc IMPORTED GLOBAL)
++  set_target_properties(flatc PROPERTIES IMPORTED_LOCATION "${MLEK_HOST_FLATC}")
++else()
+ if(WIN32)
+   set(_executorch_external_project_additional_args)
+@@ -72,4 +79,5 @@
+ endif()
+ 
++endif()
+ # TODO: re-enable once flatbuffers is added as a subdirectory.
+ # set(FLATBUFFERS_BUILD_FLATC OFF) set(FLATBUFFERS_INSTALL OFF)

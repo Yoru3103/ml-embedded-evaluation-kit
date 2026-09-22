@@ -14,9 +14,11 @@ VS Code 编辑 → CMake/Ninja → Arm 编译器 → AXF → Arm DS 加载调试
 AC6 6.24 与 ATfE Pro 22.1 是不同编译器，不得共用 CMakeCache 或混用链接器。
 编译、链接成功不代表已经通过 MPS4 实板运行验收。
 
-当前官方 `scripts/cmake/executorch.cmake` 明确拒绝 ARMClang；
-`scripts/py/mlek_tools/setup/install.py` 明确不支持 Windows ExecuTorch 安装。
-本分支不宣称支持 Windows ExecuTorch/PTE 全流程，相关迁移需要单独验证。
+ExecuTorch 使用独立的 `scripts/windows/build-executorch.ps1`，选择 GNU 或 ATFE，
+不使用 AC6。完整操作步骤、模型输入要求和验证限制见
+[Windows ExecuTorch 使用教程](windows_executorch.md)。
+原有 `set_up_default_resources.py` 的 ExecuTorch 安装/导出流程仍面向 Linux/macOS；  
+新的 Windows 脚本接受预先导出的 PTE，不把 PT checkpoint 自动转换成 PTE。
 
 ## 安装与克隆
 

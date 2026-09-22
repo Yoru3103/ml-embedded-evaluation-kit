@@ -84,7 +84,10 @@ block(SCOPE_FOR VARIABLES)
 
     # Set FLATC location - this should always be available (built for host)
     # or else a build will be attempted.
-    if (EXISTS ${PYTHON_VENV}/bin/flatc)
+    if (CMAKE_HOST_WIN32 AND EXISTS "${PYTHON_VENV}/Scripts/flatc.exe")
+        set(FLATC_EXECUTABLE "${PYTHON_VENV}/Scripts/flatc.exe")
+        set(MLEK_HOST_FLATC "${FLATC_EXECUTABLE}")
+    elseif (EXISTS ${PYTHON_VENV}/bin/flatc)
         set(FLATC_EXECUTABLE "${PYTHON_VENV}/bin/flatc")
     else()
         message(FATAL_ERROR "flatc executable doesn't exist")

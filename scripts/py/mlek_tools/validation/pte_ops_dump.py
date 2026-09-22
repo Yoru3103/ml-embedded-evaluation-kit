@@ -39,7 +39,7 @@ def _ensure_flatc_on_path() -> None:
     """
     venv_bin = Path(sys.executable).resolve().parent
     if str(venv_bin) not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = f"{venv_bin}:{os.environ.get('PATH', '')}"
+        os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
 def _load_pte_program(buf: bytes):

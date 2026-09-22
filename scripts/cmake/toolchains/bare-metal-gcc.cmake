@@ -124,7 +124,7 @@ endfunction()
 # Function to add a map file output for the linker to dump diagnostic information to.
 function(add_target_map_file TARGET_NAME MAP_FILE_PATH)
     target_link_options(${TARGET_NAME} PUBLIC
-        "SHELL:-Xlinker -Map=${MAP_FILE_PATH}")
+        "-Wl,-Map,${MAP_FILE_PATH}")
 endfunction()
 
 # Function to add linker option to use the chosen linker script.
@@ -135,7 +135,7 @@ function(add_linker_script TARGET_NAME LINKER_SCRIPT_PATH)
 
     message(STATUS "Using linker script: ${LINKER_SCRIPT_PATH}")
     target_link_options(${TARGET_NAME} PUBLIC
-        "SHELL:-T ${LINKER_SCRIPT_PATH}")
+        "-T${LINKER_SCRIPT_PATH}")
     set_target_properties(${TARGET_NAME}
         PROPERTIES
         LINK_DEPENDS "${LINKER_SCRIPT_PATH}")
@@ -171,7 +171,8 @@ function(add_bin_generation_command)
             POST_BUILD
             COMMAND ${TRIPLET}-objcopy -O binary
             --only-section ${SECTION_PATTERN} ${PARSED_AXF_PATH}
-            ${PARSED_OUTPUT_DIR}/${OUTPUT_BIN_NAME})
+            ${PARSED_OUTPUT_DIR}/${OUTPUT_BIN_NAME}
+            VERBATIM)
     endforeach()
 
 endfunction()
