@@ -22,7 +22,7 @@
                 "MLEK_PYTHON_VENV": "${sourceDir}/resources_downloaded/windows/env"
             },
             "environment": {
-                "PATH": "${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+                "PATH": "${sourceDir}/resources_downloaded/windows-tools/env/Scripts;${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
             }
         },
         {
@@ -31,7 +31,7 @@
             "displayName": "Windows MPS4 SSE-320 / AC6 / TFLM",
             "toolchainFile": "${sourceDir}/scripts/cmake/toolchains/bare-metal-armclang.cmake",
             "environment": {
-                "PATH": "$env{MLEK_AC6_BIN};${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+                "PATH": "$env{MLEK_AC6_BIN};${sourceDir}/resources_downloaded/windows-tools/env/Scripts;${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
             }
         },
         {
@@ -40,7 +40,7 @@
             "displayName": "Windows MPS4 SSE-320 / ATfE / TFLM",
             "toolchainFile": "${sourceDir}/scripts/cmake/toolchains/bare-metal-llvm.cmake",
             "environment": {
-                "PATH": "$env{MLEK_ATFE_BIN};${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
+                "PATH": "$env{MLEK_ATFE_BIN};${sourceDir}/resources_downloaded/windows-tools/env/Scripts;${sourceDir}/resources_downloaded/windows/env/Scripts;$penv{PATH}"
             }
         },
         {

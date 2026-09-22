@@ -6,7 +6,7 @@ Prepare native Windows ExecuTorch tools and cross-compile a supplied PTE model.
 .DESCRIPTION
 Run Setup once, then Configure or Build. Model export is a separate step.
 Use GNU Arm Embedded (arm-none-eabi), or ATFE. AC6 is unsupported by ExecuTorch.
-All generated files, caches and temporary files stay on D:.
+CMake and Ninja are shared with the TFLM Windows build script.
 #>
 [CmdletBinding()]
 param(
@@ -18,6 +18,9 @@ param(
     [string]$ModelPath,
     [string]$InputPath,
     [string]$LabelsPath,
+    [ValidateRange(1, 4096)][int]$ImageSize = 0,
+    [ValidateRange(1, 1000)][int]$NumClasses = 0,
+    [string]$ActivationBufferSize,
     [string]$BuildDirectory,
     [ValidateSet('Dedicated_Sram', 'Shared_Sram')][string]$MemoryMode = 'Dedicated_Sram',
     [ValidateRange(1, 128)][int]$Jobs = 4,
@@ -25,12 +28,6 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
-if ($repoRoot -notmatch '^D:[\\/]') {
-    throw 'Use a native Windows checkout on D:, for example D:\work\mlek-client.'
-}
-if ($UseCase -eq 'yolov8_detection') {
-    throw 'YOLOv8 is reserved for reimplementation; its old Alif APIs were removed. Use img_class with a matching PTE.'
-}
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
     if ($argument -notmatch '^-D[A-Za-z0-9_]+(?::[A-Za-z]+)?=') {
@@ -44,14 +41,19 @@ $resourceDir = Join-Path $repoRoot 'resources_downloaded/windows-executorch'
 $venvDir = Join-Path $resourceDir 'env'
 $binDir = Join-Path $venvDir 'Scripts'
 $python = Join-Path $binDir 'python.exe'
-$cmake = Join-Path $binDir 'cmake.exe'
+$toolsVenvDir = Join-Path $repoRoot 'resources_downloaded/windows-tools/env'
+$venvHelper = Join-Path $PSScriptRoot 'windows-venv.ps1'
+. $venvHelper
 if (-not $BuildDirectory) {
     $BuildDirectory = Join-Path $repoRoot "build/windows-$Toolchain-et-$Target-$UseCase-$MemoryMode"
+} elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
+    $BuildDirectory = Join-Path $repoRoot $BuildDirectory
 }
 $BuildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
-if ($BuildDirectory -notmatch '^D:[\\/]') { throw 'BuildDirectory must be on D:.' }
 $savedEnvironment = @{}
-foreach ($name in @('PATH', 'TEMP', 'TMP', 'PIP_CACHE_DIR', 'PYTHONPATH')) {
+foreach ($name in @(
+        'PATH', 'TEMP', 'TMP', 'PIP_CACHE_DIR', 'PYTHONPATH',
+        'PYTHONHOME', 'VIRTUAL_ENV', 'PIP_CONFIG_FILE', 'SSLKEYLOGFILE')) {
     $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 function Invoke-Checked {
@@ -64,6 +66,12 @@ try {
     $env:TEMP = Join-Path $resourceDir 'tmp'
     $env:TMP = $env:TEMP
     $env:PIP_CACHE_DIR = Join-Path $resourceDir 'pip-cache'
+    $env:PYTHONHOME = $null
+    $env:VIRTUAL_ENV = $null
+    $env:PIP_CONFIG_FILE = $null
+    # Some managed Windows installations set this to a non-writable path.
+    # Python's ensurepip inherits it and may fail while creating the venv.
+    $env:SSLKEYLOGFILE = $null
     New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
     $env:PATH = "$binDir;$env:PATH"
     $env:PYTHONPATH = Join-Path $repoRoot 'scripts/py'
@@ -77,17 +85,23 @@ try {
         throw "This Windows setup is pinned to ExecuTorch 1.3.1; source reports $version."
     }
     if ($Action -in @('Setup', 'All')) {
-        if (-not (Test-Path -LiteralPath $python)) {
-            Invoke-Checked 'py' @('-3.12', '-m', 'venv', $venvDir)
-        }
+        $buildTools = Ensure-WindowsBuildTools -ToolsVenvDir $toolsVenvDir
+        $env:PATH = "$($buildTools.BinDir);$binDir;$env:PATH"
+        # This is the independent Torch/ExecuTorch environment.
+        Ensure-WindowsVenv -VenvDir $venvDir | Out-Null
         Invoke-Checked $python @('-m', 'pip', 'install',
-            'cmake==3.30.5', 'ninja==1.11.1.3', 'executorch==1.3.1',
+            'executorch==1.3.1',
             'torch==2.12.0', 'torchao==0.17.0', '-e', (Join-Path $repoRoot 'scripts/py'))
+        # CMake and Ninja live only in the shared Windows tools environment.
+        Invoke-Checked $python @('-m', 'pip', 'uninstall', '-y', 'cmake', 'ninja')
         Invoke-Checked $python @('-m', 'pip', 'check')
     }
-    if (-not (Test-Path -LiteralPath $python)) { throw 'Run -Action Setup first.' }
+    $buildTools = Get-WindowsBuildTools -ToolsVenvDir $toolsVenvDir
+    $cmake = $buildTools.CMake
+    $env:PATH = "$($buildTools.BinDir);$binDir;$env:PATH"
+    if (-not (Test-WindowsVenv -Python $python)) { throw 'Run -Action Setup first.' }
     Invoke-Checked $python @('-c',
-        'import importlib.metadata as m; assert m.version("executorch") == "1.3.1"; assert m.version("torch").split("+")[0] == "2.12.0"; from executorch.exir._serialize import _deserialize_pte_binary; import torchgen')
+        "import importlib.metadata as m; assert m.version('executorch') == '1.3.1'; assert m.version('torch').split('+')[0] == '2.12.0'; from executorch.exir._serialize import _deserialize_pte_binary; import torchgen")
     Invoke-Checked (Join-Path $binDir 'flatc.exe') @('--version')
     if ($Action -eq 'Setup') { return }
     foreach ($dependency in @('flatbuffers', 'flatcc', 'gflags', 'json')) {
@@ -110,15 +124,9 @@ try {
     if ([IO.Path]::GetExtension($ModelPath) -ine '.pte') {
         throw 'ModelPath must be .pte. A .pt checkpoint must be exported before compilation.'
     }
-    if (-not $CompilerBin) {
-        if ($Toolchain -eq 'GNU') {
-            $CompilerBin = $env:MLEK_GNU_BIN
-        } else {
-            $CompilerBin = 'D:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
-        }
-    }
-    if (-not $CompilerBin) { throw 'Set -CompilerBin or MLEK_GNU_BIN to the arm-none-eabi toolchain bin directory.' }
-    $CompilerBin = (Resolve-Path -LiteralPath $CompilerBin).ProviderPath
+    $CompilerBin = Resolve-WindowsToolchainBin `
+        -Toolchain $Toolchain `
+        -CompilerBin $CompilerBin
     $compiler = if ($Toolchain -eq 'GNU') { 'arm-none-eabi-gcc.exe' } else { 'clang.exe' }
     $requiredTools = if ($Toolchain -eq 'GNU') {
         @($compiler, 'arm-none-eabi-g++.exe', 'arm-none-eabi-objcopy.exe')
@@ -154,19 +162,35 @@ try {
         }
     }
     $fpga = if ($Target -eq 'FPGA') { 'ON' } else { 'OFF' }
+    $ninjaPath = $buildTools.Ninja.Replace('\', '/')
     $argsList = @('-S', $repoRoot, '-B', $BuildDirectory, '-G', 'Ninja',
         "-DCMAKE_TOOLCHAIN_FILE=$toolchainFile", '-DCMAKE_BUILD_TYPE=Debug',
+        "-DCMAKE_MAKE_PROGRAM=$ninjaPath",
         '-DTARGET_PLATFORM=mps4', '-DTARGET_SUBSYSTEM=sse-320',
         "-DFPGA_PLATFORM_SSE_320=$fpga", '-DML_FRAMEWORK=executorch',
         "-DMLEK_PYTHON_VENV=$($venvDir.Replace('\', '/'))",
         "-DRESOURCES_PATH=$($resourceDir.Replace('\', '/'))",
         "-DETHOS_U_NPU_MEMORY_MODE=$MemoryMode", "-DUSE_CASE_BUILD=$UseCase",
         "-D${UseCase}_MODEL_PATH=$ModelPath", '-DUSE_SINGLE_INPUT=ON')
+    if (-not $InputPath -and $UseCase -eq 'yolov8_detection') {
+        # Pass the repository sample directory explicitly so an old CMake cache
+        # cannot retain the removed 20260827_Model path.
+        $InputPath = Join-Path $repoRoot 'resources/gesture_detection/samples'
+    }
     if ($InputPath) {
         $argsList += "-D${UseCase}_FILE_PATH=$((Resolve-Path -LiteralPath $InputPath).ProviderPath.Replace('\', '/'))"
     }
     if ($LabelsPath) {
-        $argsList += "-D${UseCase}_LABELS_TXT_FILE=$((Resolve-Path -LiteralPath $LabelsPath).ProviderPath.Replace('\', '/'))"
+        $argsList += "-D${UseCase}_LABELS_YAML_FILE=$((Resolve-Path -LiteralPath $LabelsPath).ProviderPath.Replace('\', '/'))"
+    }
+    if ($ImageSize -gt 0) {
+        $argsList += "-D${UseCase}_IMAGE_SIZE=$ImageSize"
+    }
+    if ($NumClasses -gt 0) {
+        $argsList += "-D${UseCase}_NUM_CLASSES=$NumClasses"
+    }
+    if ($ActivationBufferSize) {
+        $argsList += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
     $argsList += $CMakeArgs
     Invoke-Checked $cmake $argsList

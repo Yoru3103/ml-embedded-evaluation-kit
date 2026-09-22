@@ -5,7 +5,8 @@
 Prepare resources or build TFLM firmware on native Windows for Arm DS.
 .DESCRIPTION
 Setup requires Python 3.12 via the Windows py launcher. Configure and Build
-reuse that environment. AC6 and ATfE use separate build directories.
+reuse that environment. CMake and Ninja are shared with the ExecuTorch script.
+AC6 and ATfE use separate build directories.
 #>
 [CmdletBinding()]
 param(
@@ -15,19 +16,32 @@ param(
     [string]$UseCase = 'img_class',
     [string]$CompilerBin,
     [string]$ModelPath,
+    [string]$InputPath,
+    [string]$LabelsPath,
+    [ValidateRange(1, 4096)][int]$ImageSize = 0,
+    [ValidateRange(1, 1000)][int]$NumClasses = 0,
+    [string]$ActivationBufferSize,
     [string]$BuildDirectory,
     [ValidateRange(1, 128)][int]$Jobs = 4
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
 $resourceDir = Join-Path $repoRoot 'resources_downloaded/windows'
+$venvDir = Join-Path $resourceDir 'env'
 $venvPython = Join-Path $resourceDir 'env/Scripts/python.exe'
+$toolsVenvDir = Join-Path $repoRoot 'resources_downloaded/windows-tools/env'
+$venvHelper = Join-Path $PSScriptRoot 'windows-venv.ps1'
+. $venvHelper
 $originalPath = $env:PATH
 $originalAc6 = $env:MLEK_AC6_BIN
 $originalAtfe = $env:MLEK_ATFE_BIN
 $originalTemp = $env:TEMP
 $originalTmp = $env:TMP
 $originalPipCache = $env:PIP_CACHE_DIR
+$originalPythonHome = $env:PYTHONHOME
+$originalVirtualEnv = $env:VIRTUAL_ENV
+$originalPipConfig = $env:PIP_CONFIG_FILE
+$originalSslKeylogFile = $env:SSLKEYLOGFILE
 
 function Invoke-Checked {
     param([string]$Executable, [string[]]$Arguments)
@@ -43,36 +57,41 @@ try {
     $env:TEMP = Join-Path $resourceDir 'tmp'
     $env:TMP = $env:TEMP
     $env:PIP_CACHE_DIR = Join-Path $resourceDir 'pip-cache'
+    $env:PYTHONHOME = $null
+    $env:VIRTUAL_ENV = $null
+    $env:PIP_CONFIG_FILE = $null
+    # Some managed Windows installations set this to a non-writable path.
+    # Python's ensurepip inherits it and may fail while creating the venv.
+    $env:SSLKEYLOGFILE = $null
     New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
     if ($Action -in @('Setup', 'All')) {
-        # A separate Windows environment never overwrites a WSL virtualenv.
-        Invoke-Checked 'py' @('-3.12', '-m', 'venv', (Join-Path $resourceDir 'env'))
-        Invoke-Checked $venvPython @('-m', 'pip', 'install', 'cmake==3.30.5', 'ninja==1.11.1.3')
-        Invoke-Checked $venvPython @(
-            'set_up_default_resources.py', '--ml-framework', 'tflm',
-            '--use-case', $UseCase, '--downloads-dir', $resourceDir,
-            '--additional-npu-config-name', 'ethos-u85-1024:Dedicated_Sram',
-            '--parallel', "$Jobs"
-        )
+        $buildTools = Ensure-WindowsBuildTools -ToolsVenvDir $toolsVenvDir
+        $env:PATH = "$($buildTools.BinDir);$originalPath"
+        # This is the independent TFLM/TFLite environment.
+        Ensure-WindowsVenv -VenvDir $venvDir | Out-Null
+        if ($UseCase -eq 'yolov8_detection') {
+            # YOLOv8 uses caller-supplied model, image and labels rather than
+            # an entry in use_case_resources.json.
+            Invoke-Checked $venvPython @('-m', 'pip', 'install', '-e', 'scripts/py[tflite]')
+        } else {
+            Invoke-Checked $venvPython @(
+                'set_up_default_resources.py', '--ml-framework', 'tflm',
+                '--use-case', $UseCase, '--downloads-dir', $resourceDir,
+                '--additional-npu-config-name', 'ethos-u85-1024:Dedicated_Sram',
+                '--parallel', "$Jobs"
+            )
+        }
+        # CMake and Ninja live only in the shared Windows tools environment.
+        Invoke-Checked $venvPython @('-m', 'pip', 'uninstall', '-y', 'cmake', 'ninja')
     }
+    $buildTools = Get-WindowsBuildTools -ToolsVenvDir $toolsVenvDir
     if ($Action -eq 'Setup') { return }
-    if (-not (Test-Path -LiteralPath $venvPython)) {
+    if (-not (Test-WindowsVenv -Python $venvPython)) {
         throw 'Windows Python environment missing. Run this script with -Action Setup first.'
     }
-    if (-not $CompilerBin) {
-        if ($Toolchain -eq 'AC6') {
-            $CompilerBin = $env:MLEK_AC6_BIN
-            if (-not $CompilerBin) {
-                $CompilerBin = 'D:/Program Files/ArmCompilerforEmbedded6.24/bin'
-            }
-        } else {
-            $CompilerBin = $env:MLEK_ATFE_BIN
-            if (-not $CompilerBin) {
-                $CompilerBin = 'D:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
-            }
-        }
-    }
-    $CompilerBin = (Resolve-Path -LiteralPath $CompilerBin).ProviderPath
+    $CompilerBin = Resolve-WindowsToolchainBin `
+        -Toolchain $Toolchain `
+        -CompilerBin $CompilerBin
     if ($Toolchain -eq 'AC6') {
         $requiredTools = @('armclang.exe', 'armasm.exe', 'armar.exe', 'armlink.exe', 'fromelf.exe')
         $env:MLEK_AC6_BIN = $CompilerBin
@@ -87,11 +106,14 @@ try {
             throw "Selected toolchain is missing $tool in $CompilerBin"
         }
     }
-    $env:PATH = "$CompilerBin;$(Split-Path $venvPython);$originalPath"
-    $cmakeExe = Join-Path (Split-Path $venvPython) 'cmake.exe'
+    $env:PATH = "$CompilerBin;$($buildTools.BinDir);$(Split-Path $venvPython);$originalPath"
+    $cmakeExe = $buildTools.CMake
     if (-not $BuildDirectory) {
         $BuildDirectory = Join-Path $repoRoot "build/$preset"
+    } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
+        $BuildDirectory = Join-Path $repoRoot $BuildDirectory
     }
+    $BuildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
     $cacheFile = Join-Path $BuildDirectory 'CMakeCache.txt'
     if (Test-Path -LiteralPath $cacheFile) {
         $toolchainName = if ($Toolchain -eq 'AC6') { 'armclang' } else { 'llvm' }
@@ -118,10 +140,33 @@ try {
             }
         }
     }
-    $configureArgs = @('--preset', $preset, '-B', $BuildDirectory, "-DUSE_CASE_BUILD=$UseCase")
+    $ninjaPath = $buildTools.Ninja.Replace('\', '/')
+    $configureArgs = @(
+        '--preset', $preset,
+        '-B', $BuildDirectory,
+        "-DCMAKE_MAKE_PROGRAM=$ninjaPath",
+        "-DUSE_CASE_BUILD=$UseCase"
+    )
     if ($ModelPath) {
         $modelFile = (Resolve-Path -LiteralPath $ModelPath).ProviderPath.Replace('\', '/')
         $configureArgs += "-D${UseCase}_MODEL_PATH=$modelFile"
+    }
+    if ($InputPath) {
+        $inputFile = (Resolve-Path -LiteralPath $InputPath).ProviderPath.Replace('\', '/')
+        $configureArgs += "-D${UseCase}_FILE_PATH=$inputFile"
+    }
+    if ($LabelsPath) {
+        $labelsFile = (Resolve-Path -LiteralPath $LabelsPath).ProviderPath.Replace('\', '/')
+        $configureArgs += "-D${UseCase}_LABELS_YAML_FILE=$labelsFile"
+    }
+    if ($ImageSize -gt 0) {
+        $configureArgs += "-D${UseCase}_IMAGE_SIZE=$ImageSize"
+    }
+    if ($NumClasses -gt 0) {
+        $configureArgs += "-D${UseCase}_NUM_CLASSES=$NumClasses"
+    }
+    if ($ActivationBufferSize) {
+        $configureArgs += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
     # Always reconfigure: model C arrays are generated during configuration.
     Invoke-Checked $cmakeExe $configureArgs
@@ -135,5 +180,9 @@ try {
     $env:TEMP = $originalTemp
     $env:TMP = $originalTmp
     $env:PIP_CACHE_DIR = $originalPipCache
+    $env:PYTHONHOME = $originalPythonHome
+    $env:VIRTUAL_ENV = $originalVirtualEnv
+    $env:PIP_CONFIG_FILE = $originalPipConfig
+    $env:SSLKEYLOGFILE = $originalSslKeylogFile
     Pop-Location
 }
