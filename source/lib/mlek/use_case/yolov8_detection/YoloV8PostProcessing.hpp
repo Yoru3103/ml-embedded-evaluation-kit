@@ -41,10 +41,10 @@ private:
 };
 
 /**
- * @brief Post-processes the four-output INT8 NHWC YOLOv8 model.
+ * @brief Post-processes the four-output YOLOv8 DFL model.
  *
  * The model has three feature maps containing 64 DFL box values followed by
- * the class logits, plus one concatenated objectness output.
+ * the class logits, optionally plus one concatenated objectness output.
  */
 class YoloV8NewPostProcess : public BasePostProcess {
 public:

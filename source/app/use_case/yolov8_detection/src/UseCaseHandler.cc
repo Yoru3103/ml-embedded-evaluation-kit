@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -153,8 +154,15 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         return false;
     }
 
-    if (model.GetNumInputs() != 1 || model.GetNumOutputs() != 1) {
-        printf_err("YOLOv8 model must have one input and one output\n");
+    if (model.GetNumInputs() != 1) {
+        printf_err("YOLOv8 model must have one input tensor\n");
+        return false;
+    }
+
+    if (model.GetNumOutputs() != 1 &&
+        model.GetNumOutputs() != 3 &&
+        model.GetNumOutputs() != 4) {
+        printf_err("YOLOv8 model must have one output or a three/four-output DFL head\n");
         return false;
     }
 
@@ -172,6 +180,10 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         printf_err("Expected input shape [1, 3, H, W] or [1, H, W, 3]\n");
         return false;
     }
+    if (imageWidth == 0 || imageHeight == 0) {
+        printf_err("YOLOv8 input dimensions must be non-zero\n");
+        return false;
+    }
 
     if (get_sample_img_width() != imageWidth ||
         get_sample_img_height() != imageHeight) {
@@ -181,23 +193,44 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
 
     YoloV8PreProcess preProcess{inputTensor};
 
+    if (labels.size() != YOLOV8_NUM_CLASSES) {
+        printf_err("YOLOv8 label count does not match the configured class count\n");
+        return false;
+    }
+
     std::vector<yolov8_detection::DetectionResult> results;
     YoloV8PostProcessParams params{
         imageWidth,
         imageHeight,
-        80,
-        20,
-        0.25F,
-        0.45F
+        YOLOV8_NUM_CLASSES,
+        YOLOV8_MAX_DETECTIONS,
+        YOLOV8_SCORE_THRESHOLD,
+        YOLOV8_NMS_THRESHOLD
     };
-    YoloV8PostProcess postProcess{model.GetOutputTensor(0), results, params};
+    std::unique_ptr<BasePostProcess> postProcess;
+    if (model.GetNumOutputs() == 1) {
+        postProcess = std::make_unique<YoloV8PostProcess>(
+            model.GetOutputTensor(0), results, params);
+    } else {
+        std::vector<std::shared_ptr<fwk::iface::TensorIface>> outputTensors;
+        outputTensors.reserve(model.GetNumOutputs());
+        for (size_t outputIndex = 0; outputIndex < model.GetNumOutputs(); ++outputIndex) {
+            outputTensors.push_back(model.GetOutputTensor(outputIndex));
+        }
+        postProcess = std::make_unique<YoloV8NewPostProcess>(
+            outputTensors, results, params);
+    }
 
     constexpr uint32_t imageStartX = 10;
     constexpr uint32_t imageStartY = 35;
     constexpr uint32_t textStartY = 40;
     constexpr uint32_t displayWidth = 320;
     constexpr uint32_t displayHeight = 240;
-    constexpr uint32_t downscale = 1;
+    constexpr uint32_t downscale = YOLOV8_DISPLAY_DOWNSCALE;
+    if (downscale == 0) {
+        printf_err("YOLOv8 display downscale must be greater than zero\n");
+        return false;
+    }
 
     const uint32_t displayedImageWidth = imageWidth / downscale;
     const uint32_t displayedImageHeight = imageHeight / downscale;
@@ -252,7 +285,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
             return false;
         }
 
-        if (!postProcess.DoPostProcess()) {
+        if (!postProcess->DoPostProcess()) {
             printf_err("Post-processing failed\n");
             return false;
         }

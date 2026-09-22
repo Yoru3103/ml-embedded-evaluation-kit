@@ -2,8 +2,10 @@
 # <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Specify supported frameworks.
-set(${use_case}_ML_FRAMEWORK "TensorFlowLiteMicro;ExecuTorch")
+# Specify supported frameworks using the canonical project values.
+set(${use_case}_ML_FRAMEWORK
+    "${ML_FRAMEWORK_TFLM}"
+    "${ML_FRAMEWORK_EXECUTORCH}")
 
 if (NOT ${ML_FRAMEWORK} IN_LIST ${use_case}_ML_FRAMEWORK)
     set(${use_case}_supports_${ML_FRAMEWORK} OFF)
@@ -45,19 +47,23 @@ USER_OPTION(
     2
     STRING)
 
-if (${ML_FRAMEWORK} STREQUAL "TensorFlowLiteMicro")
+if ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_TFLM}")
     set(DEFAULT_MODEL_PATH
         ${CMAKE_SOURCE_DIR}/vela_output/best_int8_z256/best_int8_vela.tflite)
     set(DEFAULT_LABELS_PATH
         ${CMAKE_SOURCE_DIR}/resources/object_detection/samples/coco128.yaml)
+    set(DEFAULT_FILE_PATH
+        ${CMAKE_SOURCE_DIR}/20260827_Model)
     set(DEFAULT_IMAGE_SIZE 256)
     set(DEFAULT_NUM_CLASSES 80)
     set(DEFAULT_ACTIVATION_BUF_SZ 0x00200000)
-elseif (${ML_FRAMEWORK} STREQUAL "ExecuTorch")
+elseif ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
     set(DEFAULT_MODEL_PATH
         ${CMAKE_SOURCE_DIR}/resources_downloaded/gesture_detection/best_dedicated_ethos-u85-1024.pte)
     set(DEFAULT_LABELS_PATH
         ${CMAKE_SOURCE_DIR}/resources/gesture_detection/labels.txt)
+    set(DEFAULT_FILE_PATH
+        ${CMAKE_SOURCE_DIR}/resources/gesture_detection/samples)
     set(DEFAULT_IMAGE_SIZE 320)
     set(DEFAULT_NUM_CLASSES 10)
     # Keep the method allocator within the MPS4 SSE-320 4 MiB SRAM region.
@@ -92,7 +98,7 @@ USER_OPTION(
 USER_OPTION(
     ${use_case}_FILE_PATH
     "Directory containing input images, or a path to one input image."
-    ${CMAKE_SOURCE_DIR}/20260827_Model
+    ${DEFAULT_FILE_PATH}
     PATH_OR_FILE)
 
 USER_OPTION(
@@ -101,7 +107,8 @@ USER_OPTION(
     ${DEFAULT_LABELS_PATH}
     FILEPATH)
 
-if (COMMAND generate_pte_ops_lib AND "${ML_FRAMEWORK}" STREQUAL "ExecuTorch")
+if (COMMAND generate_pte_ops_lib AND
+    "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
     generate_pte_ops_lib(
         MODEL_PATH      "${${use_case}_MODEL_PATH}"     # Path to the model PTE
         LIB_NAME        "${use_case}_portable_ops_lib"  # Library target name

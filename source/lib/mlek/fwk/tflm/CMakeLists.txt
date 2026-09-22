@@ -48,6 +48,7 @@ endif ()
 # Create static library
 add_library(${ML_FWK_TFLM_TARGET} STATIC
     YoloFastestModel.cc
+    YoloV8Model.cc
     AdModel.cc
     MicroNetKwsModel.cc
     Wav2LetterModel.cc

@@ -43,13 +43,10 @@ bool GetInputDescription(const std::vector<size_t>& shape, InputDescription& des
     return false;
 }
 
-int8_t QuantizeInput(const uint8_t value, const fwk::iface::QuantParams& quantParams)
+long QuantizeInput(const uint8_t value, const fwk::iface::QuantParams& quantParams)
 {
     const float realValue = static_cast<float>(value) / 255.0F;
-    const long quantizedValue = std::lround(realValue / quantParams.scale) + quantParams.offset;
-    const long clampedValue = std::clamp(
-        quantizedValue, static_cast<long>(-128), static_cast<long>(127));
-    return static_cast<int8_t>(clampedValue);
+    return std::lround(realValue / quantParams.scale) + quantParams.offset;
 }
 
 } /* anonymous namespace */
@@ -83,14 +80,15 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
     const auto tensorType = m_inputTensor->Type();
     const auto quantParams = m_inputTensor->GetQuantParams();
 
-    if (tensorType == fwk::iface::TensorType::INT8 && quantParams.scale <= 0.0F) {
-        printf_err("YOLOv8 INT8 input has invalid quantization parameters\n");
+    const bool isQuantized = tensorType == fwk::iface::TensorType::INT8 ||
+                             tensorType == fwk::iface::TensorType::UINT8;
+    if (isQuantized && quantParams.scale <= 0.0F) {
+        printf_err("YOLOv8 quantized input has invalid quantization parameters\n");
         return false;
     }
 
-    if (tensorType != fwk::iface::TensorType::FP32 &&
-        tensorType != fwk::iface::TensorType::INT8) {
-        printf_err("YOLOv8 input tensor must be float32 or int8\n");
+    if (tensorType != fwk::iface::TensorType::FP32 && !isQuantized) {
+        printf_err("YOLOv8 input tensor must be float32, int8 or uint8\n");
         return false;
     }
 
@@ -104,9 +102,14 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
             if (tensorType == fwk::iface::TensorType::FP32) {
                 m_inputTensor->GetData<float>()[destinationIndex] =
                     static_cast<float>(sourceValue) / 255.0F;
+            } else if (tensorType == fwk::iface::TensorType::INT8) {
+                const long quantizedValue = QuantizeInput(sourceValue, quantParams);
+                m_inputTensor->GetData<int8_t>()[destinationIndex] = static_cast<int8_t>(
+                    std::clamp(quantizedValue, static_cast<long>(-128), static_cast<long>(127)));
             } else {
-                m_inputTensor->GetData<int8_t>()[destinationIndex] =
-                    QuantizeInput(sourceValue, quantParams);
+                const long quantizedValue = QuantizeInput(sourceValue, quantParams);
+                m_inputTensor->GetData<uint8_t>()[destinationIndex] = static_cast<uint8_t>(
+                    std::clamp(quantizedValue, static_cast<long>(0), static_cast<long>(255)));
             }
 
         }
