@@ -102,8 +102,15 @@ function Ensure-WindowsBuildTools {
     param([Parameter(Mandatory = $true)][string]$ToolsVenvDir)
 
     $python = Ensure-WindowsVenv -VenvDir $ToolsVenvDir
-    & $python -m pip install --upgrade cmake ninja 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $python -m pip install --upgrade cmake ninja
+        $pipExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($pipExitCode -ne 0) {
         throw "Failed to install the shared latest CMake and Ninja into $ToolsVenvDir."
     }
 

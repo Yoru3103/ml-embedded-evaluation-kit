@@ -61,9 +61,26 @@ static int platform_hdlcd_init(void);
  */
 static void create_rw_vector_table(void);
 
+#if defined(FPGA)
+/** Enable debug access on the Corstone-320 FPGA, as done by the FI101 selftest. */
+static void enable_fpga_debug(void)
+{
+    volatile uint32_t* force_disable =
+        (volatile uint32_t*)(CORSTONE320_SYSCTRL_BASE_S + 0x25CU);
+    volatile uint32_t* dcu_enable = (volatile uint32_t*)(LCM_BASE_S + 0x100U);
+
+    *force_disable = 0xAAAAAAAAU;
+    *dcu_enable = 0x00005555U;
+}
+#endif /* defined(FPGA) */
+
 int platform_init(void)
 {
     int err = 0;
+
+#if defined(FPGA)
+    enable_fpga_debug();
+#endif /* defined(FPGA) */
 
     SystemCoreClockUpdate(); /* From start up code */
 
