@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2024, 2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -148,5 +148,16 @@ typedef struct
 /** Secure peripheral declarations */
 #define MPS4_FPGAIO_S           ((MPS4_FPGAIO_TypeDef   *) FPGA_IO_BASE_S)
 #define MPS4_SCC_S              ((MPS4_SCC_TypeDef      *) FPGA_SCC_BASE_S)
+
+/* FI101 firmware accesses the secure SCC and FPGAIO registers. Keep the
+ * existing non-secure access path for FVP builds. Base addresses for each
+ * deployment are selected by peripheral_memmap.h using the same FPGA macro. */
+#if defined(FPGA)
+#    define MPS4_PLATFORM_SCC    MPS4_SCC_S
+#    define MPS4_PLATFORM_FPGAIO MPS4_FPGAIO_S
+#else
+#    define MPS4_PLATFORM_SCC    MPS4_SCC
+#    define MPS4_PLATFORM_FPGAIO MPS4_FPGAIO
+#endif /* defined(FPGA) */
 
 #endif /* SMM_MPS4_H */

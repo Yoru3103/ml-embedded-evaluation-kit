@@ -154,14 +154,14 @@ static int verify_platform(void)
     const uint32_t ascii_A = (uint32_t)('A');
 
     /* Initialise the LEDs as the switches are */
-    MPS4_FPGAIO->LED = MPS4_FPGAIO->SWITCHES & 0xFF;
+    MPS4_PLATFORM_FPGAIO->LED = MPS4_PLATFORM_FPGAIO->SWITCHES & 0xFF;
 
     info("Processor internal clock: %" PRIu32 "Hz\n", get_mps4_core_clock());
 
     /* Get revision information from various registers */
-    rev      = MPS4_SCC->CFG_REG4;
-    fpgaid   = MPS4_SCC->SCC_ID;
-    aid      = MPS4_SCC->SCC_AID;
+    rev      = MPS4_PLATFORM_SCC->CFG_REG4;
+    fpgaid   = MPS4_PLATFORM_SCC->SCC_ID;
+    aid      = MPS4_PLATFORM_SCC->SCC_AID;
     apnote   = EXTRACT_BITS(fpgaid, 15, 4);
     fpga_clk = get_mps4_core_clock();
 
@@ -170,7 +170,7 @@ static int verify_platform(void)
          apnote,
          (char)(EXTRACT_BITS(aid, 23, 20) + ascii_A));
     info("MPS4 build %d\n", EXTRACT_BITS(aid, 31, 24));
-    info("MPS4 core clock has been set to: %" PRIu32 "Hz\n", fpga_clk);
+    info("MPS4 core clock used for profiling: %" PRIu32 "Hz\n", fpga_clk);
 
     /* Display CPU ID */
     id = SCB->CPUID;
