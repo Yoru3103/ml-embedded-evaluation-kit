@@ -49,27 +49,22 @@ USER_OPTION(
 
 if ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_TFLM}")
     set(DEFAULT_MODEL_PATH
-        ${CMAKE_SOURCE_DIR}/vela_output/best_int8_z256/best_int8_vela.tflite)
-    set(DEFAULT_LABELS_PATH
-        ${CMAKE_SOURCE_DIR}/resources/object_detection/samples/coco128.yaml)
-    set(DEFAULT_FILE_PATH
-        ${CMAKE_SOURCE_DIR}/20260827_Model)
-    set(DEFAULT_IMAGE_SIZE 256)
-    set(DEFAULT_NUM_CLASSES 80)
-    set(DEFAULT_ACTIVATION_BUF_SZ 0x00200000)
+        ${RESOURCES_PATH}/gesture_detection/tflm_${ETHOS_U_NPU_MEMORY_MODE}/best_int8_vela.tflite)
+    set(DEFAULT_ACTIVATION_BUF_SZ 0x00400000)
 elseif ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
     set(DEFAULT_MODEL_PATH
-        ${CMAKE_SOURCE_DIR}/resources_downloaded/gesture_detection/best_dedicated_ethos-u85-1024.pte)
-    set(DEFAULT_LABELS_PATH
-        ${CMAKE_SOURCE_DIR}/resources/gesture_detection/labels.txt)
-    set(DEFAULT_FILE_PATH
-        ${CMAKE_SOURCE_DIR}/resources/gesture_detection/samples)
-    set(DEFAULT_IMAGE_SIZE 320)
-    set(DEFAULT_NUM_CLASSES 10)
-    # Keep the method allocator within the MPS4 SSE-320 4 MiB SRAM region.
-    # Its usage is separate from the temporary pool that holds NPU scratch.
+        ${RESOURCES_PATH}/gesture_detection/pte_${ETHOS_U_NPU_MEMORY_MODE}/best.pte)
+    # Method memory is separate from the temporary pool that holds NPU scratch.
+    # Its default section follows the memory mode; the option below can force DDR.
     set(DEFAULT_ACTIVATION_BUF_SZ 0x00300000)
 endif()
+
+# Both frameworks use the checked-in gesture samples by default. Custom models
+# can override the model, labels, samples, image size and class count below.
+set(DEFAULT_LABELS_PATH ${CMAKE_SOURCE_DIR}/resources/gesture_detection/labels.txt)
+set(DEFAULT_FILE_PATH ${CMAKE_SOURCE_DIR}/resources/gesture_detection/samples)
+set(DEFAULT_IMAGE_SIZE 320)
+set(DEFAULT_NUM_CLASSES 10)
 
 USER_OPTION(
     ${use_case}_IMAGE_SIZE
@@ -88,6 +83,12 @@ USER_OPTION(
     "Tensor arena size."
     ${DEFAULT_ACTIVATION_BUF_SZ}
     STRING)
+
+USER_OPTION(
+    ${use_case}_ET_METHOD_MEMORY_IN_DDR
+    "Place ExecuTorch method memory in DDR, separately from NPU scratch."
+    OFF
+    BOOL)
 
 USER_OPTION(
     ${use_case}_MODEL_PATH
@@ -199,6 +200,7 @@ generate_model_code(
     NAMESPACE "arm" "app" "yolov8_detection")
 
 set(${use_case}_COMPILE_DEFS
+    "YOLOV8_ET_METHOD_MEMORY_IN_DDR=$<BOOL:${${use_case}_ET_METHOD_MEMORY_IN_DDR}>"
     "YOLOV8_NUM_CLASSES=${${use_case}_NUM_CLASSES}"
     "YOLOV8_MAX_DETECTIONS=${${use_case}_MAX_DETECTIONS}"
     "YOLOV8_SCORE_THRESHOLD=${${use_case}_SCORE_THRESHOLD}F"

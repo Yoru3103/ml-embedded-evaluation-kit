@@ -11,6 +11,11 @@ resources_downloaded
 
 # Logs
 *.log
+/logs/
+
+# Local model experiments
+/20260827_Model/
+/vela_output/
 
 # Build files
 CMakeFiles
