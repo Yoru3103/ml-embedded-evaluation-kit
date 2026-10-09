@@ -51,6 +51,34 @@ if (NOT DEFINED ETHOS_U_NPU_ID)
     set(ETHOS_U_NPU_ID U55)
 endif()
 
+if (ETHOS_U_NPU_ID STREQUAL U85)
+    set(ETHOS_U_NPU_PMU_GROUP "A" CACHE STRING
+        "U85 PMU event group: A, B, B_SRAM0, B_SRAM1, C, D, or LATENCY")
+    set_property(CACHE ETHOS_U_NPU_PMU_GROUP PROPERTY STRINGS
+        A B B_SRAM0 B_SRAM1 C D LATENCY)
+    string(TOUPPER "${ETHOS_U_NPU_PMU_GROUP}" ETHOS_U_NPU_PMU_GROUP_UPPER)
+    set(ETHOS_U_NPU_PMU_VALID_GROUPS A B B_SRAM0 B_SRAM1 C D LATENCY)
+    if (NOT ETHOS_U_NPU_PMU_GROUP_UPPER IN_LIST ETHOS_U_NPU_PMU_VALID_GROUPS)
+        message(FATAL_ERROR
+            "ETHOS_U_NPU_PMU_GROUP must be A, B, B_SRAM0, B_SRAM1, C, D, or LATENCY; got "
+            "${ETHOS_U_NPU_PMU_GROUP}")
+    endif()
+
+    set(ETHOS_U_NPU_PMU_AXI_SEL "0" CACHE STRING
+        "U85 latency PMU AXI port: 0 for SRAM or 1 for EXT")
+    set(ETHOS_U_NPU_PMU_CHANNEL "1" CACHE STRING
+        "U85 latency PMU AXI channel selector")
+    if (NOT ETHOS_U_NPU_PMU_AXI_SEL MATCHES "^[01]$")
+        message(FATAL_ERROR "ETHOS_U_NPU_PMU_AXI_SEL must be 0 or 1")
+    endif()
+    set(ETHOS_U_NPU_PMU_VALID_CHANNELS 1 2 4 5 8 9)
+    if (NOT ETHOS_U_NPU_PMU_CHANNEL IN_LIST ETHOS_U_NPU_PMU_VALID_CHANNELS)
+        message(FATAL_ERROR
+            "ETHOS_U_NPU_PMU_CHANNEL must be one of 1, 2, 4, 5, 8, or 9")
+    endif()
+    set(ETHOS_U_NPU_PMU_GROUP_DEFINE "ETHOSU_PMU_GROUP_${ETHOS_U_NPU_PMU_GROUP_UPPER}")
+endif()
+
 if(ETHOS_U_NPU_CONFIG_ID MATCHES "^[A-Z]([0-9]+$)")
     set(ETHOSU_MACS ${CMAKE_MATCH_1})
 else()
@@ -199,6 +227,20 @@ target_compile_definitions(${ETHOS_U_NPU_COMPONENT}
     ETHOS_U_IRQN=${ETHOS_U_IRQN}
     ETHOS_U_SEC_ENABLED=${ETHOS_U_SEC_ENABLED}
     ETHOS_U_PRIV_ENABLED=${ETHOS_U_PRIV_ENABLED})
+
+if (ETHOS_U_NPU_ID STREQUAL U85)
+    target_include_directories(${ETHOS_U_NPU_COMPONENT} PRIVATE
+        ${ETHOS_U_NPU_DRIVER_SRC_PATH}/src)
+    target_compile_definitions(${ETHOS_U_NPU_COMPONENT}
+        PRIVATE
+        ${ETHOS_U_NPU_PMU_GROUP_DEFINE}
+        ETHOSU_PMU_AXI_SEL=${ETHOS_U_NPU_PMU_AXI_SEL}
+        ETHOSU_PMU_CHANNEL=${ETHOS_U_NPU_PMU_CHANNEL})
+    message(STATUS
+        "U85 PMU group: ${ETHOS_U_NPU_PMU_GROUP_UPPER}, "
+        "latency channel AXI=${ETHOS_U_NPU_PMU_AXI_SEL} "
+        "CH=${ETHOS_U_NPU_PMU_CHANNEL}")
+endif()
 
 # Display status
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR: " ${CMAKE_CURRENT_SOURCE_DIR})

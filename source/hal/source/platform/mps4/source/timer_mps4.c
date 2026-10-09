@@ -20,7 +20,7 @@
 #include "hal_log.h"
 #include "smm_mps4.h"   /* Memory map for MPS4. */
 
-static uint64_t cpu_cycle_count = 0;    /* 64-bit cpu cycle counter */
+static volatile uint64_t cpu_cycle_count = 0;    /* 64-bit cpu cycle counter */
 static const char* unit_cycles = "cycles";
 static const char* unit_ms = "milliseconds";
 
@@ -170,13 +170,17 @@ void SysTick_Handler(void)
  */
 static uint64_t Get_SysTick_Cycle_Count(void)
 {
-    uint32_t systick_val;
-
-    NVIC_DisableIRQ(SysTick_IRQn);
-    systick_val = SysTick->VAL & SysTick_VAL_CURRENT_Msk;
-    NVIC_EnableIRQ(SysTick_IRQn);
-
-    return cpu_cycle_count + (SysTick->LOAD - systick_val);
+    const uint32_t saved_primask = __get_PRIMASK();
+    __disable_irq();
+    uint64_t completed_cycles = cpu_cycle_count;
+    uint32_t systick_val = SysTick->VAL & SysTick_VAL_CURRENT_Msk;
+    if ((SCB->ICSR & SCB_ICSR_PENDSTSET_Msk) != 0U) {
+        completed_cycles += SysTick->LOAD + 1U;
+        systick_val = SysTick->VAL & SysTick_VAL_CURRENT_Msk;
+    }
+    const uint64_t cycles = completed_cycles + (SysTick->LOAD - systick_val);
+    __set_PRIMASK(saved_primask);
+    return cycles;
 }
 
 

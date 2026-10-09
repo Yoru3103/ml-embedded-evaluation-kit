@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2024-2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2022, 2024-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,29 @@ static uint32_t init_ta(uintptr_t base_addr,
     }
 
     ta_set_all(&ta, ta_s);
+
+    struct timing_adapter_settings read_back;
+    ta_get_all(&ta, &read_back);
+    info("TA_%s readback: MAXR=%" PRIu32 " MAXW=%" PRIu32 " MAXRW=%" PRIu32
+         " RLATENCY=%" PRIu32 " WLATENCY=%" PRIu32 " PULSE_ON=%" PRIu32
+         " PULSE_OFF=%" PRIu32 " BWCAP=%" PRIu32 " MODE=%" PRIu32 "\n",
+         name, read_back.maxr, read_back.maxw, read_back.maxrw,
+         read_back.rlatency, read_back.wlatency, read_back.pulse_on,
+         read_back.pulse_off, read_back.bwcap, read_back.mode);
+
+    /* Match the driver's register masks. MODE is fixed to 1 on FVP;
+     * live counters and read-only fields are not configuration checks. */
+    if (read_back.maxr != (ta_s->maxr & 0x3F) ||
+        read_back.maxw != (ta_s->maxw & 0x3F) ||
+        read_back.maxrw != (ta_s->maxrw & 0x3F) ||
+        read_back.rlatency != (ta_s->rlatency & 0xFFF) ||
+        read_back.wlatency != (ta_s->wlatency & 0xFFF) ||
+        read_back.pulse_on != (ta_s->pulse_on & 0xFFFF) ||
+        read_back.pulse_off != (ta_s->pulse_off & 0xFFFF) ||
+        read_back.bwcap != (ta_s->bwcap & 0xFFFF)) {
+        printf_err("TA_%s readback mismatch\n", name);
+        return 1;
+    }
     info("Configured TA_%s\t@0x%" PRIx32 "\n", name, (uint32_t)base_addr);
     return 0;
 }

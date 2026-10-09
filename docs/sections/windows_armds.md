@@ -29,11 +29,12 @@ Arm ML Embedded Evaluation Kit 提供面向 Cortex-M CPU 和 Ethos-U NPU 的机�
 | `-NumClasses` | 不覆盖 | 类别数，允许 1–1000；映射到 `<UseCase>_NUM_CLASSES`。 |
 | `-ActivationBufferSize` | 不覆盖 | 激活区大小，传给 `<UseCase>_ACTIVATION_BUF_SZ`。 |
 | `-BuildDirectory` | `build/windows-<toolchain>-<target>` 对应目录 | 构建目录；相对路径从项目根目录解析。 |
+| `-CMakeArgs` | 空 | 额外 `-DNAME=value` 定义；可配置 TA、FVP 测试及 Pose PMU。框架、平台和工具链由命名参数控制。 |
 | `-Jobs` | `4` | Setup 下载及编译并行数，允许 1–128。 |
 
 脚本选择 `windows-ac6-mps4`、`windows-atfe-mps4`、`windows-ac6-fvp` 或 `windows-atfe-fvp` 预设。预设固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=tflm` 和 `CMAKE_BUILD_TYPE=Debug`。`FPGA` 设置 `FPGA_PLATFORM_SSE_320=ON`，`FVP` 设置为 `OFF`。**Debug 默认开启**，脚本没有单独开关；需要其他构建类型时，使用独立构建目录直接调用 CMake。Debug 构建的性能不代表 Release 性能。
 
-尺寸、类别数及激活区参数仅在相应用例声明了这些 CMake 选项时才有意义。`yolov8_detection` 的 Setup 只安装所需 Python 包，模型、图片和标签由用户提供。CMake 会缓存模型路径及覆盖值；恢复默认模型时建议使用新构建目录。
+尺寸、类别数及激活区参数仅在相应用例声明了这些 CMake 选项时才有意义。`yolov8_detection` 和 `yolov8_pose` 的 Setup 只安装所需 Python 包，模型、图片和标签由用户提供。CMake 会缓存模型路径及覆盖值；恢复默认模型时建议使用新构建目录。
 
 ## 准备资源和构建
 
@@ -59,7 +60,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps
     -BuildDirectory build/my-atfe-fvp -Jobs 8
 ```
 
-替换模型时添加 `-ModelPath "D:/models/my_model_vela.tflite"`。用于 Ethos-U 的模型应预先按目标 NPU 配置生成；FVP 默认 U85 Z256，MPS4 FPGA 使用 U85 Z1024。AXF 位于 `<BuildDirectory>/bin/mlek_<UseCase>.axf`。FVP 和 FPGA 固件不能互换。
+替换模型时添加 `-ModelPath "path-to-model"`。用于 Ethos-U 的模型应预先按目标 NPU 配置生成；FVP 默认 U85 Z1024（FVP 模型也须设置为 1024 MACs），MPS4 FPGA 使用 U85 Z1024。AXF 位于 `<BuildDirectory>/bin/mlek_<UseCase>.axf`。FVP 和 FPGA 固件不能互换。
 
 ## Arm DS 配置
 
@@ -142,3 +143,34 @@ ATFE 或其他用例要换成其实际 AXF。`-Target` 必须与 Debug Connectio
 ![选择片上 Trace Buffer](8dc4705484d87ced55e4a02242ecfad7.png)
 ![启用 Cortex-M85 core trace 选项](af271cedf1ec92abc55c1c9bc698c1b4.png)
 ![启用 ITM trace](a986a28d476034a487af60f71ef0a926.png)
+
+FVP 的启动参数应与固件配置一致：U85 Z1024 使用 `-C mps4_board.subsystem.ethosu.num_macs=1024`。在 Arm DS 的模型连接配置中设置同名参数；CMake 的 MPS4 FVP 集成测试会根据 `ETHOS_U_NPU_CONFIG_ID` 自动传入 MAC 数。
+
+## YOLOv8 Pose TFLite 调试
+
+Pose 沿用 `build.ps1` 和原链接脚本。非默认用例的构建目录追加用例名，避免覆盖图像分类固件。首次准备环境执行 `-Action Setup -UseCase yolov8_pose`；此路径只安装 Python 工具，不使用默认资源下载清单。
+
+```powershell
+$compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
+$fvp = 'C:/Program Files/Arm/FVP_Corstone_SSE-320/models/Win64_VC2019/FVP_Corstone_SSE-320.exe'
+.\scripts\windows\build.ps1 -Action Build -Toolchain ATFE -Target FVP `
+    -UseCase yolov8_pose -CompilerBin $compilerBin `
+    -CMakeArgs @('-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON',
+        '-DBUILD_FVP_TESTS=ON', "-DFVP_PATH=$fvp")
+& .\resources_downloaded\windows-tools\env\Scripts\ctest.exe `
+    --test-dir .\build\windows-atfe-fvp-yolov8_pose -R mlek_yolov8_pose_fvp_test -V
+```
+
+默认模型为 `resources/yolov8_pose/model_int8_vela_u85_1024_packed_dedicated_128k.tflite`，对应 U85 Z1024、Dedicated SRAM、128 KiB NPU 缓存；输入为 FP32 NCHW `[1,3,224,224]`，输出为 FP32 `[1,68,1029]`。因此 TFLM 默认 PACKED 输出、归一化坐标；ExecuTorch 默认 SPLIT 输出、像素坐标。Pose 应用显式向预处理传入 TFLite 输入布局，通用 TFLM 张量包装器保持原有行为。更换框架时使用独立构建目录；更换其他输出格式模型时显式设置 `yolov8_pose_OUTPUT_TOPOLOGY` 和 `yolov8_pose_COORDINATES_NORMALIZED`。
+
+FPGA 编译和静态验证：
+
+```powershell
+.\scripts\windows\build.ps1 -Action Build -Toolchain ATFE -Target FPGA `
+    -UseCase yolov8_pose -CompilerBin $compilerBin `
+    -CMakeArgs @('-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON')
+```
+
+FVP/FPGA 分别生成 `build/windows-atfe-fvp-yolov8_pose/bin/mlek_yolov8_pose.axf`、`build/windows-atfe-mps4-yolov8_pose/bin/mlek_yolov8_pose.axf`。两者使用上述同一 Z1024 TFLite 指令流，但固件的平台地址不同；本轮 FPGA 不做运行验证，后续性能调优可另行导出适配板端带宽的模型。
+
+脚本每次配置清理 `SRAM_*` 和 `EXT_*` 缓存，再载入 TA 默认值，最后应用 `-CMakeArgs` 覆盖。Pose 默认 TA 为 `ta_config_u85_sys_dram_1024`，保留运行时回读校验。脚本默认开启 CPU profiling，所有 Pose 图片输出 CPU TOTAL、NPU ACTIVE、NPU IDLE、NPU TOTAL，详见 [周期日志与 PMU](windows_executorch.md#pose-的周期日志与-pmu)。

@@ -22,10 +22,20 @@ param(
     [ValidateRange(1, 1000)][int]$NumClasses = 0,
     [string]$ActivationBufferSize,
     [string]$BuildDirectory,
-    [ValidateRange(1, 128)][int]$Jobs = 4
+    [ValidateRange(1, 128)][int]$Jobs = 4,
+    [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
+foreach ($argument in $CMakeArgs) {
+    if ($argument -notmatch '^-D[A-Za-z0-9_]+(?::[A-Za-z]+)?=') {
+        throw 'CMakeArgs accepts only -DNAME=value definitions.'
+    }
+    if ($argument -match '^-D(CMAKE_(TOOLCHAIN_FILE|C_COMPILER|CXX_COMPILER|MAKE_PROGRAM)|ML_FRAMEWORK|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|MLEK_PYTHON_VENV|RESOURCES_PATH|USE_CASE_BUILD|ETHOS_U_NPU_MEMORY_MODE)(:|=)') {
+        throw 'Use the named script parameters to change the compiler, framework, platform or environment.'
+    }
+}
 $resourceDir = Join-Path $repoRoot 'resources_downloaded/windows'
 $venvDir = Join-Path $resourceDir 'env'
 $venvPython = Join-Path $resourceDir 'env/Scripts/python.exe'
@@ -69,7 +79,7 @@ try {
         $env:PATH = "$($buildTools.BinDir);$originalPath"
         # This is the independent TFLM/TFLite environment.
         Ensure-WindowsVenv -VenvDir $venvDir | Out-Null
-        if ($UseCase -eq 'yolov8_detection') {
+        if ($UseCase -in @('yolov8_detection', 'yolov8_pose')) {
             # YOLOv8 uses caller-supplied model, image and labels rather than
             # an entry in use_case_resources.json.
             Invoke-Checked $venvPython @('-m', 'pip', 'install', '-e', 'scripts/py[tflite]')
@@ -109,7 +119,8 @@ try {
     $env:PATH = "$CompilerBin;$($buildTools.BinDir);$(Split-Path $venvPython);$originalPath"
     $cmakeExe = $buildTools.CMake
     if (-not $BuildDirectory) {
-        $BuildDirectory = Join-Path $repoRoot "build/$preset"
+        $buildName = if ($UseCase -eq 'img_class') { $preset } else { "$preset-$UseCase" }
+        $BuildDirectory = Join-Path $repoRoot "build/$buildName"
     } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
         $BuildDirectory = Join-Path $repoRoot $BuildDirectory
     }
@@ -144,6 +155,8 @@ try {
     $configureArgs = @(
         '--preset', $preset,
         '-B', $BuildDirectory,
+        '-U', 'SRAM_*', '-U', 'EXT_*',
+        '-DCPU_PROFILE_ENABLED=ON',
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath",
         "-DUSE_CASE_BUILD=$UseCase"
     )
@@ -168,6 +181,11 @@ try {
     if ($ActivationBufferSize) {
         $configureArgs += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
+    if ($UseCase -eq 'yolov8_pose') {
+        $configureArgs += @('-DETHOS_U_NPU_CACHE_SIZE=131072',
+            '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
+    }
+    $configureArgs += $CMakeArgs
     # Always reconfigure: model C arrays are generated during configuration.
     Invoke-Checked $cmakeExe $configureArgs
     if ($Action -ne 'Configure') {

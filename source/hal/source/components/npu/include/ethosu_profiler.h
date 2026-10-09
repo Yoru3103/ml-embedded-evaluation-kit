@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2024 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2022, 2024, 2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -23,7 +23,7 @@
 #if defined(ETHOSU55) || defined(ETHOSU65)
     #define ETHOSU_USED_PMU_NCOUNTERS   (4U)    /**< Number of actual PMU counters we want to display */
 #elif defined(ETHOSU85)
-    #define ETHOSU_USED_PMU_NCOUNTERS   (5U)    /**< Number of actual PMU counters we want to display */
+    #define ETHOSU_USED_PMU_NCOUNTERS   (8U)    /**< Number of actual PMU counters we want to display */
 #endif /* defined(ETHOSU85) */
 
 #define ETHOSU_DERIVED_NCOUNTERS    (1U)    /**< Number of counters derived from event counters */
@@ -62,6 +62,9 @@ typedef struct ethosu_pmu_counters_ {
  * @brief  Initialise the Arm Ethos-U NPU performance monitoring unit.
  */
 void ethosu_pmu_init(void);
+
+/** @brief Disable the NPU PMU and release its power reference. */
+void ethosu_pmu_final(void);
 
 /**
  * @brief  Resets the Arm Ethos-U NPU PMU counters.
