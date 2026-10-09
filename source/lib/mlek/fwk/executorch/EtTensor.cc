@@ -20,24 +20,22 @@
 
 namespace arm::app::fwk::et {
 
-EtTensor::EtTensor(executorch::aten::TensorImpl* tensorImpl) : m_tensor(tensorImpl) {}
+EtTensor::EtTensor(executorch::aten::TensorImpl* tensorImpl, iface::QuantParams quantParams) :
+    m_tensor(tensorImpl), m_quantParams(quantParams)
+{}
 
-EtTensor::EtTensor(executorch::aten::Tensor& tensor) : m_tensor(tensor) {}
+EtTensor::EtTensor(executorch::aten::Tensor& tensor, iface::QuantParams quantParams) :
+    m_tensor(tensor), m_quantParams(quantParams)
+{}
 
 void* EtTensor::GetData()
-{
-    return this->m_tensor.mutable_data_ptr<void>();
-}
+{ return this->m_tensor.mutable_data_ptr<void>(); }
 
 size_t EtTensor::Bytes()
-{
-    return this->m_tensor.nbytes();
-}
+{ return this->m_tensor.nbytes(); }
 
 size_t EtTensor::GetNumElements()
-{
-    return this->m_tensor.numel();
-}
+{ return this->m_tensor.numel(); }
 
 std::vector<size_t> EtTensor::Shape()
 {
@@ -48,8 +46,10 @@ std::vector<size_t> EtTensor::Shape()
 iface::TensorType EtTensor::Type()
 {
     switch (this->m_tensor.dtype()) {
+    case executorch::aten::ScalarType::Char:
     case executorch::aten::ScalarType::QInt8:
         return iface::TensorType::INT8;
+    case executorch::aten::ScalarType::Byte:
     case executorch::aten::ScalarType::QUInt8:
         return iface::TensorType::UINT8;
     case executorch::aten::ScalarType::Int:
@@ -78,12 +78,6 @@ iface::TensorLayout EtTensor::Layout()
 }
 
 iface::QuantParams EtTensor::GetQuantParams()
-{
-    iface::QuantParams params{0.f, 0};
-    /**
-     * TODO: work out how to get quant params from ExecuTorch Tensor.
-     */
-    return params;
-}
+{ return this->m_quantParams; }
 
 } // namespace arm::app::fwk::et

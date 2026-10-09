@@ -98,6 +98,21 @@ def export_pte(model: torch.nn.Module, paths: list[Path], samples: list[dict],
     spec = make_compile_spec(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     quantized = quantize(model, paths, args, spec)
+    return compile_quantized_pte(quantized, samples, metadata, args)
+
+
+def compile_quantized_pte(quantized: torch.fx.GraphModule, samples: list[dict],
+                          metadata: dict, args: argparse.Namespace) -> dict:
+    """Compile an already calibrated graph, retaining NPU-only integer I/O checks.
+
+    :param quantized:   Validated PT2E graph reused across fast-cache capacities.
+    :param samples:     Source ONNX predictions for host validation.
+    :param metadata:    Original tensor interface.
+    :param args:        Compiler, destination and memory options.
+    :returns:           Host validation and serialized deployment report.
+    """
+    spec = make_compile_spec(args)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     results = validate_outputs(lambda inputs: torch_predict(quantized, inputs), samples, False,
                                args.max_score_error, args.min_box_iou)
     program, qparams = lower_integer_pte(quantized, torch.from_numpy(samples[0]["input"]),

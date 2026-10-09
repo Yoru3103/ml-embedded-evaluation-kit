@@ -127,10 +127,16 @@ protected:
     virtual bool PrepareInputTensors();
 
 private:
+    /** @brief Reads integer I/O quantization from the PTE configuration methods. */
+    bool ReadTensorQuantParams(executorch::aten::ScalarType scalarType,
+                               const char* tensorKind,
+                               size_t index,
+                               iface::QuantParams& params);
+
     std::function<executorch::runtime::Method&()> m_fnGetMethod; /**< Gets the forward inference
                                                                       method. */
-    EtBackendData m_backendData{}; /**< Backend data object */
-    bool m_inited{false}; /**< Indicates whether this object has been initialised. */
+    EtBackendData m_backendData{};                               /**< Backend data object */
+    bool m_inited{false};            /**< Indicates whether this object has been initialised. */
     bool m_hasEthosUDelegate{false}; /**< Indicates whether the model has NPU delegate. */
     iface::MemoryRegion m_computeBuffer{}; /**< Compute buffer region */
     iface::MemoryRegion m_modelBuffer{};   /**< Buffer where model is hosted */

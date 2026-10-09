@@ -202,9 +202,80 @@ placeholders when it does not already exist. Replace them with the actual traini
 labels for meaningful detection names, preserving class order.
 
 This script stops after model conversion, Vela compilation and host validation.
-Firmware integration must consume the integer I/O quantization parameters before
-running FVP or FPGA performance tests. Such tests are a separate follow-up step; host
-validation does not verify execution of the compiled NPU command stream.
+The ExecuTorch tensor wrapper recognizes ordinary INT8/UINT8 tensors and the model
+loader reads each tensor's scale and zero point from PTE configuration methods
+(`input0_scale`, `input0_zp`, `output0_scale`, etc.; method-prefixed names also work).
+Missing or invalid quantization parameters cause initialization to fail explicitly.
+Floating interfaces continue to use the existing preprocessing.
+
+Build and run the baseline firmware after model validation:
+
+```bash
+bash scripts/build_qrcode_sse320.sh all all
+bash scripts/run_qrcode_fvp320.sh all
+```
+
+The builder generates eight separate directories for FVP/FPGA, PTE/TFLite and both
+SRAM modes. Settings match the compiled U85 Z1024 / TA Mid models. The default input
+is `samples_QRcode/1.png`, which produces a detection at the default score threshold.
+`QRCODE_SAMPLE_PATH`, `QRCODE_LABELS_FILE`, `QRCODE_MODEL_ROOT` and `BUILD_JOBS` override
+the input, labels, model directory and compiler parallelism. Shared PTE scratch uses
+the 4 MiB SRAM, while its method pool and display frame buffer are placed in DDR.
+The FVP runner uses the vendor runtime in a subshell and writes each project's
+`fvp.log`. Set `FVP_PATH` and `FVP_TIMEOUT` when needed.
+
+Dedicated SRAM fast-cache comparison includes **64, 128, 256, 384 and 768 KiB**:
+
+```bash
+resources_downloaded/env/bin/python scripts/compile_qrcode_fastcache.py
+bash scripts/build_qrcode_fastcache_sse320.sh all all all
+bash scripts/run_qrcode_fastcache_fvp320.sh all all
+# One case:
+bash scripts/build_qrcode_fastcache_sse320.sh fpga pte 256
+```
+
+The compiler reuses the validated INT8 TFLite and calibrated PT2E graphs, keeping
+calibration fixed while varying Vela's cache budget. It retains the original model
+outputs and rejects CPU operators. Models are saved under
+`resources_downloaded/yolo_QRcode/fastcache_dedicated/<tflm|pte>/<size>k/`, with
+`compilation.json` containing status, hashes, cache size and NPU-only checks.
+`--cache-kib 256` and `--format tflm` or `pte` select individual compiler cases.
+The validated PT2E archive requires the initial export's default `--save-intermediate`.
+
+Each firmware cache size matches its corresponding Vela model and is recorded in
+CMake configuration. All 20 Dedicated variants have independent
+`build-qrcode-fastcache-<fvp|fpga>-<tflm|pte>-<size>k-z1024-ta-mid/` projects. Builders
+verify compilation status and model/configuration hashes before starting each case.
+`QRCODE_FASTCACHE_ROOT` selects an alternate matrix model directory for building.
+FPGA images are in `bin/sectors/yolov8_detection/{boot,bram,ddr}.bin`.
+Per-project `configure.log`, `build.log` and `fvp.log` retain build and runtime results.
+Use NPU PMU counts for FVP comparisons; measure hardware latency on the FPGA.
+
+FVP measurements on 2026-10-09 used U85 Z1024, TA Mid, Dedicated SRAM,
+Vela Performance/COP1 and the same `samples_QRcode/1.png` input:
+
+| Cache (KiB) | TFLite NPU cycles | PTE NPU cycles |
+|-------------|-------------------|----------------|
+| 64 | 1,515,086 | 1,759,056 |
+| 128 | 1,410,086 | 1,665,056 |
+| 256 | 1,460,086 | 1,550,056 |
+| 384 | 969,086 | 1,107,056 |
+| 768 | 969,086 | 1,107,056 |
+
+All ten compiled models contain zero CPU operators and one Ethos-U delegate;
+all ten FVP runs completed successfully. Each TFLite case produced class 3,
+score 0.305362 and box `(78, 24, 106, 109)`; each PTE case produced class 3,
+score 0.311188 and box `(79, 25, 105, 107)`. Box values are `(x, y, width, height)`
+in model-input coordinates. For this model, increasing the cache from 384 to
+768 KiB did not reduce NPU cycles; the TFLite 256 KiB result also shows that
+latency need not decrease at every cache increment.
+
+These are single-image FVP measurements, not FPGA timings or an independent
+accuracy evaluation. `CPU TOTAL` includes the elapsed inference interval while
+the CPU waits for the NPU; its presence does not indicate CPU model operators.
+Local `resources_downloaded/yolo_QRcode/fastcache_performance.csv` and
+`firmware_test_report.json` retain the measured cycles, model hashes, build
+configuration checks and firmware paths.
 
 ## Contract checks
 
