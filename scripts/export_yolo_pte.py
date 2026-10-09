@@ -94,20 +94,25 @@ def make_compile_spec(args: argparse.Namespace) -> EthosUCompileSpec:
 def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace,
              spec: EthosUCompileSpec) -> torch.fx.GraphModule:
     """Export and calibrate using representative images without tracking gradients."""
+    # 导入第一张校准图片
     example = load_image(paths[0], args.image_size, args.preprocessing)
+    # 将浮点模型捕获为计算图
     exported = torch.export.export(model, (example,), strict=True)
     graph_dir = args.output.parent / f"{args.output.stem}_graphs"
     if args.save_intermediate:
         graph_dir.mkdir(parents=True, exist_ok=True)
-        torch.export.save(exported, graph_dir / "float.pt2")
+        torch.export.save(exported, graph_dir / "float.pt2")    # 可选，供Netron查看量化前的计算图
+    # 指定Ethos-U支持的量化规则，并为全图设置默认规则。--per-channel 控制权重是否按输出通道分别量化。
     quantizer = EthosUQuantizer(spec).set_global(
         get_symmetric_quantization_config(is_per_channel=args.per_channel))
+    # 按规则在计算图中加入观察器，得到等待校准的prepared模型
     prepared = prepare_pt2e(exported.module(check_guards=False), quantizer)
     with torch.no_grad():
         for index, path in enumerate(paths, 1):
             prepared(load_image(path, args.image_size, args.preprocessing))
             if index % 16 == 0 or index == len(paths):
                 print(f"Calibrated {index}/{len(paths)}", flush=True)
+    # 根据统计结果计算量化参数，生成量化后的计算图
     quantized = convert_pt2e(prepared)
     if args.save_intermediate:
         torch.export.save(torch.export.export(quantized, (example,), strict=True),
@@ -182,12 +187,16 @@ def main():
     os.environ["PATH"] = os.pathsep.join(
         (str(Path(sys.executable).absolute().parent), os.environ.get("PATH", "")))
     torch.set_num_threads(args.threads)
+    # paths[0] 是第一张、paths[1]（若存在）是第二张；一般地，paths[i] 是第 i+1 张校准图片的
+    # 文件路径 Path（i 从 0 到 len(paths)-1），不是加载后的图像张量。
+    # 图片来自 calibration_dir 下的 jpg/jpeg/png/bmp 文件；先排序，再按 seed 打乱，
+    # 最多取 calibration_limit 张（0 表示全部），所以各索引对应的文件名由 seed 决定。
     paths = find_images(args.calibration_dir, args.calibration_limit, args.seed)
     checks = find_images(args.validation_dir or args.calibration_dir,
                          args.validation_limit, args.seed + 1)
     example = load_image(paths[0], args.image_size, args.preprocessing)
     model, names = load_model(args.model, args.image_size, example)
-    spec = make_compile_spec(args)
+    spec = make_compile_spec(args)          # 后续vela编译参数 供后续量化器和后端编译使用
     quantized = quantize(model, paths, args, spec)
     results = validate(model, quantized, checks, args)
     report = {

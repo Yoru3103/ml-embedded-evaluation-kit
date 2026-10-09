@@ -14,6 +14,7 @@ from torchvision.transforms.functional import pil_to_tensor
 from ultralytics import YOLO
 
 
+# 返回boxes与logits
 def split_inference(head: torch.nn.Module, predictions: dict) -> tuple:
     """Decode boxes without combining their quantization range with class logits."""
     return getattr(head, "_get_decode_boxes")(predictions), predictions["scores"]
@@ -30,7 +31,8 @@ class ExportYolo(torch.nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         """Normalize boxes before concatenating them with probabilities."""
-        boxes, logits = self.model(inputs)
+        boxes, logits = self.model(inputs)      # 修改后的检测头分别输出像素坐标框、类别logits
+        # 框坐标归一化，logits转成类别概率，最终拼接成一个连续张量[1, 4+C, N]
         return torch.cat((boxes / self.image_size, logits.sigmoid()), dim=1).contiguous()
 
 
@@ -43,11 +45,12 @@ def load_model(path: Path, image_size: int, example: torch.Tensor) -> tuple:
     # 读取检测头的 end2end 属性；没有这个属性时返回默认值 False。如果属性为 True，也拒绝处理。
     if yolo.task != "detect" or getattr(head, "end2end", False):
         raise ValueError("Only non-end-to-end Ultralytics detection checkpoints are supported")
+    # 检查框解码接口是否存在
     if not callable(getattr(head, "_get_decode_boxes", None)):
         raise ValueError("This Ultralytics Detect version lacks _get_decode_boxes")
     head.export = True
-    with torch.no_grad():
-        original = model(example)
+    with torch.no_grad():       # 不记录梯度，运行原始模型
+        original = model(example)   # 保存检测头尚未被修改时的输出
     setattr(head, "_inference", types.MethodType(split_inference, head))
     wrapper = ExportYolo(model, image_size).eval()
     with torch.no_grad():
