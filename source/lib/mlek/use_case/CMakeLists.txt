@@ -19,7 +19,7 @@
 # Add individual use case APIs but don't include them in default build
 set(_MLEK_API_LIST
     asr kws noise_reduction         # Voice/Audio pipelines
-    img_class object_detection vww yolov8_detection  # Vision pipelines
+    img_class object_detection vww yolov8_detection yolov8_pose  # Vision pipelines
     ad                              # Vibration pipeline
     inference_runner)               # Generic runner - minimal inference
 

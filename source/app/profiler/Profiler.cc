@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +59,7 @@ namespace app {
         if (this->m_started) {
             this->m_tstampEnd.initialised = false;
             hal_pmu_get_counters(&this->m_tstampEnd);
+            hal_pmu_final();
             this->m_started = false;
             if (this->m_tstampEnd.initialised) {
                 this->UpdateRunningStats(
@@ -84,6 +85,9 @@ namespace app {
 
     void Profiler::Reset()
     {
+        if (this->m_started) {
+            hal_pmu_final();
+        }
         this->m_started = false;
         this->m_profStats.clear();
         memset(&this->m_tstampSt, 0, sizeof(this->m_tstampSt));
@@ -94,7 +98,7 @@ namespace app {
                            Statistics& data)
     {
         data.total += currentValue;
-        data.min = std::min(data.min, currentValue);
+        data.min = data.samplesNum == 1 ? currentValue : std::min(data.min, currentValue);
         data.max = std::max(data.max, currentValue);
         data.avrg = (static_cast<double>(data.total) / data.samplesNum);
     }

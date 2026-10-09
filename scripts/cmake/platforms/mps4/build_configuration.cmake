@@ -133,11 +133,18 @@ function(platform_custom_post_build)
         set(TEST_TARGET_NAME "${PARSED_TARGET_NAME}_fvp_test")
 
         message(STATUS "Adding FVP test for ${PARSED_TARGET_NAME}")
+        set(FVP_NPU_ARGS)
+        if (ETHOS_U_NPU_ENABLED AND ETHOS_U_NPU_ID STREQUAL "U85")
+            string(REGEX REPLACE "^Z" "" FVP_NPU_MACS "${ETHOS_U_NPU_CONFIG_ID}")
+            list(APPEND FVP_NPU_ARGS
+                -C "mps4_board.subsystem.ethosu.num_macs=${FVP_NPU_MACS}")
+        endif()
         add_test(
             NAME "${TEST_TARGET_NAME}"
             COMMAND ${FVP_PATH} -a $<TARGET_FILE:${PARSED_TARGET_NAME}>
+                ${FVP_NPU_ARGS}
                 -C mps4_board.telnetterminal0.start_telnet=0
-                -C mps4_board.uart0.out_file='-'
+                -C mps4_board.uart0.out_file=-
                 -C mps4_board.uart0.shutdown_on_eot=1
                 -C mps4_board.visualisation.disable-visualisation=1
                 -C vis_hdlcd.disable_visualisation=1
@@ -145,6 +152,12 @@ function(platform_custom_post_build)
 
         set_tests_properties(${TEST_TARGET_NAME} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:${PARSED_TARGET_NAME}>;${FVP_PATH}")
+        if (PARSED_TARGET_NAME STREQUAL "mlek_yolov8_pose")
+            set_tests_properties(${TEST_TARGET_NAME} PROPERTIES
+                PASS_REGULAR_EXPRESSION "YOLOv8 pose use case terminated successfully"
+                FAIL_REGULAR_EXPRESSION "TA_.*readback mismatch;terminated with failure;Failed to initialise"
+                TIMEOUT 200)
+        endif()
     endif ()
 
 endfunction()

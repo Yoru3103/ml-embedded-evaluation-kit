@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -63,7 +63,18 @@ iface::TensorType EtTensor::Type()
 
 iface::TensorLayout EtTensor::Layout()
 {
-    return iface::TensorLayout::NCHW;
+    const auto dimOrder = this->m_tensor.dim_order();
+    if (dimOrder.size() != 4) {
+        return iface::TensorLayout::INVALID;
+    }
+
+    if (dimOrder[0] == 0 && dimOrder[1] == 1 && dimOrder[2] == 2 && dimOrder[3] == 3) {
+        return iface::TensorLayout::NCHW;
+    }
+    if (dimOrder[0] == 0 && dimOrder[1] == 2 && dimOrder[2] == 3 && dimOrder[3] == 1) {
+        return iface::TensorLayout::NHWC;
+    }
+    return iface::TensorLayout::INVALID;
 }
 
 iface::QuantParams EtTensor::GetQuantParams()

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2024-2025 Arm Limited and/or its affiliates
+ * SPDX-FileCopyrightText: Copyright 2022, 2024-2026 Arm Limited and/or its affiliates
  * <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -22,11 +22,28 @@
 
 #include <string.h>
 
+#if defined(ETHOSU85) && defined(ETHOSU_PMU_GROUP_LATENCY)
+#include "ethosu_interface.h"
+
+/* The pinned driver exposes the U85 register definitions but has no public
+ * latency-channel setter. Keep this adaptation in the NPU HAL component. */
+static void set_latency_channel(struct ethosu_driver* drv)
+{
+    struct pmcaxi_chan_r cfg = {0};
+    cfg.AXI_SEL = ETHOSU_PMU_AXI_SEL;
+    cfg.CH_SEL = ETHOSU_PMU_CHANNEL;
+    cfg.BW_CH_SEL_EN = 0;
+    drv->dev.reg->PMCAXI_CHAN.word = cfg.word;
+}
+#endif
+
 extern struct ethosu_driver ethosu_drv;    /* Default Arm Ethos-U NPU device driver object */
 static ethosu_pmu_counters s_npu_counters; /* NPU counter local instance */
 static uint32_t s_evt_mask = 0;            /* PMU event mask */
 
-static const char* unit_beats  = "beats";
+#if defined(ETHOSU55) || defined(ETHOSU65)
+static const char* unit_beats = "beats";
+#endif
 static const char* unit_cycles = "cycles";
 
 /**
@@ -101,36 +118,97 @@ void ethosu_pmu_init(void)
     counters->npu_evt_counters[3].name       = "NPU AXI1_RD_DATA_BEAT_RECEIVED";
     counters->npu_evt_counters[3].unit       = unit_beats;
 #elif defined(ETHOSU85)
-    counters->npu_evt_counters[0].event_type = ETHOSU_PMU_NPU_ACTIVE;
-    counters->npu_evt_counters[0].event_mask = ETHOSU_PMU_CNT1_Msk;
-    counters->npu_evt_counters[0].name       = "NPU ACTIVE";
-    counters->npu_evt_counters[0].unit       = unit_cycles;
+#define PMU_EVENT(event, unit_text) \
+    { .event_type = ETHOSU_PMU_##event, .name = "NPU " #event, .unit = unit_text }
 
-    counters->npu_evt_counters[1].event_type = ETHOSU_PMU_SRAM_RD_DATA_BEAT_RECEIVED;
-    counters->npu_evt_counters[1].event_mask = ETHOSU_PMU_CNT2_Msk;
-    counters->npu_evt_counters[1].name       = "NPU ETHOSU_PMU_SRAM_RD_DATA_BEAT_RECEIVED";
-    counters->npu_evt_counters[1].unit       = unit_beats;
+#if defined(ETHOSU_PMU_GROUP_A)
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE,             "cycles"),
+        PMU_EVENT(MAC_ACTIVE,             "cycles"),
+        PMU_EVENT(MAC_DPU_ACTIVE,         "cycles"),
+        PMU_EVENT(MAC_STALLED_BY_IB,      "cycles"),
+        PMU_EVENT(MAC_STALLED_BY_W,       "cycles"),
+        PMU_EVENT(MAC_STALLED_BY_ACC,     "cycles"),
+        PMU_EVENT(AO_STALLED_BY_OB,       "cycles"),
+        PMU_EVENT(CC_STALLED_ON_BLOCKDEP, "cycles"),
+    };
+#elif defined(ETHOSU_PMU_GROUP_B) || defined(ETHOSU_PMU_GROUP_B_SRAM0) || \
+    defined(ETHOSU_PMU_GROUP_B_SRAM1)
+#if defined(ETHOSU_PMU_GROUP_B_SRAM0)
+#define PMU_SRAM_EVENT(event) PMU_EVENT(SRAM0_##event, "cycles")
+#define PMU_SRAM_BEAT_EVENT(event) PMU_EVENT(SRAM0_##event, "beats")
+#elif defined(ETHOSU_PMU_GROUP_B_SRAM1)
+#define PMU_SRAM_EVENT(event) PMU_EVENT(SRAM1_##event, "cycles")
+#define PMU_SRAM_BEAT_EVENT(event) PMU_EVENT(SRAM1_##event, "beats")
+#else
+#define PMU_SRAM_EVENT(event) PMU_EVENT(SRAM_##event, "cycles")
+#define PMU_SRAM_BEAT_EVENT(event) PMU_EVENT(SRAM_##event, "beats")
+#endif
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE,                 "cycles"),
+        PMU_SRAM_BEAT_EVENT(RD_DATA_BEAT_RECEIVED),
+        PMU_SRAM_BEAT_EVENT(WR_DATA_BEAT_WRITTEN),
+        PMU_SRAM_EVENT(RD_TRAN_REQ_STALLED),
+        PMU_SRAM_EVENT(WR_TRAN_REQ_STALLED),
+        PMU_SRAM_EVENT(WR_DATA_BEAT_STALLED),
+        PMU_SRAM_EVENT(RD_STALL_LIMIT),
+        PMU_SRAM_EVENT(WR_STALL_LIMIT),
+    };
+#undef PMU_SRAM_EVENT
+#undef PMU_SRAM_BEAT_EVENT
+#elif defined(ETHOSU_PMU_GROUP_C)
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE,                "cycles"),
+        PMU_EVENT(EXT_RD_DATA_BEAT_RECEIVED, "beats"),
+        PMU_EVENT(EXT_WR_DATA_BEAT_WRITTEN,  "beats"),
+        PMU_EVENT(EXT_RD_TRAN_REQ_STALLED,   "cycles"),
+        PMU_EVENT(EXT_WR_TRAN_REQ_STALLED,   "cycles"),
+        PMU_EVENT(EXT_WR_DATA_BEAT_STALLED,  "cycles"),
+        PMU_EVENT(EXT_RD_STALL_LIMIT,        "cycles"),
+        PMU_EVENT(EXT_WR_STALL_LIMIT,        "cycles"),
+    };
+#elif defined(ETHOSU_PMU_GROUP_D)
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE,             "cycles"),
+        PMU_EVENT(SRAM_RD_TRANS_ACCEPTED, "transactions"),
+        PMU_EVENT(SRAM_WR_TRANS_ACCEPTED, "transactions"),
+        PMU_EVENT(EXT_RD_TRANS_ACCEPTED,  "transactions"),
+        PMU_EVENT(EXT_WR_TRANS_ACCEPTED,  "transactions"),
+        PMU_EVENT(SRAM_ENABLED_CYCLES,    "cycles"),
+        PMU_EVENT(EXT_ENABLED_CYCLES,     "cycles"),
+        PMU_EVENT(WD_STALLED,             "cycles"),
+    };
+#elif defined(ETHOSU_PMU_GROUP_LATENCY)
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE,       "cycles"),
+        PMU_EVENT(AXI_LATENCY_ANY,  "transactions"),
+        PMU_EVENT(AXI_LATENCY_32,   "transactions"),
+        PMU_EVENT(AXI_LATENCY_64,   "transactions"),
+        PMU_EVENT(AXI_LATENCY_128,  "transactions"),
+        PMU_EVENT(AXI_LATENCY_256,  "transactions"),
+        PMU_EVENT(AXI_LATENCY_512,  "transactions"),
+        PMU_EVENT(AXI_LATENCY_1024, "transactions"),
+    };
+#else
+    #error "An ETHOSU85 PMU group must be selected"
+#endif
 
-    counters->npu_evt_counters[2].event_type = ETHOSU_PMU_SRAM_WR_DATA_BEAT_WRITTEN;
-    counters->npu_evt_counters[2].event_mask = ETHOSU_PMU_CNT3_Msk;
-    counters->npu_evt_counters[2].name       = "NPU ETHOSU_PMU_SRAM_WR_DATA_BEAT_WRITTEN";
-    counters->npu_evt_counters[2].unit       = unit_beats;
+    for (i = 0; i < ETHOSU_USED_PMU_NCOUNTERS; ++i) {
+        counters->npu_evt_counters[i] = events[i];
+        counters->npu_evt_counters[i].event_mask = 1UL << i;
+    }
 
-    counters->npu_evt_counters[3].event_type = ETHOSU_PMU_EXT_RD_DATA_BEAT_RECEIVED;
-    counters->npu_evt_counters[3].event_mask = ETHOSU_PMU_CNT4_Msk;
-    counters->npu_evt_counters[3].name       = "NPU ETHOSU_PMU_EXT_RD_DATA_BEAT_RECEIVED";
-    counters->npu_evt_counters[3].unit       = unit_beats;
-
-    counters->npu_evt_counters[4].event_type = ETHOSU_PMU_EXT_WR_DATA_BEAT_WRITTEN;
-    counters->npu_evt_counters[4].event_mask = ETHOSU_PMU_CNT5_Msk;
-    counters->npu_evt_counters[4].name       = "NPU ETHOSU_PMU_EXT_WR_DATA_BEAT_WRITTEN";
-    counters->npu_evt_counters[4].unit       = unit_beats;
+#undef PMU_EVENT
 #endif /* defined(ETHOSU55) || defined(ETHOSU65) */
 
 #if ETHOSU_DERIVED_NCOUNTERS >= 1
+    counters->npu_evt_counters[0].name = "NPU ACTIVE";
     counters->npu_derived_counters[0].name = "NPU IDLE";
     counters->npu_derived_counters[0].unit = unit_cycles;
 #endif /* ETHOSU_DERIVED_NCOUNTERS >= 1 */
+
+    /* Enable PMU before writing the event selectors. */
+    ETHOSU_PMU_Enable(&ethosu_drv);
 
     for (i = 0; i < ETHOSU_USED_PMU_NCOUNTERS; ++i) {
         ETHOSU_PMU_Set_EVTYPER(&ethosu_drv, i, counters->npu_evt_counters[i].event_type);
@@ -142,9 +220,6 @@ void ethosu_pmu_init(void)
     /* Reset overflow status. */
     ETHOSU_PMU_Set_CNTR_OVS(&ethosu_drv, get_event_mask());
 
-    /* Enable PMU. */
-    ETHOSU_PMU_Enable(&ethosu_drv);
-
     /* Enable counters for cycle and event counters. */
     ETHOSU_PMU_CNTR_Disable(&ethosu_drv, get_event_mask());
     ethosu_pmu_reset_counters();
@@ -153,6 +228,11 @@ void ethosu_pmu_init(void)
 /**
  * @brief  Resets the Arm Ethos-U NPU PMU counters.
  */
+void ethosu_pmu_final(void)
+{
+    ETHOSU_PMU_Disable(&ethosu_drv);
+}
+
 void ethosu_pmu_reset_counters(void)
 {
     /* Reset all cycle and event counters. */
@@ -198,6 +278,9 @@ void ethosu_inference_begin(struct ethosu_driver* drv, void* userArg)
     UNUSED(userArg);
     ethosu_clear_cache_states();
     ETHOSU_PMU_CNTR_Disable(drv, get_event_mask());
+#if defined(ETHOSU85) && defined(ETHOSU_PMU_GROUP_LATENCY)
+    set_latency_channel(drv);
+#endif
     ETHOSU_PMU_CNTR_Enable(drv, get_event_mask());
 }
 

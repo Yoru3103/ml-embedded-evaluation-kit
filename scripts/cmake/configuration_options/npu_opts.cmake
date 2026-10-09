@@ -57,14 +57,9 @@ elseif (ETHOS_U_NPU_ID STREQUAL U65)
     set(DEFAULT_NPU_CONFIG_ID   "Y256")
 elseif (ETHOS_U_NPU_ID STREQUAL U85)
     set(DEFAULT_NPU_MEM_MODE    "Dedicated_Sram")
-    if (FPGA_PLATFORM_SSE_320)
-        # FPGA is fixed at 1024 MACs
-        set(DEFAULT_NPU_CONFIG_ID   "Z1024")
-    else ()
-        # FVP, although with MACs configurable from command line, defaults to
-        # 256 MACs.
-        set(DEFAULT_NPU_CONFIG_ID   "Z256")
-    endif ()
+    # Match the 1024-MAC FPGA configuration on FVP as well.
+    # The FVP model must also be launched with 1024 MACs.
+    set(DEFAULT_NPU_CONFIG_ID   "Z1024")
 else()
     message(FATAL_ERROR "Non compatible Ethos-U NPU processor ${ETHOS_U_NPU_ID}")
 endif()

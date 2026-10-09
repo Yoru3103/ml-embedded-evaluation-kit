@@ -104,8 +104,9 @@ try {
         "import importlib.metadata as m; assert m.version('executorch') == '1.3.1'; assert m.version('torch').split('+')[0] == '2.12.0'; from executorch.exir._serialize import _deserialize_pte_binary; import torchgen")
     Invoke-Checked (Join-Path $binDir 'flatc.exe') @('--version')
     if ($Action -eq 'Setup') { return }
-    foreach ($dependency in @('flatbuffers', 'flatcc', 'gflags', 'json')) {
-        if (-not (Test-Path (Join-Path $etSource "third-party/$dependency/CMakeLists.txt"))) {
+    foreach ($dependency in @('third-party/flatbuffers', 'third-party/flatcc',
+            'third-party/gflags', 'third-party/json', 'backends/xnnpack/third-party/FXdiv')) {
+        if (-not (Test-Path (Join-Path $etSource "$dependency/CMakeLists.txt"))) {
             throw "Missing ExecuTorch submodule $dependency. Run git submodule update --init --recursive."
         }
     }
@@ -163,7 +164,10 @@ try {
     }
     $fpga = if ($Target -eq 'FPGA') { 'ON' } else { 'OFF' }
     $ninjaPath = $buildTools.Ninja.Replace('\', '/')
+    # Reapply TA defaults on every configure; explicit -D overrides are appended below.
     $argsList = @('-S', $repoRoot, '-B', $BuildDirectory, '-G', 'Ninja',
+        '-U', 'SRAM_*', '-U', 'EXT_*',
+        '-DETHOS_U_NPU_CONFIG_ID=Z1024', '-DCPU_PROFILE_ENABLED=ON',
         "-DCMAKE_TOOLCHAIN_FILE=$toolchainFile", '-DCMAKE_BUILD_TYPE=Debug',
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath",
         '-DTARGET_PLATFORM=mps4', '-DTARGET_SUBSYSTEM=sse-320',
@@ -191,6 +195,10 @@ try {
     }
     if ($ActivationBufferSize) {
         $argsList += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
+    }
+    if ($UseCase -eq 'yolov8_pose') {
+        $argsList += @('-DETHOS_U_NPU_CACHE_SIZE=131072',
+            '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
     $argsList += $CMakeArgs
     Invoke-Checked $cmake $argsList
