@@ -110,6 +110,173 @@ temporary pool. Configure `ML_FWK_TMP_MEM_BASE` and `ML_FWK_TMP_MEM_SIZE` for th
 memory map, and keep the display frame buffer outside that pool. Dedicated mode already
 places method memory in DDR through the normal activation buffer attributes.
 
+## QR-code ONNX export
+
+`export_qrcode_onnx.py` handles the fixed four-output model at
+`resources_downloaded/yolo_QRcode/best.onnx` directly; no `.pt` checkpoint is needed.
+Install the extra conversion dependencies into the existing project environment:
+
+```bash
+resources_downloaded/env/bin/python -m pip install \
+    onnx==1.19.1 onnxruntime==1.31.0 onnx2torch==1.5.15 \
+    litert-torch==0.9.4 ai-edge-litert==2.2.0 ai-edge-quantizer==0.9.0
+
+resources_downloaded/env/bin/python scripts/export_qrcode_onnx.py --memory-mode all \
+    --reference-tflite \
+    /home/xx/alif_ml-embedded-evaluation-kit/20260827_Model/best_int8_new.tflite
+```
+
+The default calibration directory is `resources/object_detection/samples_QRcode/`.
+The same RGB `/255` preparation is used by both frameworks. `--preprocessing mlek-crop`
+matches the existing firmware; choose `letterbox` only when the deployment uses that
+policy too. `--calibration-dir`, `--validation-dir`, limits, seed, output directory,
+NPU target, Vela configuration, cache and memory budgets are configurable.
+`--format pte` or `--format tflite` exports only the selected framework.
+The default memory mode is `Dedicated_Sram`; `--memory-mode all` also exports Shared SRAM.
+`--reference-tflite` is optional. The example reference uses the same ONNX source as
+the QR-code model. Other files named `best_int8.tflite` or `yolov8n_int8.tflite` in that
+external directory have a different detection interface and are not QR-code references.
+
+The supplied ONNX input is float32 `[1,3,256,256]`. Its outputs, in source graph order,
+are `[1,79,32,32]`, `[1,79,16,16]`, `[1,79,8,8]` and `[1,1,1344]`. The first three heads
+contain 64 raw DFL values and 15 class logits; the last output contains objectness
+logits. The deployment models use **INT8 input and all four INT8 outputs**, preserving
+the original NCHW shapes and output order. Quantize input with
+`clip(round(rgb / 255 / scale) + zero_point, -128, 127)` and dequantize each output with
+`(value - zero_point) * scale`. Each output has its own parameters; read them from the
+report. The reference TFLite has NHWC heads in a different output order, which the
+validation adapter maps back to the ONNX interface.
+DFL decoding, sigmoid and NMS remain application postprocessing. The zero-CPU-operator
+requirement applies to the compiled neural-network graph. Do not use the single-output
+`.pt` export contract for this model.
+
+The adapter specializes fixed Resize, Slice and Reshape parameters, uses Linear for
+constant MatMul weights and folds SE Expand into shape-checked multiplication.
+ReLU is expressed as an equivalent clamp so the Arm PT2E quantizer inserts quantization
+boundaries around convolutions even when concatenation branches share output parameters.
+This avoids four Conv/ReLU pairs falling back to CPU when the shared zero point differs
+from the quantized minimum.
+Unsupported dynamic shapes or different detection interfaces fail explicitly.
+ONNX Runtime reference predictions are compared against the captured PyTorch graph
+and FP32 LiteRT on every validation image. A difference exceeding `rtol=1e-4`,
+`atol=1e-4` aborts conversion. Host PT2E and INT8 LiteRT outputs are dequantized and
+compared separately. Validation decodes DFL boxes and computes
+`sigmoid(class_logits) * sigmoid(objectness_logits)`, matching the raw-head postprocessor.
+The default acceptance checks require the maximum absolute score difference to be at
+most 0.15 and the box IoU at the strongest ONNX anchor to be at least 0.9. Configure
+these limits with `--max-score-error` and `--min-box-iou`. Reports retain per-output
+raw errors and per-image score/box metrics, including those for the optional reference.
+These numerical checks do not measure labeled detection accuracy.
+
+Outputs are under `resources_downloaded/yolo_QRcode/`:
+
+| Artifact | Path |
+| --- | --- |
+| FP32 and INT8 LiteRT | `tflite/best_float32.tflite`, `tflite/best_int8.tflite` |
+| Vela-compiled TFLite | `tflm_<memory-mode>/best_int8_vela.tflite` |
+| Ethos-U ExecuTorch | `pte_<memory-mode>/best.pte` |
+| Intermediate PyTorch graphs | `pte_<memory-mode>/best_graphs/{float,quantized}.pt2` |
+| Export configuration and numerical checks | `export_report.json` |
+| PTE layouts, CPU operators and memory | `pte_<memory-mode>/best.json` |
+| Optional compiled reference | `reference_<memory-mode>/best_int8_new_vela.tflite` |
+| Vela logs and performance estimates | `tflm_<memory-mode>/vela.log`, `*.csv` |
+
+The report includes the source SHA-256, package versions, calibration paths, original
+output names, compiler arguments and stage status. PTE serialized shapes and dimension
+orders must match ONNX, with INT8 tensors and only Ethos-U delegates. The script checks
+the serialized forward execution plan and rejects **any CPU operator**. PTE integer
+I/O parameters are stored as configuration methods and in the JSON sidecar.
+Vela-compiled TFLite must contain only `ethos-u` custom operators and INT8 I/O. The check
+walks the actual operators in every subgraph, not unused entries in the opcode table.
+A failed run
+sets report status to `failed`; files left from earlier runs must not be assumed current.
+`--no-save-intermediate` suppresses the `.pt2` archives.
+
+The six supplied images allow calibration and numerical smoke checks. By default they
+are also reused for validation, which is recorded in the report. Use a larger,
+representative calibration set and independent labeled validation data before drawing
+accuracy conclusions. Host checks do not execute the compiled NPU program.
+
+ONNX has no class-name metadata. The exporter creates `labels.txt` with 15 `class_N`
+placeholders when it does not already exist. Replace them with the actual training
+labels for meaningful detection names, preserving class order.
+
+This script stops after model conversion, Vela compilation and host validation.
+The ExecuTorch tensor wrapper recognizes ordinary INT8/UINT8 tensors and the model
+loader reads each tensor's scale and zero point from PTE configuration methods
+(`input0_scale`, `input0_zp`, `output0_scale`, etc.; method-prefixed names also work).
+Missing or invalid quantization parameters cause initialization to fail explicitly.
+Floating interfaces continue to use the existing preprocessing.
+
+Build and run the baseline firmware after model validation:
+
+```bash
+bash scripts/build_qrcode_sse320.sh all all
+bash scripts/run_qrcode_fvp320.sh all
+```
+
+The builder generates eight separate directories for FVP/FPGA, PTE/TFLite and both
+SRAM modes. Settings match the compiled U85 Z1024 / TA Mid models. The default input
+is `samples_QRcode/1.png`, which produces a detection at the default score threshold.
+`QRCODE_SAMPLE_PATH`, `QRCODE_LABELS_FILE`, `QRCODE_MODEL_ROOT` and `BUILD_JOBS` override
+the input, labels, model directory and compiler parallelism. Shared PTE scratch uses
+the 4 MiB SRAM, while its method pool and display frame buffer are placed in DDR.
+The FVP runner uses the vendor runtime in a subshell and writes each project's
+`fvp.log`. Set `FVP_PATH` and `FVP_TIMEOUT` when needed.
+
+Dedicated SRAM fast-cache comparison includes **64, 128, 256, 384 and 768 KiB**:
+
+```bash
+resources_downloaded/env/bin/python scripts/compile_qrcode_fastcache.py
+bash scripts/build_qrcode_fastcache_sse320.sh all all all
+bash scripts/run_qrcode_fastcache_fvp320.sh all all
+# One case:
+bash scripts/build_qrcode_fastcache_sse320.sh fpga pte 256
+```
+
+The compiler reuses the validated INT8 TFLite and calibrated PT2E graphs, keeping
+calibration fixed while varying Vela's cache budget. It retains the original model
+outputs and rejects CPU operators. Models are saved under
+`resources_downloaded/yolo_QRcode/fastcache_dedicated/<tflm|pte>/<size>k/`, with
+`compilation.json` containing status, hashes, cache size and NPU-only checks.
+`--cache-kib 256` and `--format tflm` or `pte` select individual compiler cases.
+The validated PT2E archive requires the initial export's default `--save-intermediate`.
+
+Each firmware cache size matches its corresponding Vela model and is recorded in
+CMake configuration. All 20 Dedicated variants have independent
+`build-qrcode-fastcache-<fvp|fpga>-<tflm|pte>-<size>k-z1024-ta-mid/` projects. Builders
+verify compilation status and model/configuration hashes before starting each case.
+`QRCODE_FASTCACHE_ROOT` selects an alternate matrix model directory for building.
+FPGA images are in `bin/sectors/yolov8_detection/{boot,bram,ddr}.bin`.
+Per-project `configure.log`, `build.log` and `fvp.log` retain build and runtime results.
+Use NPU PMU counts for FVP comparisons; measure hardware latency on the FPGA.
+
+FVP measurements on 2026-10-09 used U85 Z1024, TA Mid, Dedicated SRAM,
+Vela Performance/COP1 and the same `samples_QRcode/1.png` input:
+
+| Cache (KiB) | TFLite NPU cycles | PTE NPU cycles |
+|-------------|-------------------|----------------|
+| 64 | 1,515,086 | 1,759,056 |
+| 128 | 1,410,086 | 1,665,056 |
+| 256 | 1,460,086 | 1,550,056 |
+| 384 | 969,086 | 1,107,056 |
+| 768 | 969,086 | 1,107,056 |
+
+All ten compiled models contain zero CPU operators and one Ethos-U delegate;
+all ten FVP runs completed successfully. Each TFLite case produced class 3,
+score 0.305362 and box `(78, 24, 106, 109)`; each PTE case produced class 3,
+score 0.311188 and box `(79, 25, 105, 107)`. Box values are `(x, y, width, height)`
+in model-input coordinates. For this model, increasing the cache from 384 to
+768 KiB did not reduce NPU cycles; the TFLite 256 KiB result also shows that
+latency need not decrease at every cache increment.
+
+These are single-image FVP measurements, not FPGA timings or an independent
+accuracy evaluation. `CPU TOTAL` includes the elapsed inference interval while
+the CPU waits for the NPU; its presence does not indicate CPU model operators.
+Local `resources_downloaded/yolo_QRcode/fastcache_performance.csv` and
+`firmware_test_report.json` retain the measured cycles, model hashes, build
+configuration checks and firmware paths.
+
 ## Contract checks
 
 With the export dependencies installed:
@@ -117,4 +284,7 @@ With the export dependencies installed:
 ```bash
 PYTHONPATH=scripts python -m unittest discover \
     -s scripts/tests -p test_yolo_pte_contract.py -v
+
+PYTHONPATH=scripts python -m unittest discover \
+    -s scripts/tests -p test_qrcode_onnx_export.py -v
 ```

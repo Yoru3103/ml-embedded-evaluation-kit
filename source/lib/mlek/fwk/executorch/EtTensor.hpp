@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -28,9 +28,11 @@ namespace arm::app::fwk::et {
 
 class EtTensor : public iface::TensorIface {
 public:
-    explicit EtTensor(executorch::aten::TensorImpl* tensorImpl); /**< Constructor */
-    explicit EtTensor(executorch::aten::Tensor& tensor);         /** Constructor */
-    ~EtTensor() override = default;                              /** Destructor */
+    explicit EtTensor(executorch::aten::TensorImpl* tensorImpl,
+                      iface::QuantParams quantParams = {}); /**< Constructor */
+    explicit EtTensor(executorch::aten::Tensor& tensor,
+                      iface::QuantParams quantParams = {}); /** Constructor */
+    ~EtTensor() override = default;                         /** Destructor */
     void* GetData() override;
     size_t Bytes() override;
     size_t GetNumElements() override;
@@ -41,6 +43,7 @@ public:
 
 private:
     executorch::aten::Tensor m_tensor{nullptr};
+    iface::QuantParams m_quantParams{};
 };
 
 } // namespace arm::app::fwk::et
