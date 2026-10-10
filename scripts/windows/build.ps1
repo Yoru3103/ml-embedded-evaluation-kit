@@ -160,6 +160,10 @@ try {
         "-DCMAKE_MAKE_PROGRAM=$ninjaPath",
         "-DUSE_CASE_BUILD=$UseCase"
     )
+    if (-not $ModelPath -and $UseCase -eq 'yolov8_pose') {
+        $ModelPath = Join-Path $repoRoot `
+            'resources_downloaded/yolov8_pose/model_int8_vela_u85_1024_Dedicated_Sram_256k.tflite'
+    }
     if ($ModelPath) {
         $modelFile = (Resolve-Path -LiteralPath $ModelPath).ProviderPath.Replace('\', '/')
         $configureArgs += "-D${UseCase}_MODEL_PATH=$modelFile"
@@ -182,7 +186,7 @@ try {
         $configureArgs += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
     if ($UseCase -eq 'yolov8_pose') {
-        $configureArgs += @('-DETHOS_U_NPU_CACHE_SIZE=131072',
+        $configureArgs += @('-DETHOS_U_NPU_CACHE_SIZE=262144',
             '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
     $configureArgs += $CMakeArgs

@@ -135,6 +135,10 @@ function(generate_model_code)
         endif()
     endif()
 
+    if (ALLOW_PTE_MAC_MISMATCH AND ABS_MODEL_PATH MATCHES "[.]pte$")
+        list(APPEND py_arg_exp --allow_pte_mac_mismatch)
+    endif()
+
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env
             "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
