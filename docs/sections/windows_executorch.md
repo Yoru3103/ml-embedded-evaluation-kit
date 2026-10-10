@@ -9,7 +9,7 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 
 在 Windows 本地磁盘上准备项目源码及完整依赖、Python 3.12（含 `py` 启动器）、GNU Arm Embedded 工具链或 Arm Toolchain for Embedded（ATFE）。GNU 工具链应包含 `arm-none-eabi-gcc.exe`、`arm-none-eabi-g++.exe`、`arm-none-eabi-objcopy.exe`；ATFE 应包含 `clang.exe`、`llvm-ar.exe`、`llvm-objcopy.exe`。此脚本不支持 AC6。调试还需 Arm DS，以及 SSE-320 FVP 或 MPS4 板卡与调试连接。
 
-脚本要求 `dependencies/executorch` 为 1.3.1。`-ModelPath` 必须指向预先导出的 `.pte`；脚本不会将 `.pt` / `.pth` checkpoint 转换为 `.pte`。模型的用例、输入输出、Ethos-U 配置和内存模式须与固件一致。
+脚本要求 `dependencies/executorch` 为 1.3.1。`-ModelPath` 指向预先导出的 `.pte`，Pose 的 Dedicated SRAM 构建可省略并使用默认模型；脚本不会将 `.pt` / `.pth` checkpoint 转换为 `.pte`。模型的用例、输入输出、Ethos-U 配置和内存模式须与固件一致。
 
 ## `build-executorch.ps1` 的功能与参数
 
@@ -22,7 +22,7 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 | `-Target` | `FVP` | `FVP` 为 SSE-320 虚拟平台；`FPGA` 为 MPS4 SSE-320 实板。 |
 | `-UseCase` | `img_class` | 单个用例名，映射到 `USE_CASE_BUILD`，例如 `yolov8_detection`。 |
 | `-CompilerBin` | 自动查找 | 编译器 `bin` 目录；优先于 `MLEK_GNU_BIN` / `MLEK_ATFE_BIN`、`PATH` 和常见安装目录。 |
-| `-ModelPath` | 无，构建时必填 | 已导出的 `.pte` 文件，映射到 `<UseCase>_MODEL_PATH`；Setup 不需要。 |
+| `-ModelPath` | Pose Dedicated 使用默认模型；其他情况必填 | 已导出的 `.pte` 文件，映射到 `<UseCase>_MODEL_PATH`；Setup 不需要。 |
 | `-InputPath` | 用例默认输入 | 样本文件或目录，映射到 `<UseCase>_FILE_PATH`。`yolov8_detection` 未指定时使用 `resources/gesture_detection/samples`。 |
 | `-LabelsPath` | 用例默认标签 | 标签文件，映射到 `<UseCase>_LABELS_YAML_FILE`。 |
 | `-ImageSize` | 不覆盖 | 图像尺寸，允许 1–4096；映射到 `<UseCase>_IMAGE_SIZE`。 |
@@ -37,7 +37,7 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 
 脚本每次配置会清除 `SRAM_*`、`EXT_*` 的旧 TA 缓存，然后加载所选配置；自定义 TA 寄存器参数请通过 `-CMakeArgs` 传入，例如 `-DEXT_MAXR=48`，不要只依赖旧构建目录的缓存。直接运行 CMake 切换 TA 配置时，使用新构建目录或添加 `-U "SRAM_*" -U "EXT_*"`，再传入需要的 `-D` 覆盖。
 
-`yolov8_pose` 默认使用 `ETHOS_U_NPU_CACHE_SIZE=131072` 和 `TA_CONFIG_FILE=ta_config_u85_sys_dram_1024`，也可通过 `-CMakeArgs` 显式覆盖。FVP 与 FPGA 使用不同 PTE；构建时仍须通过 `-ModelPath` 指定对应文件。
+`yolov8_pose` 默认使用 `ETHOS_U_NPU_CACHE_SIZE=262144`（256 KiB）和 `TA_CONFIG_FILE=ta_config_u85_sys_dram_1024`，也可通过 `-CMakeArgs` 显式覆盖。Dedicated SRAM 的默认模型位于 `resources_downloaded/yolov8_pose/yolo_hand_pose_u85-1024_ded_256KiB.pte`；FVP 和 FPGA 默认选用这份模型，固件分别构建。Shared SRAM 必须显式提供匹配的 `-ModelPath` 和内存配置。
 
 ## 安装、配置与构建
 
@@ -105,39 +105,109 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-ex
 
 FVP 的启动参数应与固件配置一致：U85 Z1024 使用 `-C mps4_board.subsystem.ethosu.num_macs=1024`。在 Arm DS 的模型连接配置中设置同名参数；CMake 的 MPS4 FVP 集成测试会根据 `ETHOS_U_NPU_CONFIG_ID` 自动传入 MAC 数。
 
-## YOLOv8 Pose 最简调试
+## YOLOv8 Pose 构建与调试
 
-Pose 用例支持 ExecuTorch 和 TFLM，沿用原 Windows 脚本和链接脚本，并接入 CPU/NPU 周期统计及可选 U85 PMU 事件组。在工程根目录的 PowerShell 中执行（必要时先打开 `powershell -NoProfile -ExecutionPolicy Bypass` 会话）：
+先执行 `build-executorch.ps1 -Action Setup` 准备环境，再手动把新后端导出的模型放入
+`resources_downloaded/yolov8_pose/`。该目录已被 Git 忽略，Setup 不下载或导出 Pose 模型。
+图片和标签保留在 `resources/yolov8_pose/`；两个旧的 `dedicated_128k` PTE 已移除。
+
+默认模型为 `yolo_hand_pose_u85-1024_ded_256KiB.pte`，对应 U85 Z1024、Dedicated SRAM、
+256 KiB 缓存和 `Ethos_U85_SYS_DRAM_1024` system config。Dedicated SRAM 构建不传
+`-ModelPath` 时使用此模型，显式传参优先。
+
+### 单次调用：一个模型构建 FVP 固件
+
+在项目根目录的 PowerShell 中执行：
 
 ```powershell
 $fvp = 'C:/Program Files/Arm/FVP_Corstone_SSE-320/models/Win64_VC2019/FVP_Corstone_SSE-320.exe'
 $compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
+$model = '.\resources_downloaded\yolov8_pose\yolo_hand_pose_u85-1024_ded_256KiB.pte'
 .\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target FVP `
-    -UseCase yolov8_pose -CompilerBin $compilerBin `
-    -ModelPath .\resources\yolov8_pose\yolo_hand_pose_dedicated_128k_ethos_u85_1024.pte `
+    -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
+    -MemoryMode Dedicated_Sram `
+    -BuildDirectory build/windows-ATFE-et-FVP-yolov8_pose-Dedicated_Sram-256k `
     -CMakeArgs @('-DCPU_PROFILE_ENABLED=ON', '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON',
         '-DBUILD_FVP_TESTS=ON', "-DFVP_PATH=$fvp")
+```
+
+一次 Build 依次配置 CMake、生成并嵌入模型、编译固件。上面的默认模型可以省略
+`-ModelPath`。运行 FVP 是单独一步：
+
+```powershell
 & .\resources_downloaded\windows-tools\env\Scripts\ctest.exe `
-    --test-dir .\build\windows-ATFE-et-FVP-yolov8_pose-Dedicated_Sram `
+    --test-dir .\build\windows-ATFE-et-FVP-yolov8_pose-Dedicated_Sram-256k `
     -R mlek_yolov8_pose_fvp_test -V
 ```
 
-FVP 测试检查 `YOLOv8 pose use case terminated successfully`，超时为 300 秒。运行时打印 TA 寄存器回读，并核对 MAXR/MAXW/MAXRW、读写延迟、脉冲和带宽上限；不将动态计数器或 FVP 固定的 MODE 值作为配置一致性断言。当前配置的 EXT_MAXR 为 63，不再使用被 6 位寄存器掩码成 0 的 64。
+FVP 测试检查 `YOLOv8 pose use case terminated successfully`，超时为 300 秒。
+运行时打印 TA 寄存器回读；实际配置以构建目录的
+`generated/ta/timing_adapter_settings.h` 为准。
 
-FPGA 只进行编译和链接验证：
+### 单次调用：一个模型构建 FPGA 固件
+
+使用上面定义的 `$compilerBin` 和 `$model`：
 
 ```powershell
 .\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target FPGA `
-    -UseCase yolov8_pose -CompilerBin $compilerBin `
-    -ModelPath .\resources\yolov8_pose\yolo_hand_pose_dedicated_128k_MPS4_ethos_u85_1024.pte `
+    -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
+    -MemoryMode Dedicated_Sram `
+    -BuildDirectory build/windows-ATFE-et-FPGA-yolov8_pose-Dedicated_Sram-256k `
     -CMakeArgs @('-DCPU_PROFILE_ENABLED=ON', '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON')
 ```
 
-各自的 AXF 位于构建目录下 `bin/mlek_yolov8_pose.axf`。Arm DS 载入 FVP 版本并将模型 MAC 数设为 1024；FPGA 版本不应在 FVP 上运行。TA 生成配置位于 `generated/ta/timing_adapter_settings.h`，FVP 的 SRAM/EXT 地址为 `0x50006000/0x50006800`，FPGA 为 `0x51102000/0x51102400`。
+AXF 位于各自的 `<BuildDirectory>/bin/mlek_yolov8_pose.axf`；FPGA 的板上镜像在
+`bin/sectors/`。构建完成后按 Arm DS / MPS4 流程加载对应固件，构建命令不会烧板。
+FVP 与 FPGA 可以使用这份相同的 Z1024 Dedicated PTE，但固件地址不同，不能互换 AXF。
+在 Arm DS 的 FVP 连接中将模型 MAC 数设为 1024。
 
-Pose 的默认 PTE 输入逻辑形状为 `[1,3,224,224]`，物理 dim_order 为 `[0,2,3,1]`；EtTensor 按实际布局报告 NHWC，预处理按交错 RGB 写入。输出为四个 FP32 张量，使用像素坐标和 21 个手部关键点。
+### 批量调用：多个缓存配置分别构建 FVP 和 FPGA
 
-原 `source/app/CMakeLists.txt` 每次配置已经清理生成目录，样本暂存沿用该机制。项目目录和生成目录不应作为输入样本目录。
+循环调用现有入口即可。以下选择本地已有的 Z1024 Dedicated 模型，缓存大小随模型一起
+传入；每个模型与目标使用独立构建目录。
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
+$sizesKiB = @(64, 128, 256, 384, 768)
+$targets = @('FVP', 'FPGA')
+foreach ($size in $sizesKiB) {
+    $model = ".\resources_downloaded\yolov8_pose\yolo_hand_pose_u85-1024_ded_${size}KiB.pte"
+    if (-not (Test-Path -LiteralPath $model)) { throw "Missing model: $model" }
+    foreach ($target in $targets) {
+        .\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target $target `
+            -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
+            -MemoryMode Dedicated_Sram `
+            -BuildDirectory "build/pose-et-$target-ded-${size}k" `
+            -CMakeArgs @("-DETHOS_U_NPU_CACHE_SIZE=$($size * 1024)",
+                '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON')
+    }
+}
+```
+
+`$sizesKiB` 可改为 `@(256)`，`$targets` 可只保留 `FVP` 或 `FPGA`。流程是先准备环境和
+模型，逐个配置、编译，最后分别测试或加载。上述批量命令只构建；自动 FVP 测试需要在
+FVP 调用中追加 `-DBUILD_FVP_TESTS=ON`、`-DFVP_PATH=...`，再对对应目录运行 CTest。
+Shared SRAM 与 Z512 模型需要单独匹配内存和 NPU 配置，不包含在这个 Dedicated Z1024 循环中。
+
+迁移后首次构建使用新目录，避免缓存旧模型路径。切换模型不会重新导出 PTE。
+默认 PTE 输入逻辑形状为 FP32 `[1,3,224,224]`，物理 dim_order 为 `[0,2,3,1]`；
+EtTensor 按实际布局报告 NHWC，预处理按交错 RGB 写入。四个 FP32 输出形状分别为
+`[1,4,1029]`、`[1,1,1029]`、`[1,42,1029]`、`[1,21,1029]`，应用默认使用 SPLIT 输出、
+像素坐标和 21 个手部关键点。更换输出约定时显式覆盖相应 Pose CMake 选项。
+
+TA 生成配置在 `generated/ta/timing_adapter_settings.h`，FVP 的 SRAM/EXT 地址为
+`0x50006000/0x50006800`，FPGA 为 `0x51102000/0x51102400`。
+原 `source/app/CMakeLists.txt` 每次配置已清理生成目录，样本暂存沿用该机制；
+项目目录和生成目录不应作为输入样本目录。
+
+## 在 Z1024 板上比较 U85 的 512 / 1024 PTE
+
+模型生成默认要求 PTE 与固件的 NPU 配置一致。对已确认能在目标板运行的 U85 PTE，
+可通过 `-CMakeArgs` 追加 `-DALLOW_PTE_MAC_MISMATCH=ON`，允许模型和固件使用不同的
+MAC 数。该选项默认关闭，仅对 PTE 的 U85 MAC 数差异生效；*目前为测试项，未成功上板*
+在 Z1024 板上测量 512 PTE 时，保持 `ETHOS_U_NPU_CONFIG_ID=Z1024`；
+Release / O3 设置与该开关独立。
 
 ## Pose 的周期日志与 PMU
 
