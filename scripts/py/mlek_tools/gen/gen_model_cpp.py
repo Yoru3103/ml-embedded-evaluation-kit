@@ -128,6 +128,12 @@ def main():
         default=None
     )
 
+    parser.add_argument(
+        "--allow_pte_mac_mismatch",
+        action="store_true",
+        help="Allow different MAC counts between U85 PTE and firmware configurations.",
+    )
+
     args = parser.parse_args()
     # pylint: enable=duplicate-code
 
@@ -152,7 +158,9 @@ def main():
         validate_tflite_model(model_path, validation_args)
     elif suffix == ".pte":
         # PTE validation runs only when args are set (it will early-return otherwise).
-        validate_pte_model(model_path, validation_args)
+        validate_pte_model(
+            model_path, validation_args, allow_mac_mismatch=args.allow_pte_mac_mismatch
+        )
     else:
         raise ValueError(
             f"Unsupported model type for {model_path}. Expected .tflite or .pte."

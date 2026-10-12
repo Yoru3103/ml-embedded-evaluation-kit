@@ -25,6 +25,7 @@ from mlek_tools.validation.npu_validation import (
     NpuValidationArgs,
     normalize_ethos_u_config,
     normalize_memory_mode,
+    parse_accelerator_config,
 )
 from mlek_tools.validation.pte_ops_dump import (
     dump_pte_ops,
@@ -33,13 +34,16 @@ from mlek_tools.validation.pte_ops_dump import (
 )
 
 
-def validate_pte_model(model_path: Path, args: NpuValidationArgs) -> None:
+def validate_pte_model(
+    model_path: Path, args: NpuValidationArgs, *, allow_mac_mismatch: bool = False
+):
     """
     Validate Arm Ethos-U NPU settings for a PTE model.
 
-    Checks:
-    - Arm Ethos-U NPU delegate presence
-    - Vela flags embedded in the PTE file
+    :param model_path:           PTE model to inspect.
+    :param args:                 Expected NPU configuration and memory mode.
+    :param allow_mac_mismatch:   Allow different MAC counts for two valid U85 configs.
+    :raises ValueError:          Model metadata does not match the requested settings.
     """
     # Emit ops/delegate summary first so it is available even if validation fails.
     dump_pte_ops(model_path)
@@ -84,6 +88,16 @@ def validate_pte_model(model_path: Path, args: NpuValidationArgs) -> None:
         requested_config = normalize_ethos_u_config(args.config)
         inferred_config = normalize_ethos_u_config(vela_config)
         if requested_config != inferred_config:
+            requested_npu, requested_macs = parse_accelerator_config(requested_config)
+            inferred_npu, inferred_macs = parse_accelerator_config(inferred_config)
+            if (allow_mac_mismatch and requested_npu == inferred_npu == "U85"
+                    and requested_macs and inferred_macs):
+                print(
+                    f"WARNING: Allowing PTE MAC mismatch for {model_path}: "
+                    f"firmware {requested_config}, model {inferred_config}. "
+                    "Hardware compatibility must be verified on the target."
+                )
+                return
             raise ValueError(
                 f"NPU config mismatch for {model_path}: "
                 f"requested {args.config} but model was compiled with {vela_config}."

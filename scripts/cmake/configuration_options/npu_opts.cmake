@@ -79,6 +79,11 @@ USER_OPTION(ETHOS_U_NPU_CONFIG_ID "Specifies the configuration ID for the NPU."
     "${DEFAULT_NPU_CONFIG_ID}"
     STRING)
 
+USER_OPTION(ALLOW_PTE_MAC_MISMATCH
+    "Allow U85 PTE MAC counts to differ from the firmware NPU configuration."
+    OFF
+    BOOL)
+
 USER_OPTION(ETHOS_U_NPU_TIMING_ADAPTER_ENABLED "Specifies if the Ethos-U timing adapter is enabled"
     ON
     BOOL)

@@ -124,13 +124,10 @@ USER_OPTION(
 
 if (ML_FRAMEWORK STREQUAL "${ML_FRAMEWORK_TFLM}")
     set(DEFAULT_MODEL_PATH
-        ${CMAKE_SOURCE_DIR}/resources/yolov8_pose/model_int8_vela_u85_1024_packed_dedicated_128k.tflite)
-elseif (FPGA_PLATFORM_SSE_320)
-    set(DEFAULT_MODEL_PATH
-        ${CMAKE_SOURCE_DIR}/resources/yolov8_pose/yolo_hand_pose_dedicated_128k_MPS4_ethos_u85_1024.pte)
+        ${RESOURCES_PATH}/yolov8_pose/model_int8_vela_u85_1024_Dedicated_Sram_256k.tflite)
 else()
     set(DEFAULT_MODEL_PATH
-        ${CMAKE_SOURCE_DIR}/resources/yolov8_pose/yolo_hand_pose_dedicated_128k_ethos_u85_1024.pte)
+        ${RESOURCES_PATH}/yolov8_pose/yolo_hand_pose_u85-1024_ded_256KiB.pte)
 endif()
 
 USER_OPTION(

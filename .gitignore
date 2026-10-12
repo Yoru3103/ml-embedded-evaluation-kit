@@ -5,6 +5,7 @@
 
 # OS files
 .DS_Store
+/%SystemDrive%/
 
 # Downloaded files
 resources_downloaded

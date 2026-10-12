@@ -120,6 +120,10 @@ try {
         Invoke-Checked 'git' @('-C', $etSource, 'apply', '--check', $hostPatch)
         Invoke-Checked 'git' @('-C', $etSource, 'apply', $hostPatch)
     }
+    if (-not $ModelPath -and $UseCase -eq 'yolov8_pose' -and $MemoryMode -eq 'Dedicated_Sram') {
+        $ModelPath = Join-Path $repoRoot `
+            'resources_downloaded/yolov8_pose/yolo_hand_pose_u85-1024_ded_256KiB.pte'
+    }
     if (-not $ModelPath) { throw 'Supply -ModelPath with an exported, target-compatible .pte file.' }
     $ModelPath = (Resolve-Path -LiteralPath $ModelPath).ProviderPath.Replace('\', '/')
     if ([IO.Path]::GetExtension($ModelPath) -ine '.pte') {
@@ -197,7 +201,7 @@ try {
         $argsList += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
     if ($UseCase -eq 'yolov8_pose') {
-        $argsList += @('-DETHOS_U_NPU_CACHE_SIZE=131072',
+        $argsList += @('-DETHOS_U_NPU_CACHE_SIZE=262144',
             '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
     $argsList += $CMakeArgs
