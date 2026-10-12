@@ -1,5 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -30,11 +31,14 @@ EtTensor::EtTensor(executorch::aten::Tensor& tensor, iface::QuantParams quantPar
 
 void* EtTensor::GetData()
 { return this->m_tensor.mutable_data_ptr<void>(); }
+{ return this->m_tensor.mutable_data_ptr<void>(); }
 
 size_t EtTensor::Bytes()
 { return this->m_tensor.nbytes(); }
+{ return this->m_tensor.nbytes(); }
 
 size_t EtTensor::GetNumElements()
+{ return this->m_tensor.numel(); }
 { return this->m_tensor.numel(); }
 
 std::vector<size_t> EtTensor::Shape()
@@ -47,8 +51,10 @@ iface::TensorType EtTensor::Type()
 {
     switch (this->m_tensor.dtype()) {
     case executorch::aten::ScalarType::Char:
+    case executorch::aten::ScalarType::Char:
     case executorch::aten::ScalarType::QInt8:
         return iface::TensorType::INT8;
+    case executorch::aten::ScalarType::Byte:
     case executorch::aten::ScalarType::Byte:
     case executorch::aten::ScalarType::QUInt8:
         return iface::TensorType::UINT8;

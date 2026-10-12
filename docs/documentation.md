@@ -119,8 +119,7 @@ The repository has the following structure:
 │     │    ├── platforms
 │     │    │      ├── mps3
 │     │    │      ├── mps4
-│     │    │      ├── native
-│     │    │      └── simple_platform
+│     │    │      └── native
 │     │    └── ...
 │     └── ...
 ├── source
@@ -295,7 +294,7 @@ The TensorFlow Lite models used in the use-cases implemented in this project can
 
 ### ExecuTorch models
 
-- [torchvision](https://docs.pytorch.org/vision/0.27/)
+- [torchvision](https://docs.pytorch.org/vision/0.28/)
   - [MobileNet V2](https://docs.pytorch.org/vision/main/models/generated/torchvision.models.mobilenet_v2.html)
 
 - [Hugging Face - PyTorch Image Models (timm)](https://huggingface.co/timm) ( [Apache 2.0 License](https://github.com/huggingface/pytorch-image-models/blob/main/LICENSE) )
@@ -350,7 +349,6 @@ For further information, please see:
     - [Configuring the build for MPS4 SSE-315](./sections/building.md#configuring-the-build-for-mps4-sse_315)
     - [Configuring the build for MPS4 SSE-320](./sections/building.md#configuring-the-build-for-mps4-sse_320)
     - [Configuring native unit-test build](./sections/building.md#configuring-native-unit_test-build)
-    - [Configuring the build for simple-platform](./sections/building.md#configuring-the-build-for-simple_platform)
     - [Building the configured project](./sections/building.md#building-the-configured-project)
   - [Building timing adapter with custom options](./sections/building.md#building-timing-adapter-with-custom-options)
   - [Add custom inputs](./sections/building.md#add-custom-inputs)
