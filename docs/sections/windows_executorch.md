@@ -13,11 +13,19 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 
 ## `build-executorch.ps1` 的功能与参数
 
+推荐通过统一入口 `scripts/windows/build.ps1 -Framework pte` 调用。
+`build-executorch.ps1` 保留为兼容入口；两侧共用目录命名、缓存/构建类型/TA/PMU
+参数和 `build-info.json`。完整对照命令见 [二维码复现指南](qrcode_reproduction.md)。
+
 `scripts/windows/build-executorch.ps1` 安装和检查 Windows 工具，配置 CMake，生成模型代码并交叉编译固件。构建前会给 ExecuTorch 1.3.1 的 `third-party/CMakeLists.txt` 应用项目提供的补丁，以复用 Python 包中的 Windows `flatc.exe`；因此 `dependencies/executorch` 会出现本地修改。脚本结束时恢复临时修改的进程环境变量。
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `-Action` | `Build` | `Setup` 安装并检查工具；`Configure` 只配置和生成；`Build` 先配置再编译；`All` 执行全部步骤。首次使用先执行 Setup。 |
+| `-BuildType` | `Debug` | `Debug`、`Release`、`RelWithDebInfo` 或 `MinSizeRel`。 |
+| `-CacheSizeKiB` | 不覆盖 | NPU cache 容量，单位 KiB；须与 PTE 编译缓存一致。 |
+| `-TimingAdapterConfig` | 不覆盖 | TA 配置名，映射到 `TA_CONFIG_FILE`。 |
+| `-PmuGroup` | 不覆盖 | PMU 组，例如 `BW`。 |
 | `-Toolchain` | `GNU` | `GNU` 或 `ATFE`；不支持 AC6。 |
 | `-Target` | `FVP` | `FVP` 为 SSE-320 虚拟平台；`FPGA` 为 MPS4 SSE-320 实板。 |
 | `-UseCase` | `img_class` | 单个用例名，映射到 `USE_CASE_BUILD`，例如 `yolov8_detection`。 |
@@ -28,12 +36,12 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 | `-ImageSize` | 不覆盖 | 图像尺寸，允许 1–4096；映射到 `<UseCase>_IMAGE_SIZE`。 |
 | `-NumClasses` | 不覆盖 | 类别数，允许 1–1000；映射到 `<UseCase>_NUM_CLASSES`。 |
 | `-ActivationBufferSize` | 不覆盖 | 激活区大小，传给 `<UseCase>_ACTIVATION_BUF_SZ`。 |
-| `-BuildDirectory` | `build/windows-<Toolchain>-et-<Target>-<UseCase>-<MemoryMode>` | 构建目录；相对路径从项目根目录解析。不同编译器、目标、用例和内存模式使用独立目录。 |
+| `-BuildDirectory` | 按用例/框架/工具链/目标/内存/缓存/构建类型/PMU 分层 | 构建目录；相对路径从项目根目录解析。完成后保存 `build-info.json`。 |
 | `-MemoryMode` | `Dedicated_Sram` | `Dedicated_Sram` 或 `Shared_Sram`，映射到 `ETHOS_U_NPU_MEMORY_MODE`；须与 PTE 一致。 |
 | `-Jobs` | `4` | 编译并行数，允许 1–128。 |
 | `-CMakeArgs` | 空 | 额外的 `-DNAME=value` 定义，例如 `-DETHOS_U_NPU_CONFIG_ID=Z1024`；不能覆盖脚本控制的编译器、框架、平台、资源路径、用例和内存模式等选项。 |
 
-脚本固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=executorch`、`USE_SINGLE_INPUT=ON` 和 `CMAKE_BUILD_TYPE=Debug`。**Debug 默认开启**，脚本没有单独的 Debug 参数。`-Target FVP` 设置 `FPGA_PLATFORM_SSE_320=OFF`，默认 U85 Z1024；`-Target FPGA` 设置为 `ON`，使用 U85 Z1024。模型若按其他 NPU 配置导出，需通过 `-CMakeArgs` 指定对应的 `ETHOS_U_NPU_CONFIG_ID`。修改目标或内存模式不会重新导出 PTE。FVP 模型的 MAC 数也必须设为 1024；如果使用 Z256 模型，须显式覆盖 `ETHOS_U_NPU_CONFIG_ID=Z256` 并设置对应的 FVP MAC 数。尺寸、类别数等覆盖参数仅在用例声明相应 CMake 选项时使用。
+脚本固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=executorch`、`USE_SINGLE_INPUT=ON` 和 `CMAKE_BUILD_TYPE=Debug`。构建类型默认 Debug，可通过 `-BuildType Release` 选择 Release。`-Target FVP` 设置 `FPGA_PLATFORM_SSE_320=OFF`，默认 U85 Z1024；`-Target FPGA` 设置为 `ON`，使用 U85 Z1024。模型若按其他 NPU 配置导出，需通过 `-CMakeArgs` 指定对应的 `ETHOS_U_NPU_CONFIG_ID`。修改目标或内存模式不会重新导出 PTE。FVP 模型的 MAC 数也必须设为 1024；如果使用 Z256 模型，须显式覆盖 `ETHOS_U_NPU_CONFIG_ID=Z256` 并设置对应的 FVP MAC 数。尺寸、类别数等覆盖参数仅在用例声明相应 CMake 选项时使用。
 
 脚本每次配置会清除 `SRAM_*`、`EXT_*` 的旧 TA 缓存，然后加载所选配置；自定义 TA 寄存器参数请通过 `-CMakeArgs` 传入，例如 `-DEXT_MAXR=48`，不要只依赖旧构建目录的缓存。直接运行 CMake 切换 TA 配置时，使用新构建目录或添加 `-U "SRAM_*" -U "EXT_*"`，再传入需要的 `-D` 覆盖。
 
@@ -224,6 +232,16 @@ Windows 构建脚本和预设默认启用 `CPU_PROFILE_ENABLED=ON`。两种运�
 
 预热不进入统计。日志沿用 alif 工程的单值格式，例如 `CPU TOTAL: 3688120 cycles`、`NPU IDLE: 525 cycles` 和 `DURATION: 115 milliseconds`，不显示样本数及 Total / Avg. / Min / Max。默认测量 1 次时显示本次测量值；显式配置多次测量时显示平均值，前后处理仍各测量一次。输出在每张图片结束时重置，不会混入上一张图片的结果。上述统计默认输出，不依赖详细日志宏。
 
-U85 的 `ETHOS_U_NPU_PMU_GROUP` 支持 `A`（默认，计算活动/停顿）、`B`、`B_SRAM0`、`B_SRAM1`（SRAM）、`C`（外存）、`D`（事务/接口启用）和 `LATENCY`（延迟分布）。各组保留 ACTIVE、IDLE、TOTAL，硬件一次最多采样 8 个事件；比较不同组时需重新构建并使用相同模型、输入、TA 和预热配置。LATENCY 另可设置 `ETHOS_U_NPU_PMU_AXI_SEL=0/1`（SRAM/EXT）及 `ETHOS_U_NPU_PMU_CHANNEL=1/2/4/5/8/9`，默认 0/1。
+U85 的 `ETHOS_U_NPU_PMU_GROUP` 支持 `A`（默认，计算活动/停顿）、`B`、`B_SRAM0`、`B_SRAM1`（SRAM）、`BW`（SRAM/外存混合带宽）、`C`（外存）、`D`（事务/接口启用）和 `LATENCY`（延迟分布）。各组保留 ACTIVE、IDLE、TOTAL，硬件一次最多采样 8 个事件；比较不同组时需重新构建并使用相同模型、输入、TA 和预热配置。LATENCY 另可设置 `ETHOS_U_NPU_PMU_AXI_SEL=0/1`（SRAM/EXT）及 `ETHOS_U_NPU_PMU_CHANNEL=1/2/4/5/8/9`，默认 0/1。
+
+`BW` 在同一次推理中采集 `NPU_ACTIVE`、SRAM/EXT 的读写数据 beats、
+`SRAM_RD_TRAN_REQ_STALLED`、`EXT_RD_TRAN_REQ_STALLED` 和 `AO_STALLED_BY_OB`。
+两条路径的事件分别对各自所有端口求和，不要再次乘端口数。
+读请求 stall 表示地址请求握手被阻塞，不包含读响应延迟或写阻塞；多端口求和的
+stall 计数不能直接当作总耗时的百分比。该组由共享 HAL 实现，TFLM 也可使用。
+使用 `-CMakeArgs @('-DETHOS_U_NPU_PMU_GROUP=BW')` 选择它。
+对于 128-bit AXI 数据接口，平均读/写带宽为 `beats * 16 * NPU频率 / NPU_TOTAL`，
+单位为字节/秒；应使用实际 NPU 频率。该值描述推理期间的总线流量率，不能作为
+内存峰值能力。启用 TA 时，结果包含 TA 的时延和带宽限制。
 
 FVP 的计数用于模型验证；与 FPGA 的真实测量应分别保存。当前验证采用 Debug 构建，性能不能代表 Release。

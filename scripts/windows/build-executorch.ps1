@@ -22,15 +22,20 @@ param(
     [ValidateRange(1, 1000)][int]$NumClasses = 0,
     [string]$ActivationBufferSize,
     [string]$BuildDirectory,
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')][string]$BuildType = 'Debug',
+    [ValidateRange(0, 1048576)][int]$CacheSizeKiB = 0,
+    [string]$TimingAdapterConfig,
+    [ValidateSet('', 'A', 'B', 'B_SRAM0', 'B_SRAM1', 'BW', 'C', 'D', 'LATENCY')][string]$PmuGroup = '',
     [ValidateSet('Dedicated_Sram', 'Shared_Sram')][string]$MemoryMode = 'Dedicated_Sram',
     [ValidateRange(1, 128)][int]$Jobs = 4,
     [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+. (Join-Path $PSScriptRoot 'windows-build-options.ps1')
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
-    if ($argument -notmatch '^-D[A-Za-z0-9_]+(?::[A-Za-z]+)?=') {
+    if ($argument -notmatch '^-D[A-Za-z0-9_][A-Za-z0-9_-]*(?::[A-Za-z]+)?=') {
         throw 'CMakeArgs accepts only -DNAME=value definitions.'
     }
     if ($argument -match '^-D(CMAKE_(TOOLCHAIN_FILE|C_COMPILER|CXX_COMPILER|MAKE_PROGRAM)|ML_FRAMEWORK|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|MLEK_PYTHON_VENV|RESOURCES_PATH|USE_CASE_BUILD|ETHOS_U_NPU_MEMORY_MODE)(:|=)') {
@@ -45,7 +50,9 @@ $toolsVenvDir = Join-Path $repoRoot 'resources_downloaded/windows-tools/env'
 $venvHelper = Join-Path $PSScriptRoot 'windows-venv.ps1'
 . $venvHelper
 if (-not $BuildDirectory) {
-    $BuildDirectory = Join-Path $repoRoot "build/windows-$Toolchain-et-$Target-$UseCase-$MemoryMode"
+    $BuildDirectory = Get-WindowsFirmwareBuildDirectory -RepoRoot $repoRoot `
+        -Framework pte -Toolchain $Toolchain -Target $Target -UseCase $UseCase `
+        -MemoryMode $MemoryMode -CacheSizeKiB $CacheSizeKiB -BuildType $BuildType -PmuGroup $PmuGroup
 } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot $BuildDirectory
 }
@@ -204,11 +211,18 @@ try {
         $argsList += @('-DETHOS_U_NPU_CACHE_SIZE=262144',
             '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
+    $argsList += @(Get-WindowsFirmwareCMakeArgs -BuildType $BuildType `
+        -CacheSizeKiB $CacheSizeKiB -TimingAdapterConfig $TimingAdapterConfig -PmuGroup $PmuGroup)
     $argsList += $CMakeArgs
+    $infoArgs = @{ BuildDirectory=$BuildDirectory; Framework='pte'; UseCase=$UseCase;
+        CMakeExecutable=$cmake; ConfigureArgs=$argsList; ModelPath=$ModelPath; Jobs=$Jobs }
+    Write-WindowsFirmwareBuildInfo @infoArgs -Status started
     Invoke-Checked $cmake $argsList
     if ($Action -ne 'Configure') {
         Invoke-Checked $cmake @('--build', $BuildDirectory, '--parallel', "$Jobs")
     }
+    Write-WindowsFirmwareBuildInfo @infoArgs `
+        -Status $(if ($Action -eq 'Configure') { 'configured' } else { 'built' })
 } finally {
     foreach ($name in $savedEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
