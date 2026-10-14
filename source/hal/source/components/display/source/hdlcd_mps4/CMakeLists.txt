@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-#  SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or
+#  SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or
 #  its affiliates <open-source-office@arm.com>
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -50,7 +50,8 @@ target_sources(${DISPLAY_MPS4_TARGET} PRIVATE
 ## Add dependencies
 target_link_libraries(${DISPLAY_MPS4_TARGET} PUBLIC
     hal_display_iface
-    hal_log)
+    hal_log
+    PRIVATE rte_components)
 
 # Display status
 message(STATUS "CMAKE_CURRENT_SOURCE_DIR: " ${CMAKE_CURRENT_SOURCE_DIR})

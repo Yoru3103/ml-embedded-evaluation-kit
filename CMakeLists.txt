@@ -61,4 +61,8 @@ add_subdirectory(source/lib ${CMAKE_BINARY_DIR}/mlek-lib)
 # Add app (and potentially tests)
 add_subdirectory(source/app ${CMAKE_BINARY_DIR}/mlek-app)
 
+if (TARGET_PLATFORM STREQUAL "native")
+    add_subdirectory(tests/hal/display ${CMAKE_BINARY_DIR}/mps4-display-tests)
+endif()
+
 print_useroptions()
