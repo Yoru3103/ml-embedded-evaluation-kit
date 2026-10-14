@@ -45,7 +45,7 @@ def tensor_contract(model: onnx.ModelProto) -> dict:
 
 def write_fixture(path: Path, gray: np.ndarray, outputs: list[np.ndarray],
                    contract: dict, decoded: dict):
-    """Save actual INT8 outputs and expected OBB fields for the C++ host check.
+    """Save actual outputs and expected OBB fields for the C++ host check.
 
     :param path:        Fixture path.
     :param gray:        Original uint8 grayscale pixels.
@@ -57,7 +57,10 @@ def write_fixture(path: Path, gray: np.ndarray, outputs: list[np.ndarray],
         stream.write(gray.astype(np.uint8).tobytes())
         for value, metadata in zip(outputs, contract["outputs"]):
             scale, zero = metadata["scale"], metadata["zero_point"]
-            codes = np.rint(value.astype(np.float64) / scale + zero).astype(np.int8)
+            if metadata["dtype"] == "float32":
+                codes = value.astype(np.float32)
+            else:
+                codes = np.rint(value.astype(np.float64) / scale + zero).astype(np.int8)
             physical = codes.transpose(0, 2, 3, 1) if codes.ndim == 4 else codes
             shape = physical.shape
             stream.write(struct.pack("<I", len(shape)))
@@ -84,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-kib", type=int, default=384, choices=[384])
     parser.add_argument("--allow-runtime-rounding-differences", action="store_true",
                         help="Keep diagnostic numerical failures for an experimental board test")
+    parser.add_argument("--preserve-boundary-qdq", action="store_true",
+                        help="Retain float32 I/O and execute original boundary Q/DQ on CPU")
     return parser.parse_args()
 
 
@@ -132,7 +137,7 @@ def validate_samples(args: argparse.Namespace, metadata: dict, raw_path: Path) -
     :param raw_path:    Integer TFLite path.
     :returns:           Interface, operator and numerical validation records.
     """
-    predict, contract = lite_runner(raw_path, metadata, True)
+    predict, contract = lite_runner(raw_path, metadata, not args.preserve_boundary_qdq)
     session = ort.InferenceSession(str(args.model), providers=["CPUExecutionProvider"])
     (args.output_dir / "host_fixtures").mkdir(exist_ok=True)
     results = [validate_image(path, session, predict, contract, args.output_dir)
@@ -154,14 +159,15 @@ def perform_export(args: argparse.Namespace, model: onnx.ModelProto, report: dic
     :param report:  Mutable stage report.
     """
     raw_path = args.output_dir / "tflite/best_int8.tflite"
-    report["translation"] = QOperatorTflite(model).write(raw_path)
+    report["translation"] = QOperatorTflite(model, args.preserve_boundary_qdq).write(raw_path)
     report.update(validate_samples(args, report["contract"], raw_path))
     configuration = argparse.Namespace(
         output_dir=args.output_dir, target="ethos-u85-1024",
         vela_config=ROOT / "scripts/vela/default_vela.ini",
         system_config="Ethos_U85_SYS_DRAM_Mid_1024", memory_mode="Dedicated_Sram",
         arena_cache_size=393216, extra_flag=[])
-    report["compiled"] = compile_tflite(configuration, raw_path)
+    report["compiled"] = compile_tflite(configuration, raw_path,
+                                        allow_float_boundaries=args.preserve_boundary_qdq)
     (args.output_dir / "labels.txt").write_text(
         "".join(f"class_{index}\n" for index in range(15)), encoding="utf-8")
 
@@ -182,6 +188,7 @@ def main():
                                 "preprocessing": "grayscale /255; RGB sample storage for LCD"},
               "validation_scope": "Host integer kernels and source ONNX; board not executed",
               "allow_runtime_rounding_differences": args.allow_runtime_rounding_differences}
+    report["preserve_boundary_qdq"] = args.preserve_boundary_qdq
     manifest = args.output_dir / "export_report.json"
     manifest.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     try:

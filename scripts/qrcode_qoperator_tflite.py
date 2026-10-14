@@ -62,12 +62,14 @@ def convolution_geometry(shape: tuple[int, ...], weight: np.ndarray, attrs: dict
 class QOperatorTflite:
     """Translate static, per-tensor INT8 operations without changing weights."""
 
-    def __init__(self, graph: onnx.ModelProto):
+    def __init__(self, graph: onnx.ModelProto, preserve_boundaries: bool = False):
         """Initialize the source constants and FlatBuffer object model.
 
-        :param graph:   Source ONNX model, left unchanged.
+        :param graph:               Source ONNX model, left unchanged.
+        :param preserve_boundaries: Retain float input/output and boundary Q/DQ operations.
         """
         self.source = graph
+        self.preserve_boundaries = preserve_boundaries
         self.schema = import_module("ai_edge_litert.schema_py_generated")
         self.constants = {item.name: numpy_helper.to_array(item)
                           for item in graph.graph.initializer}
@@ -75,6 +77,8 @@ class QOperatorTflite:
         self.model = self.schema.ModelT()
         self.model.version = 3
         self.model.description = b"Original ONNX INT8 QOperator parameters; NHWC; no recalibration"
+        if preserve_boundaries:
+            self.model.description += b"; float boundaries with explicit Q/DQ"
         self.model.buffers = [self.schema.BufferT()]
         self.model.operatorCodes = []
         self.codes: dict[tuple[int, int], int] = {}
@@ -294,8 +298,16 @@ class QOperatorTflite:
                       self.source.graph.input[0].type.tensor_type.shape.dim)
         scale, zero = self.quantization(node.input[1], node.input[2])
         result = self.feature(node.output[0], shape, scale, zero)
-        self.subgraph.tensors[result.index].name = node.input[0].encode()
-        self.subgraph.inputs = [result.index]
+        if self.preserve_boundaries:
+            physical = tuple(shape[index] for index in (0, 2, 3, 1))
+            input_index = self.tensor(node.input[0], TensorSpec(
+                physical, self.schema.TensorType.FLOAT32))
+            self.subgraph.inputs = [input_index]
+            self.operation(("QUANTIZE", 1), [input_index], result.index,
+                           self.schema.QuantizeOptionsT())
+        else:
+            self.subgraph.tensors[result.index].name = node.input[0].encode()
+            self.subgraph.inputs = [result.index]
 
     def addition(self, node: onnx.NodeProto, _attrs: dict):
         """Translate a QLinearAdd node with the original quantization.
@@ -397,8 +409,16 @@ class QOperatorTflite:
         if node.output[0] not in {item.name for item in self.source.graph.output}:
             raise ValueError("Only output dequantization boundaries may be removed")
         source = self.features[node.input[0]]
-        self.features[node.output[0]] = source
-        self.subgraph.tensors[source.index].name = node.output[0].encode()
+        if self.preserve_boundaries:
+            shape = self.subgraph.tensors[source.index].shape
+            index = self.tensor(node.output[0], TensorSpec(
+                tuple(shape), self.schema.TensorType.FLOAT32))
+            self.features[node.output[0]] = Feature(index, source.shape, 0.0, 0)
+            self.operation(("DEQUANTIZE", 2), [source.index], index,
+                           self.schema.DequantizeOptionsT())
+        else:
+            self.features[node.output[0]] = source
+            self.subgraph.tensors[source.index].name = node.output[0].encode()
 
     def translate_node(self, node: onnx.NodeProto):
         """Dispatch a supported operation without changing the source graph.
@@ -437,5 +457,7 @@ class QOperatorTflite:
         path.write_bytes(bytes(builder.Output()))
         return {"path": str(path), "bytes": path.stat().st_size,
                 "preserves_original_weights": True, "recalibrated": False,
-                "layout": "NHWC", "input_output_dtype": "int8",
+                "layout": "NHWC",
+                "input_output_dtype": "float32" if self.preserve_boundaries else "int8",
+                "preserves_boundary_qdq": self.preserve_boundaries,
                 "operator_count": len(self.subgraph.operators)}

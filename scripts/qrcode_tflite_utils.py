@@ -19,12 +19,13 @@ import numpy as np
 
 
 def compile_tflite(args: argparse.Namespace, source: Path | None = None,
-                   label: str = "tflm") -> dict:
+                   label: str = "tflm", allow_float_boundaries: bool = False) -> dict:
     """Compile an INT8 model without importing either model-export backend.
 
     :param args:    Target, memory configuration and compiler options.
     :param source:  Optional external integer-I/O TFLite model.
     :param label:   Output-directory prefix for this compilation.
+    :param allow_float_boundaries:  Permit only one CPU Q and four CPU DQ boundary operators.
     :returns:       Compiled path, exact command and NPU-only operator checks.
     """
     source = source or args.output_dir / "tflite/best_int8.tflite"
@@ -43,18 +44,21 @@ def compile_tflite(args: argparse.Namespace, source: Path | None = None,
     path = directory / f"{source.stem}_vela.tflite"
     if not path.is_file():
         raise RuntimeError("Vela did not produce the expected TFLite model")
-    operators = inspect_tflite(path, require_npu=True)
+    operators = inspect_tflite(path, require_npu=True,
+                              allow_float_boundaries=allow_float_boundaries)
     print(f"TFLite {args.memory_mode}: {operators}; log={log}", flush=True)
     return {"path": str(path), "bytes": path.stat().st_size, "command": command,
             "log": str(log), **operators,
             "summaries": [str(item) for item in directory.glob("*.csv")]}
 
 
-def inspect_tflite(path: Path, require_npu: bool = False) -> dict:
+def inspect_tflite(path: Path, require_npu: bool = False,
+                   allow_float_boundaries: bool = False) -> dict:
     """Count executed FlatBuffer operators, ignoring unused opcode-table entries.
 
     :param path:        TFLite file to inspect.
     :param require_npu: Reject every operator except the Ethos-U custom operator.
+    :param allow_float_boundaries:  Permit CPU boundary Q/DQ with a float32 interface.
     :returns:           Actual operator counts and NPU/CPU partition summary.
     """
     data = path.read_bytes()
@@ -74,14 +78,16 @@ def inspect_tflite(path: Path, require_npu: bool = False) -> dict:
             counts[name] += 1
     cpu = {name: count for name, count in counts.items() if name != "ethos-u"}
     npu = counts.get("ethos-u", 0)
-    if require_npu and (cpu or not npu):
+    expected_cpu = {"QUANTIZE": 1, "DEQUANTIZE": 4} if allow_float_boundaries else {}
+    if require_npu and (cpu != expected_cpu or not npu):
         raise ValueError(f"TFLite must contain only Ethos-U operators: {dict(counts)}")
     if require_npu:
         graph = model.Subgraphs(0)
         indices = [graph.Inputs(index) for index in range(graph.InputsLength())]
         indices += [graph.Outputs(index) for index in range(graph.OutputsLength())]
-        if not indices or any(graph.Tensors(index).Type() != TensorType.INT8 for index in indices):
-            raise ValueError("Compiled NPU-only TFLite requires INT8 inputs and outputs")
+        expected_type = TensorType.FLOAT32 if allow_float_boundaries else TensorType.INT8
+        if not indices or any(graph.Tensors(index).Type() != expected_type for index in indices):
+            raise ValueError("Compiled TFLite does not match the requested boundary tensor type")
     return {"operators": dict(counts), "cpu_operators": cpu,
             "cpu_operator_count": sum(cpu.values()), "npu_delegate_count": npu}
 
