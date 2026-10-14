@@ -137,16 +137,32 @@ class QrcodeExportTests(unittest.TestCase):
                 compare_tensors(reference, actual)
 
     def test_raw_head_detection_metrics(self):
-        """Decode DFL bins and class/objectness sigmoid instead of comparing raw logits."""
+        """Derive confidence from class logits independently of the angle head."""
         heads = [np.zeros((1, 65, size, size), dtype=np.float32) for size in (4, 2, 1)]
         outputs = heads + [np.zeros((1, 1, 21), dtype=np.float32)]
-        metrics = detection_metrics(outputs, outputs, 32)
-        self.assertEqual(metrics["float_max_score"], 0.25)
+        metrics = detection_metrics(outputs, outputs, 32, 1)
+        self.assertEqual(metrics["float_max_score"], 0.5)
         self.assertEqual(metrics["max_absolute_score_error"], 0)
         self.assertEqual(metrics["box_iou_at_float_best"], 1)
         altered = [item.copy() for item in outputs]
         altered[0][:, 64] = 2
-        self.assertGreater(detection_metrics(outputs, altered, 32)["max_absolute_score_error"], 0.1)
+        self.assertGreater(detection_metrics(outputs, altered, 32, 1)["max_absolute_score_error"],
+                           0.1)
+
+    def test_angle_does_not_change_class_scores(self):
+        """Changing angle logits must not rescale detection confidence or class IDs."""
+        for bins in (8, 16):
+            heads = [np.full((1, 4 * bins + 15, size, size), -10, dtype=np.float32)
+                     for size in (4, 2, 1)]
+            heads[0][0, 4 * bins + 14, 1, 1] = 2
+            outputs = heads + [np.full((1, 1, 21), -4, dtype=np.float32)]
+            altered = [item.copy() for item in outputs]
+            altered[3].fill(4)
+            metrics = detection_metrics(outputs, altered, 32, 15)
+            self.assertAlmostEqual(metrics["float_max_score"], 0.880797078, places=6)
+            self.assertEqual(metrics["float_best_class"], 14)
+            self.assertEqual(metrics["quantized_best_class"], 14)
+            self.assertEqual(metrics["max_absolute_score_error"], 0)
 
     def test_actual_npu_operators(self):
         """Ignore unused CPU opcode entries but reject CPU operators in the graph."""

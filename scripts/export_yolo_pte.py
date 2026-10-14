@@ -95,7 +95,8 @@ def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace
              spec: EthosUCompileSpec) -> torch.fx.GraphModule:
     """Export and calibrate using representative images without tracking gradients."""
     # 导入第一张校准图片
-    example = load_image(paths[0], args.image_size, args.preprocessing)
+    example = load_image(paths[0], args.image_size, args.preprocessing,
+                         getattr(args, "input_channels", 3))
     # 将浮点模型捕获为计算图
     exported = torch.export.export(model, (example,), strict=True)
     graph_dir = args.output.parent / f"{args.output.stem}_graphs"
@@ -109,7 +110,8 @@ def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace
     prepared = prepare_pt2e(exported.module(check_guards=False), quantizer)
     with torch.no_grad():
         for index, path in enumerate(paths, 1):
-            prepared(load_image(path, args.image_size, args.preprocessing))
+            prepared(load_image(path, args.image_size, args.preprocessing,
+                                getattr(args, "input_channels", 3)))
             if index % 16 == 0 or index == len(paths):
                 print(f"Calibrated {index}/{len(paths)}", flush=True)
     # 根据统计结果计算量化参数，生成量化后的计算图
@@ -143,6 +145,7 @@ def validate(model: torch.nn.Module, quantized: torch.fx.GraphModule,
 def lower(quantized: torch.fx.GraphModule, example: torch.Tensor,
           spec: EthosUCompileSpec, args: argparse.Namespace) -> object:
     """Lower to Ethos-U and plan memory while retaining float input/output tensors."""
+    # 将量化好的计算图转化为编译接口需要的ExportedProgram
     exported = torch.export.export(quantized, (example,), strict=True)
     edge = to_edge_transform_and_lower(exported, partitioner=[EthosUPartitioner(spec)],
                                       compile_config=EdgeCompileConfig(_check_ir_validity=False))
@@ -180,9 +183,12 @@ def save_report(output: Path, report: dict):
     print(f"Report: {path}", flush=True)
 
 
-def main():
-    """Run the export stages, rejecting excessive measured score degradation."""
-    args = parse_args()
+def run_export(args: argparse.Namespace) -> dict:
+    """Export a PT source through reusable quantization and lowering APIs.
+
+    :param args:    Validated PT export options.
+    :returns:       Quantization diagnostics and deployment report.
+    """
     # Do not resolve python symlinks: flatc lives in the virtualenv bin directory.
     os.environ["PATH"] = os.pathsep.join(
         (str(Path(sys.executable).absolute().parent), os.environ.get("PATH", "")))
@@ -217,7 +223,7 @@ def main():
         raise RuntimeError("Quantization score drop exceeds --max-score-drop; inspect the report")
     save_report(args.output, report)
     if args.diagnose_only:
-        return
+        return report
     program = lower(quantized, example, spec, args)
     plan = program.executorch_program.execution_plan[0]
     report["serialized_tensor_layouts"] = check_io_contract(plan, args.image_size, len(names))
@@ -240,6 +246,12 @@ def main():
     report["pte_bytes"] = args.output.stat().st_size
     save_report(args.output, report)
     print(f"PTE: {args.output}; planned memory: {sum(buffers)} bytes", flush=True)
+    return report
+
+
+def main():
+    """Run the PT export stages, rejecting excessive score degradation."""
+    run_export(parse_args())
 
 
 if __name__ == "__main__":

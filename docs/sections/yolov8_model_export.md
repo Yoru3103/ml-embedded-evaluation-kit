@@ -112,6 +112,91 @@ places method memory in DDR through the normal activation buffer attributes.
 
 ## QR-code ONNX export
 
+### Unified export entry point
+
+Use `scripts/export_model.py` to select the conversion route from the input extension
+and `--to pte|tflite|both`. The entry point calls the existing exporter APIs; it does
+not implement a second quantizer or NPU compiler.
+
+| Source and target | Route |
+| --- | --- |
+| ONNX to PTE | ONNX2Torch, static PyTorch adaptation, shared PT2E quantization, ExecuTorch/Ethos-U |
+| ONNX to TFLite (default) | ONNX2TF, full INT8 TFLite, Vela |
+| ONNX to TFLite (`--tflite-backend litert`) | ONNX2Torch, LiteRT Torch, AI Edge Quantizer, Vela |
+| PT to PTE | Existing YOLO PT exporter, PT2E quantization, ExecuTorch/Ethos-U |
+| PT to TFLite | Existing Ultralytics LiteRT exporter, INT8 quantization, Vela |
+
+ONNX-to-PTE accepts the supported static four-output QR-code/OBB contract described
+below. PT inputs must be Ultralytics checkpoints with the existing single-output
+YOLO detection contract. The unified entry point selects the source adapter; it does
+not make unsupported model architectures compatible automatically. ONNX2Torch produces
+an in-memory PyTorch model, so an intermediate `.pt` checkpoint is not required.
+
+```bash
+# ONNX to PTE, using ONNX2Torch and the existing shared quantization APIs.
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/yolo_QRcode/best.onnx --to pte \
+    --calibration-dir resources/object_detection/samples_QRcode \
+    --output-dir /tmp/qrcode-pte
+
+# ONNX directly to full INT8 TFLite, then Vela, using ONNX2TF.
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/yolo_QRcode/best.onnx --to tflite \
+    --calibration-dir resources/object_detection/samples_QRcode \
+    --output-dir /tmp/qrcode-onnx2tf
+
+# Retain the alternative ONNX2Torch/LiteRT route explicitly.
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/yolo_QRcode/best.onnx --to tflite \
+    --tflite-backend litert --output-dir /tmp/qrcode-litert
+
+# PT to PTE and Vela-compiled TFLite. TFLite calibration requires a dataset YAML.
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/gesture_detection/best.pt --to both \
+    --calibration-dir resources_downloaded/gesture_detection/calibration \
+    --data /path/to/dataset.yaml --image-size 320 --output-dir /tmp/gesture-export
+```
+
+`--tflite-backend auto` chooses ONNX2TF for ONNX and LiteRT for PT. ONNX2TF cannot
+accept a PT checkpoint directly. Without `--output-dir`, the unified entry point
+writes to `<source-directory>/<source-stem>_export/`. `--memory-mode all` compiles
+both Dedicated and Shared SRAM variants. Conversion failures mark the export report
+as failed; no other converter is substituted automatically.
+
+ONNX2TF is an optional dependency, loaded only when its route is selected. Its
+default engine here is `--onnx2tf-backend tf_converter`, which reads ONNX directly
+through TensorFlow and requires `onnx2tf[tensorflow]`. The alternative
+`--onnx2tf-backend flatbuffer_direct` avoids the TensorFlow conversion engine.
+Choose the engine explicitly when testing compatibility; ONNX2TF 2.6.9's direct
+engine failed to allocate tensors for the supplied RGB model's SE multiplication.
+Both engines bypass ONNX2Torch and share the same TFLite validation and Vela APIs.
+Install converter dependencies in a dedicated environment because their pinned
+NumPy/LiteRT versions conflict with the shared ML environment:
+
+```bash
+resources_downloaded/env/bin/python -m venv resources_downloaded/env-onnx2tf
+resources_downloaded/env-onnx2tf/bin/python -m pip install \
+    -r scripts/py/requirements-onnx2tf.txt
+```
+
+The unified entry point automatically calls the ONNX2TF API with this interpreter
+when it exists. Continue running `export_model.py` with `resources_downloaded/env/bin/python`;
+validation, ExecuTorch and Vela use the shared environment. The TFLite export report
+records the converter's actual Python executable and ONNX2TF version. If the dedicated
+environment is absent, the exporter uses ONNX2TF installed in the current interpreter.
+
+The existing PT-to-PTE API preserves floating-point I/O. Ultralytics' PT-to-LiteRT
+API also preserves floating-point I/O around its INT8 graph, so Vela can retain CPU
+boundary operators. The unified report records actual CPU/NPU operator counts for
+that path. PT-to-TFLite calibration uses the complete `--data` dataset split selected
+by `--calibration-split`, with Ultralytics' own preprocessing. `--calibration-dir`,
+`--calibration-limit`, `--seed` and `--preprocessing` control ONNX exports and PT-to-PTE;
+they do not change the PT-to-TFLite dataset loader. This policy is recorded in the
+unified report. The four-output ONNX paths retain their stricter all-NPU, INT8-interface
+checks. Host numerical validation does not execute the compiled NPU program.
+
+### Four-output ONNX export
+
 `export_qrcode_onnx.py` handles the fixed four-output model at
 `resources_downloaded/yolo_QRcode/best.onnx` directly; no `.pt` checkpoint is needed.
 Install the extra conversion dependencies into the existing project environment:
@@ -122,13 +207,16 @@ resources_downloaded/env/bin/python -m pip install \
     litert-torch==0.9.4 ai-edge-litert==2.2.0 ai-edge-quantizer==0.9.0
 
 resources_downloaded/env/bin/python scripts/export_qrcode_onnx.py --memory-mode all \
+    --tflite-backend litert \
     --reference-tflite \
     /home/xx/alif_ml-embedded-evaluation-kit/20260827_Model/best_int8_new.tflite
 ```
 
 The default calibration directory is `resources/object_detection/samples_QRcode/`.
-The same RGB `/255` preparation is used by both frameworks. `--preprocessing mlek-crop`
-matches the existing firmware; choose `letterbox` only when the deployment uses that
+The same `/255` preparation is used by both frameworks. Input channels are read from
+the source graph: RGB stays RGB, while one-channel input uses Pillow luminance after
+resizing and cropping. `--preprocessing mlek-crop` uses the same centered crop as
+generated firmware samples; choose `letterbox` only when the deployment uses that
 policy too. `--calibration-dir`, `--validation-dir`, limits, seed, output directory,
 NPU target, Vela configuration, cache and memory budgets are configurable.
 `--format pte` or `--format tflite` exports only the selected framework.
@@ -139,13 +227,26 @@ external directory have a different detection interface and are not QR-code refe
 
 The supplied ONNX input is float32 `[1,3,256,256]`. Its outputs, in source graph order,
 are `[1,79,32,32]`, `[1,79,16,16]`, `[1,79,8,8]` and `[1,1,1344]`. The first three heads
-contain 64 raw DFL values and 15 class logits; the last output contains objectness
-logits. The deployment models use **INT8 input and all four INT8 outputs**, preserving
+contain 64 raw DFL values (16 bins per distance) and 15 class logits; the last output
+contains **angle logits**, one per anchor. Confidence is `sigmoid(class_logits)`.
+Decode the angle as `(sigmoid(angle_logits) - 0.25) * pi`; it does not scale confidence.
+The graph contract reader checks terminal box/class/angle convolution weights rather
+than guessing class counts from the total head channels. The grayscale reference at
+`best_bifpn_gray_qop_int8_boardcal_20260819.onnx` has `[1,1,256,256]` input and 47-channel
+heads: 32 DFL values (8 bins per distance) plus the same 15 class logits. Its QOperator
+graph can be inspected and run with ONNX Runtime; that does not establish support for
+converting QOperator operations through onnx2torch.
+The existing RGB deployment models use **INT8 input and all four INT8 outputs**, preserving
 the original NCHW shapes and output order. Quantize input with
 `clip(round(rgb / 255 / scale) + zero_point, -128, 127)` and dequantize each output with
 `(value - zero_point) * scale`. Each output has its own parameters; read them from the
 report. The reference TFLite has NHWC heads in a different output order, which the
 validation adapter maps back to the ONNX interface.
+DFL decoding rotates the distance-derived center offset, retaining XYWH and angle for
+class-aware probabilistic IoU NMS. `DetectionResult` stores only center X/Y, width,
+height and angle, alongside score and class ID. Angle zero also represents ordinary
+rectangles. The application rotates four corners and draws the four edges on the LCD,
+clipping each edge to the displayed image and the screen.
 DFL decoding, sigmoid and NMS remain application postprocessing. The zero-CPU-operator
 requirement applies to the compiled neural-network graph. Do not use the single-output
 `.pt` export contract for this model.
@@ -157,16 +258,22 @@ boundaries around convolutions even when concatenation branches share output par
 This avoids four Conv/ReLU pairs falling back to CPU when the shared zero point differs
 from the quantized minimum.
 Unsupported dynamic shapes or different detection interfaces fail explicitly.
-ONNX Runtime reference predictions are compared against the captured PyTorch graph
-and FP32 LiteRT on every validation image. A difference exceeding `rtol=1e-4`,
+ONNX Runtime reference predictions are compared against FP32 TFLite and, when the
+ONNX2Torch route is selected, the captured PyTorch graph on every validation image.
+A difference exceeding `rtol=1e-4`,
 `atol=1e-4` aborts conversion. Host PT2E and INT8 LiteRT outputs are dequantized and
-compared separately. Validation decodes DFL boxes and computes
-`sigmoid(class_logits) * sigmoid(objectness_logits)`, matching the raw-head postprocessor.
+compared separately. Validation decodes oriented DFL boxes and computes
+`sigmoid(class_logits)`, matching the raw-head postprocessor. It records the strongest
+source and quantized class IDs; box IoU measures the display envelopes.
 The default acceptance checks require the maximum absolute score difference to be at
 most 0.15 and the box IoU at the strongest ONNX anchor to be at least 0.9. Configure
 these limits with `--max-score-error` and `--min-box-iou`. Reports retain per-output
 raw errors and per-image score/box metrics, including those for the optional reference.
 These numerical checks do not measure labeled detection accuracy.
+Reports created before the angle correction used incorrect confidence semantics;
+rerun validation to obtain current score metrics. See
+[QR-code processing review notes](qrcode_processing_fix.md) for the code locations and
+real-model C++ verification command.
 
 Outputs are under `resources_downloaded/yolo_QRcode/`:
 
