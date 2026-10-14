@@ -15,12 +15,15 @@ namespace arm::app {
 
 class YoloV8PreProcess : public BasePreProcess {
 public:
-    explicit YoloV8PreProcess(const std::shared_ptr<fwk::iface::TensorIface>& inputTensor);
+    /** Use explicit memory layouts for ExecuTorch, shape inference for TFLite. */
+    explicit YoloV8PreProcess(const std::shared_ptr<fwk::iface::TensorIface>& inputTensor,
+                             bool useTensorLayout = false);
 
     bool DoPreProcess(const void* input, size_t inputSize) override;
 
 private:
     std::shared_ptr<fwk::iface::TensorIface> m_inputTensor;
+    bool m_useTensorLayout;
 };
 
 } /* namespace arm::app */

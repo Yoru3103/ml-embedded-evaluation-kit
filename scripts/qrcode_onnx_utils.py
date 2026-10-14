@@ -4,22 +4,18 @@
 
 """Static ONNX adaptation and four-output DFL deployment checks."""
 
+from __future__ import annotations
+
 import operator
+from importlib import import_module
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 import numpy as np
 import onnx
-from onnx2torch import convert
-from onnx2torch.node_converters.binary_math_operations import OnnxBinaryMathOperation
-from onnx2torch.node_converters.expand import OnnxExpand
-from onnx2torch.node_converters.matmul import OnnxMatMul
-from onnx2torch.node_converters.reshape import OnnxReshape
-from onnx2torch.node_converters.resize import OnnxResize
-from onnx2torch.node_converters.slice import OnnxSlice
-import torch
-from torch.fx.passes.shape_prop import ShapeProp
-from executorch.exir.schema import ExecutionPlan, ScalarType
+if TYPE_CHECKING:
+    import torch
+    from executorch.exir.schema import ExecutionPlan
 
 
 def describe_model(path: Path) -> tuple[onnx.ModelProto, dict]:
@@ -78,6 +74,7 @@ def replace_resize(model: torch.fx.GraphModule, node: torch.fx.Node):
     :param model:   Converted graph.
     :param node:    Resize operation with constant scales.
     """
+    torch_api = import_module("torch")
     module = model.get_submodule(node.target)
     scales = constant(model, node.args[2]).tolist()
     if (module.onnx_mode != "nearest" or scales[:2] != [1, 1]
@@ -85,7 +82,7 @@ def replace_resize(model: torch.fx.GraphModule, node: torch.fx.Node):
         raise ValueError("Only fixed spatial nearest-neighbor Resize is supported")
     if len(node.args) > 3 and constant(model, node.args[3]).numel():
         raise ValueError("Resize sizes alongside scales are unsupported")
-    model.set_submodule(node.target, torch.nn.Upsample(
+    model.set_submodule(node.target, torch_api.nn.Upsample(
         scale_factor=tuple(scales[2:]), mode="nearest"))
     node.args = (node.args[0],)
 
@@ -115,14 +112,16 @@ def remove_expand(model: torch.fx.GraphModule, node: torch.fx.Node):
     :param model:   Graph annotated with tensor shapes.
     :param node:    Expand whose consumers multiply by tensors of the expanded shape.
     """
+    torch_api = import_module("torch")
+    binary_math = import_module("onnx2torch.node_converters.binary_math_operations")
     shape = tuple(constant(model, node.args[1]).tolist())
     for user in node.users:
         if user.op != "call_module":
             raise ValueError("Expand must feed an elementwise multiplication")
         module = model.get_submodule(user.target)
         other = user.args[1] if user.args[0] is node else user.args[0]
-        if (not isinstance(module, OnnxBinaryMathOperation)
-                or module.math_op_function is not torch.mul
+        if (not isinstance(module, binary_math.OnnxBinaryMathOperation)
+                or module.math_op_function is not torch_api.mul
                 or tuple(other.meta["tensor_meta"].shape) != shape):
             raise ValueError("Cannot safely fold this Expand into its consumers")
     node.replace_all_uses_with(node.args[0])
@@ -136,38 +135,41 @@ def adapt_model(graph: onnx.ModelProto, example: torch.Tensor) -> torch.fx.Graph
     :param example:     Input used for shape propagation.
     :returns:           Exportable model retaining all raw outputs in ONNX order.
     """
-    model = convert(graph).eval()
-    with torch.no_grad():
-        ShapeProp(model).propagate(example)
+    torch_api = import_module("torch")
+    converters = {name: import_module(f"onnx2torch.node_converters.{name}")
+                  for name in ("expand", "matmul", "reshape", "resize", "slice")}
+    model = import_module("onnx2torch").convert(graph).eval()
+    with torch_api.no_grad():
+        import_module("torch.fx.passes.shape_prop").ShapeProp(model).propagate(example)
     for node in list(model.graph.nodes):
         if node.op != "call_module":
             continue
         module = model.get_submodule(node.target)
-        if isinstance(module, OnnxResize):
+        if isinstance(module, converters["resize"].OnnxResize):
             replace_resize(model, node)
-        elif isinstance(module, torch.nn.ReLU):
+        elif isinstance(module, torch_api.nn.ReLU):
             # Conv/ReLU fusion shares output qparams with concatenation branches.
             # Arm's fusion pass requires zero_point == quant_min, which is not
             # guaranteed for those shared qparams. An equivalent clamp keeps the
             # convolution separately quantized and eligible for NPU delegation.
-            node.op, node.target = "call_function", torch.clamp
+            node.op, node.target = "call_function", torch_api.clamp
             node.kwargs = {"min": 0.0}
-        elif isinstance(module, OnnxSlice):
+        elif isinstance(module, converters["slice"].OnnxSlice):
             replace_slice(model, node)
-        elif isinstance(module, OnnxExpand):
+        elif isinstance(module, converters["expand"].OnnxExpand):
             remove_expand(model, node)
-        elif isinstance(module, OnnxReshape):
+        elif isinstance(module, converters["reshape"].OnnxReshape):
             shape = tuple(int(dim) for dim in constant(model, node.args[1]).tolist())
             if 0 in shape:
                 raise ValueError("Reshape dimensions copied with zero are unsupported")
             node.op, node.target = "call_method", "reshape"
             node.args = (node.args[0], shape)
-        elif isinstance(module, OnnxMatMul) and node.args[1].op == "get_attr":
+        elif isinstance(module, converters["matmul"].OnnxMatMul) and node.args[1].op == "get_attr":
             weight = constant(model, node.args[1])
             if weight.ndim != 2:
                 raise ValueError("Expected two-dimensional constant MatMul weights")
-            linear = torch.nn.Linear(weight.shape[0], weight.shape[1], bias=False)
-            linear.weight = torch.nn.Parameter(weight.T.contiguous(), requires_grad=False)
+            linear = torch_api.nn.Linear(weight.shape[0], weight.shape[1], bias=False)
+            linear.weight = torch_api.nn.Parameter(weight.T.contiguous(), requires_grad=False)
             model.set_submodule(node.target, linear)
             node.args = (node.args[0],)
     model.graph.eliminate_dead_code()
@@ -292,20 +294,23 @@ def detection_metrics(reference: list[np.ndarray], actual: list[np.ndarray],
 
 
 def check_pte_contract(plan: ExecutionPlan, metadata: dict) -> dict:
-    """Reject serialized layouts that cannot preserve the four-output ONNX interface.
+    """Require channels-last INT8 images while retaining ONNX logical dimensions.
 
     :param plan:        Serialized ExecuTorch execution plan.
     :param metadata:    Original ordered tensor metadata.
     :returns:           Checked tensor shapes and layouts.
     """
+    scalar_types = import_module("executorch.exir.schema").ScalarType
     shapes = [metadata["input"]["shape"]] + [item["shape"] for item in metadata["outputs"]]
     if len(plan.inputs) != 1 or len(plan.outputs) != 4:
         raise ValueError("PTE must retain one input and four outputs")
     result = []
     for index, shape in zip(list(plan.inputs) + list(plan.outputs), shapes):
         tensor = plan.values[index].val
-        if (tensor.sizes != shape or tensor.scalar_type != ScalarType.CHAR
-                or tensor.dim_order != list(range(len(shape)))):
-            raise ValueError("PTE must preserve ordered, contiguous INT8 ONNX tensor layouts")
-        result.append({"shape": tensor.sizes, "dim_order": tensor.dim_order, "dtype": "int8"})
+        dim_order = [0, 2, 3, 1] if len(shape) == 4 else list(range(len(shape)))
+        if (tensor.sizes != shape or tensor.scalar_type != scalar_types.CHAR
+                or tensor.dim_order != dim_order):
+            raise ValueError("PTE must preserve ordered INT8 tensors with NHWC image storage")
+        result.append({"shape": tensor.sizes, "dim_order": tensor.dim_order, "dtype": "int8",
+                       "layout": "NHWC" if len(shape) == 4 else "contiguous"})
     return {"input": result[0], "outputs": result[1:]}

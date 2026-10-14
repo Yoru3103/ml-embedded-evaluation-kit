@@ -5,9 +5,10 @@
 """Regression checks for constant specialization and four-output serialization."""
 
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from ai_edge_litert import schema_py_generated as schema
 import flatbuffers
@@ -16,10 +17,12 @@ import onnx
 from onnx import helper, numpy_helper
 import onnxruntime as ort
 import torch
+from PIL import Image
 from executorch.exir.schema import ScalarType
 
 from qrcode_onnx_utils import adapt_model, check_pte_contract, compare_tensors, detection_metrics
 from qrcode_tflite_utils import inspect_tflite
+from yolo_pte_utils import load_image
 
 
 def make_graph() -> onnx.ModelProto:
@@ -88,6 +91,14 @@ def make_flatbuffer(cpu: bool) -> bytes:
 class QrcodeExportTests(unittest.TestCase):
     """Protect ONNX parity, archive serialization and ordered multi-output contracts."""
 
+    def test_firmware_crop(self):
+        """Prepare the same centered RGB crop as the firmware image generator."""
+        pixels = np.arange(6 * 4 * 3, dtype=np.uint8).reshape(4, 6, 3)
+        with patch("yolo_pte_utils.Image.open", return_value=Image.fromarray(pixels)):
+            actual = load_image(Path("unused.png"), 4, "mlek-crop").numpy()
+        expected = pixels[:, 1:5].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        np.testing.assert_array_equal(actual, expected)
+
     def test_static_specialization_parity(self):
         """Export static operators and archive the result without changing ONNX values."""
         graph = make_graph()
@@ -106,11 +117,12 @@ class QrcodeExportTests(unittest.TestCase):
             np.testing.assert_allclose(restored(inputs).numpy(), reference[0], atol=1e-6, rtol=1e-6)
 
     def test_four_output_contract(self):
-        """Reject transposed, reordered or floating serialized PTE interfaces."""
+        """Require NHWC image storage and reject reordered or floating interfaces."""
         shapes = [[1, 3, 256, 256], [1, 79, 32, 32], [1, 79, 16, 16],
                   [1, 79, 8, 8], [1, 1, 1344]]
         tensors = [SimpleNamespace(sizes=shape, scalar_type=ScalarType.CHAR,
-                                   dim_order=list(range(len(shape)))) for shape in shapes]
+                                   dim_order=[0, 2, 3, 1] if len(shape) == 4
+                                   else list(range(len(shape)))) for shape in shapes]
         plan = SimpleNamespace(inputs=[0], outputs=[1, 2, 3, 4],
                                values=[SimpleNamespace(val=tensor) for tensor in tensors])
         metadata = {"input": {"shape": shapes[0]},
@@ -121,10 +133,10 @@ class QrcodeExportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 check_pte_contract(plan, metadata)
         plan.outputs = [1, 2, 3, 4]
-        tensors[1].dim_order = [0, 2, 3, 1]
+        tensors[1].dim_order = [0, 1, 2, 3]
         with self.assertRaises(ValueError):
             check_pte_contract(plan, metadata)
-        tensors[1].dim_order = [0, 1, 2, 3]
+        tensors[1].dim_order = [0, 2, 3, 1]
         tensors[1].scalar_type = ScalarType.FLOAT
         with self.assertRaises(ValueError):
             check_pte_contract(plan, metadata)

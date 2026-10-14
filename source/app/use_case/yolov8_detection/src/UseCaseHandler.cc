@@ -75,6 +75,10 @@ void PrintResults(const std::vector<yolov8_detection::DetectionResult>& results,
              result.y,
              result.width,
              result.height);
+        if (result.rotated) {
+            info("   obb: cx=%f cy=%f w=%f h=%f angle_rad=%f\n",
+                 result.centerX, result.centerY, result.boxWidth, result.boxHeight, result.angle);
+        }
     }
 }
 
@@ -125,13 +129,15 @@ bool GetInputImageDimensions(
         return false;
     }
 
-    if (shape[1] == 3 && shape[3] != 3) {
+    if ((shape[1] == 3 && shape[3] != 3) ||
+        (shape[1] == 1 && shape[3] != 1 && shape[3] != 3)) {
         imageHeight = static_cast<uint32_t>(shape[2]);
         imageWidth = static_cast<uint32_t>(shape[3]);
         return true;
     }
 
-    if (shape[3] == 3 && shape[1] != 3) {
+    if ((shape[3] == 3 && shape[1] != 3) ||
+        (shape[3] == 1 && shape[1] != 1 && shape[1] != 3)) {
         imageHeight = static_cast<uint32_t>(shape[1]);
         imageWidth = static_cast<uint32_t>(shape[2]);
         return true;
@@ -177,7 +183,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
     uint32_t imageHeight = 0;
 
     if (!GetInputImageDimensions(inputShape, imageWidth, imageHeight)) {
-        printf_err("Expected input shape [1, 3, H, W] or [1, H, W, 3]\n");
+        printf_err("Expected RGB or grayscale NCHW/NHWC input\n");
         return false;
     }
     if (imageWidth == 0 || imageHeight == 0) {
@@ -191,7 +197,13 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         return false;
     }
 
-    YoloV8PreProcess preProcess{inputTensor};
+    /* TFLite's layout annotation is generic; ExecuTorch has explicit dim_order. */
+#if defined(MLEK_FWK_EXECUTORCH)
+    constexpr bool useTensorLayout = true;
+#else
+    constexpr bool useTensorLayout = false;
+#endif
+    YoloV8PreProcess preProcess{inputTensor, useTensorLayout};
 
     if (labels.size() != YOLOV8_NUM_CLASSES) {
         printf_err("YOLOv8 label count does not match the configured class count\n");
@@ -205,7 +217,9 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         YOLOV8_NUM_CLASSES,
         YOLOV8_MAX_DETECTIONS,
         YOLOV8_SCORE_THRESHOLD,
-        YOLOV8_NMS_THRESHOLD
+        YOLOV8_NMS_THRESHOLD,
+        YOLOV8_DFL_BINS,
+        YOLOV8_OBB != 0
     };
     std::unique_ptr<BasePostProcess> postProcess;
     if (model.GetNumOutputs() == 1) {
@@ -218,7 +232,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
             outputTensors.push_back(model.GetOutputTensor(outputIndex));
         }
         postProcess = std::make_unique<YoloV8NewPostProcess>(
-            outputTensors, results, params);
+            outputTensors, results, params, useTensorLayout);
     }
 
     constexpr uint32_t imageStartX = 10;
@@ -280,12 +294,26 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
             return false;
         }
 
-        if (!RunInference(model, profiler)) {
+#if YOLOV8_PROFILE_POSTPROCESS
+        if (!profiler.StartProfiling("Inference + Postprocess")) {
+            return false;
+        }
+        const bool inferenceSuccessful   = model.RunInference();
+        const bool postProcessSuccessful = inferenceSuccessful && postProcess->DoPostProcess();
+        if (!profiler.StopProfiling()) {
+            return false;
+        }
+#else
+        const bool inferenceSuccessful   = RunInference(model, profiler);
+        const bool postProcessSuccessful = inferenceSuccessful && postProcess->DoPostProcess();
+#endif
+
+        if (!inferenceSuccessful) {
             printf_err("Inference failed\n");
             return false;
         }
 
-        if (!postProcess->DoPostProcess()) {
+        if (!postProcessSuccessful) {
             printf_err("Post-processing failed\n");
             return false;
         }

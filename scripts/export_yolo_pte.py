@@ -92,10 +92,21 @@ def make_compile_spec(args: argparse.Namespace) -> EthosUCompileSpec:
 
 
 def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace,
-             spec: EthosUCompileSpec) -> torch.fx.GraphModule:
-    """Export and calibrate using representative images without tracking gradients."""
+             spec: EthosUCompileSpec,
+             memory_format: torch.memory_format = torch.contiguous_format) -> torch.fx.GraphModule:
+    """Export and calibrate with matching model and input memory formats.
+
+    :param model:           Floating-point deployment model.
+    :param paths:           Representative calibration images.
+    :param args:            Image preparation and intermediate-output options.
+    :param spec:            Target Ethos-U compiler specification.
+    :param memory_format:   Physical storage used during capture and calibration.
+    :returns:               Calibrated PT2E graph.
+    """
     # 导入第一张校准图片
-    example = load_image(paths[0], args.image_size, args.preprocessing)
+    model = model.to(memory_format=memory_format)
+    example = load_image(paths[0], args.image_size, args.preprocessing).to(
+        memory_format=memory_format)
     # 将浮点模型捕获为计算图
     exported = torch.export.export(model, (example,), strict=True)
     graph_dir = args.output.parent / f"{args.output.stem}_graphs"
@@ -109,7 +120,8 @@ def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace
     prepared = prepare_pt2e(exported.module(check_guards=False), quantizer)
     with torch.no_grad():
         for index, path in enumerate(paths, 1):
-            prepared(load_image(path, args.image_size, args.preprocessing))
+            prepared(load_image(path, args.image_size, args.preprocessing).to(
+                memory_format=memory_format))
             if index % 16 == 0 or index == len(paths):
                 print(f"Calibrated {index}/{len(paths)}", flush=True)
     # 根据统计结果计算量化参数，生成量化后的计算图

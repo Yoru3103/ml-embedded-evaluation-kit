@@ -83,7 +83,7 @@ def load_image(path: Path, image_size: int, preprocessing: str) -> torch.Tensor:
         ratio = image_size / min(image.size)
         image = image.resize((int(image.width * ratio), int(image.height * ratio)),
                              Image.Resampling.BILINEAR)
-        left = (image.width - image_size) * 0.9
+        left = (image.width - image_size) / 2
         top = (image.height - image_size) / 2
         image = image.crop((left, top, left + image_size, top + image_size))
     elif preprocessing == "letterbox":

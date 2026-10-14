@@ -17,6 +17,7 @@ struct InputDescription {
     fwk::iface::TensorLayout layout{fwk::iface::TensorLayout::INVALID};
     size_t height{0};
     size_t width{0};
+    size_t channels{0};
 };
 
 bool GetInputDescription(const std::vector<size_t>& shape, InputDescription& description)
@@ -25,18 +26,22 @@ bool GetInputDescription(const std::vector<size_t>& shape, InputDescription& des
         return false;
     }
 
-    /* TFLite does not carry a reliable layout annotation. Infer it from the RGB channel. */
-    if (shape[1] == 3 && shape[3] != 3) {
+    /* Infer RGB or grayscale channel placement when no layout annotation is available. */
+    if ((shape[1] == 3 && shape[3] != 3) ||
+        (shape[1] == 1 && shape[3] != 1 && shape[3] != 3)) {
         description.layout = fwk::iface::TensorLayout::NCHW;
         description.height = shape[2];
         description.width = shape[3];
+        description.channels = shape[1];
         return true;
     }
 
-    if (shape[3] == 3 && shape[1] != 3) {
+    if ((shape[3] == 3 && shape[1] != 3) ||
+        (shape[3] == 1 && shape[1] != 1 && shape[1] != 3)) {
         description.layout = fwk::iface::TensorLayout::NHWC;
         description.height = shape[1];
         description.width = shape[2];
+        description.channels = shape[3];
         return true;
     }
 
@@ -52,8 +57,9 @@ long QuantizeInput(const uint8_t value, const fwk::iface::QuantParams& quantPara
 } /* anonymous namespace */
 
 YoloV8PreProcess::YoloV8PreProcess(
-    const std::shared_ptr<fwk::iface::TensorIface>& inputTensor) :
-    m_inputTensor{inputTensor}
+    const std::shared_ptr<fwk::iface::TensorIface>& inputTensor,
+    bool useTensorLayout) :
+    m_inputTensor{inputTensor}, m_useTensorLayout{useTensorLayout}
 {}
 
 bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
@@ -65,8 +71,14 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
 
     InputDescription description;
     if (!GetInputDescription(m_inputTensor->Shape(), description)) {
-        printf_err("Expected YOLOv8 input shape [1, 3, H, W] or [1, H, W, 3]\n");
+        printf_err("Expected YOLOv8 RGB or grayscale NCHW/NHWC input\n");
         return false;
+    }
+
+    /* ExecuTorch keeps NCHW logical sizes for channels-last tensors. */
+    const auto tensorLayout = m_inputTensor->Layout();
+    if (m_useTensorLayout && tensorLayout != fwk::iface::TensorLayout::INVALID) {
+        description.layout = tensorLayout;
     }
 
     const size_t planeSize = description.height * description.width;
@@ -93,11 +105,13 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
     }
 
     for (size_t pixel = 0; pixel < planeSize; ++pixel) {
-        for (size_t channel = 0; channel < 3; ++channel) {
+        /* The sample generator keeps RGB storage for LCD display. Grayscale BMP
+         * samples have three identical components; a one-channel model reads one. */
+        for (size_t channel = 0; channel < description.channels; ++channel) {
             const uint8_t sourceValue = source[pixel * 3 + channel];
             const size_t destinationIndex = description.layout == fwk::iface::TensorLayout::NCHW
                                                 ? channel * planeSize + pixel
-                                                : pixel * 3 + channel;
+                                                : pixel * description.channels + channel;
 
             if (tensorType == fwk::iface::TensorType::FP32) {
                 m_inputTensor->GetData<float>()[destinationIndex] =

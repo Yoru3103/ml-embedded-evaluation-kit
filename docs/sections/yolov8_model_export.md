@@ -139,9 +139,10 @@ external directory have a different detection interface and are not QR-code refe
 
 The supplied ONNX input is float32 `[1,3,256,256]`. Its outputs, in source graph order,
 are `[1,79,32,32]`, `[1,79,16,16]`, `[1,79,8,8]` and `[1,1,1344]`. The first three heads
-contain 64 raw DFL values and 15 class logits; the last output contains objectness
+contain 64 raw DFL values and 15 class logits; the last output contains raw auxiliary
 logits. The deployment models use **INT8 input and all four INT8 outputs**, preserving
-the original NCHW shapes and output order. Quantize input with
+the original NCHW logical shapes and output order. PTE image tensors use NHWC
+physical storage, as described below. Quantize input with
 `clip(round(rgb / 255 / scale) + zero_point, -128, 127)` and dequantize each output with
 `(value - zero_point) * scale`. Each output has its own parameters; read them from the
 report. The reference TFLite has NHWC heads in a different output order, which the
@@ -149,6 +150,15 @@ validation adapter maps back to the ONNX interface.
 DFL decoding, sigmoid and NMS remain application postprocessing. The zero-CPU-operator
 requirement applies to the compiled neural-network graph. Do not use the single-output
 `.pt` export contract for this model.
+
+> **Model semantics and acceptance pending:** For the RGB `best.onnx` discussed here,
+> the current default exporter and firmware interpret the fourth output as objectness.
+> Its `cv4` branch structure suggests it may instead contain raw angle logits; the
+> training/export contract and angle mapping have not been confirmed. Acceptance of
+> this original model is deferred. Host numerical parity checks establish consistency
+> with the implemented decoding rule, not that this rule matches the trained model.
+> The separately supplied grayscale QOperator model uses an explicitly configured
+> DFL8/OBB Top1 path; its deployment results do not establish the RGB model's semantics.
 
 The adapter specializes fixed Resize, Slice and Reshape parameters, uses Linear for
 constant MatMul weights and folds SE Expand into shape-checked multiplication.
@@ -161,7 +171,8 @@ ONNX Runtime reference predictions are compared against the captured PyTorch gra
 and FP32 LiteRT on every validation image. A difference exceeding `rtol=1e-4`,
 `atol=1e-4` aborts conversion. Host PT2E and INT8 LiteRT outputs are dequantized and
 compared separately. Validation decodes DFL boxes and computes
-`sigmoid(class_logits) * sigmoid(objectness_logits)`, matching the raw-head postprocessor.
+`sigmoid(class_logits) * sigmoid(auxiliary_logits)`, matching the current default
+raw-head postprocessor's objectness interpretation described above.
 The default acceptance checks require the maximum absolute score difference to be at
 most 0.15 and the box IoU at the strongest ONNX anchor to be at least 0.9. Configure
 these limits with `--max-score-error` and `--min-box-iou`. Reports retain per-output
@@ -182,8 +193,12 @@ Outputs are under `resources_downloaded/yolo_QRcode/`:
 | Vela logs and performance estimates | `tflm_<memory-mode>/vela.log`, `*.csv` |
 
 The report includes the source SHA-256, package versions, calibration paths, original
-output names, compiler arguments and stage status. PTE serialized shapes and dimension
-orders must match ONNX, with INT8 tensors and only Ethos-U delegates. The script checks
+output names, compiler arguments and stage status. PTE logical shapes and output order
+match ONNX, with INT8 tensors and only Ethos-U delegates. Four-dimensional input and
+head tensors use channels-last storage (`dim_order=[0,2,3,1]`), matching the backend's
+NHWC layout; the three-dimensional auxiliary output remains contiguous. Calibration,
+graph capture and firmware input/output handling all use this same storage layout.
+The script checks
 the serialized forward execution plan and rejects **any CPU operator**. PTE integer
 I/O parameters are stored as configuration methods and in the JSON sidecar.
 Vela-compiled TFLite must contain only `ethos-u` custom operators and INT8 I/O. The check

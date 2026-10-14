@@ -18,8 +18,26 @@ set(${use_case}_supports_${ML_FRAMEWORK} ON)
 list(APPEND ${use_case}_API_LIST "yolov8_detection")
 
 USER_OPTION(
+    ${use_case}_PROFILE_POSTPROCESS
+    "Include CPU post-processing in the inference profiling window."
+    OFF
+    BOOL)
+
+USER_OPTION(
     ${use_case}_MODEL_IN_EXT_FLASH
     "Run model from external flash."
+    OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_DFL_BINS
+    "Bins per DFL distribution (8 or 16)."
+    16
+    STRING)
+
+USER_OPTION(
+    ${use_case}_OBB
+    "Decode the fourth output as raw OBB angle logits; requires Top1."
     OFF
     BOOL)
 
@@ -200,6 +218,9 @@ generate_model_code(
     NAMESPACE "arm" "app" "yolov8_detection")
 
 set(${use_case}_COMPILE_DEFS
+    "YOLOV8_DFL_BINS=${${use_case}_DFL_BINS}"
+    "YOLOV8_OBB=$<BOOL:${${use_case}_OBB}>"
+    "YOLOV8_PROFILE_POSTPROCESS=$<BOOL:${${use_case}_PROFILE_POSTPROCESS}>"
     "YOLOV8_ET_METHOD_MEMORY_IN_DDR=$<BOOL:${${use_case}_ET_METHOD_MEMORY_IN_DDR}>"
     "YOLOV8_NUM_CLASSES=${${use_case}_NUM_CLASSES}"
     "YOLOV8_MAX_DETECTIONS=${${use_case}_MAX_DETECTIONS}"

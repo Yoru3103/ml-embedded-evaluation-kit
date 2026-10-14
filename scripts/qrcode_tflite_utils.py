@@ -5,14 +5,49 @@
 """Inspect actual TFLite operators and validate integer tensor interfaces."""
 
 from collections import Counter
+import argparse
+from importlib import import_module
 from pathlib import Path
-from typing import Callable
+import subprocess
+import sys
+from typing import Any, Callable
 
-from ai_edge_litert.interpreter import Interpreter
 from ethosu.vela.tflite.BuiltinOperator import BuiltinOperator
 from ethosu.vela.tflite.Model import Model
 from ethosu.vela.tflite.TensorType import TensorType
 import numpy as np
+
+
+def compile_tflite(args: argparse.Namespace, source: Path | None = None,
+                   label: str = "tflm") -> dict:
+    """Compile an INT8 model without importing either model-export backend.
+
+    :param args:    Target, memory configuration and compiler options.
+    :param source:  Optional external integer-I/O TFLite model.
+    :param label:   Output-directory prefix for this compilation.
+    :returns:       Compiled path, exact command and NPU-only operator checks.
+    """
+    source = source or args.output_dir / "tflite/best_int8.tflite"
+    directory = args.output_dir / f"{label}_{args.memory_mode}"
+    directory.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, "-m", "ethosu.vela", str(source),
+               "--accelerator-config", args.target, "--config", str(args.vela_config),
+               "--system-config", args.system_config, "--memory-mode", args.memory_mode,
+               "--optimise", "Performance", "--cop-format", "COP1",
+               "--verbose-performance", "--output-dir", str(directory), *args.extra_flag]
+    if args.memory_mode == "Dedicated_Sram":
+        command.extend(["--arena-cache-size", str(args.arena_cache_size)])
+    log = directory / "vela.log"
+    with log.open("w", encoding="utf-8") as stream:
+        subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
+    path = directory / f"{source.stem}_vela.tflite"
+    if not path.is_file():
+        raise RuntimeError("Vela did not produce the expected TFLite model")
+    operators = inspect_tflite(path, require_npu=True)
+    print(f"TFLite {args.memory_mode}: {operators}; log={log}", flush=True)
+    return {"path": str(path), "bytes": path.stat().st_size, "command": command,
+            "log": str(log), **operators,
+            "summaries": [str(item) for item in directory.glob("*.csv")]}
 
 
 def inspect_tflite(path: Path, require_npu: bool = False) -> dict:
@@ -86,7 +121,7 @@ def lite_runner(path: Path, metadata: dict, require_int8: bool) -> tuple[Callabl
     :param require_int8:    Reject float interfaces when integer execution is required.
     :returns:               Prediction callable and checked tensor interface.
     """
-    interpreter = Interpreter(model_path=str(path), num_threads=4)
+    interpreter = create_interpreter(path)
     interpreter.allocate_tensors()
     inputs, outputs = interpreter.get_input_details(), interpreter.get_output_details()
     if len(inputs) != 1 or len(outputs) != 4:
@@ -130,3 +165,16 @@ def lite_runner(path: Path, metadata: dict, require_int8: bool) -> tuple[Callabl
 
     return predict, {"input": tensors[0], "input_layout": "NHWC" if nhwc else "NCHW",
                      "outputs": [tensor_metadata(item) for item, _ in bindings]}
+
+
+def create_interpreter(path: Path) -> Any:
+    """Load an available LiteRT or TensorFlow interpreter only when needed.
+
+    :param path:    TFLite model to execute on the host.
+    :returns:       Interpreter with four host worker threads.
+    """
+    try:
+        interpreter_type = import_module("ai_edge_litert.interpreter").Interpreter
+    except ModuleNotFoundError:
+        interpreter_type = import_module("tensorflow").lite.Interpreter
+    return interpreter_type(model_path=str(path), num_threads=4)

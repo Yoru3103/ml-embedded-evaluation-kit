@@ -23,6 +23,8 @@ struct YoloV8PostProcessParams {
     uint32_t maxDetections{20};
     float scoreThreshold{0.25F};
     float nmsThreshold{0.45F};
+    uint32_t dflBins{16};
+    bool orientedBoxes{false};
 };
 
 class YoloV8PostProcess : public BasePostProcess {
@@ -43,23 +45,27 @@ private:
 /**
  * @brief Post-processes the four-output YOLOv8 DFL model.
  *
- * The model has three feature maps containing 64 DFL box values followed by
- * the class logits, optionally plus one concatenated objectness output.
+ * Three feature maps contain four DFL distributions followed by class logits.
+ * The configured fourth output is either legacy objectness or raw OBB angle logits.
+ * Class selection uses the largest logit, keeping the first class for equal logits.
+ * Quantized probability bounds reject impossible candidates before per-cell Sigmoid.
+ * With maxDetections == 1, decode the highest-scoring valid box and skip NMS.
  */
 class YoloV8NewPostProcess : public BasePostProcess {
 public:
     YoloV8NewPostProcess(
         const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
         std::vector<yolov8_detection::DetectionResult>& results,
-        const YoloV8PostProcessParams& params);
+        const YoloV8PostProcessParams& params,
+        bool useTensorLayout = false);
 
     bool DoPostProcess() override;
 
 private:
-    static constexpr size_t ms_dflBins = 16;
-    static constexpr size_t ms_dflValues = 4 * ms_dflBins;
+    static constexpr size_t ms_maxDflBins = 16;
 
     std::vector<std::shared_ptr<fwk::iface::TensorIface>> m_outputTensors;
+    bool m_useTensorLayout;
     std::vector<yolov8_detection::DetectionResult>& m_results;
     YoloV8PostProcessParams m_params;
 };

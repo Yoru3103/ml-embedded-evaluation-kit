@@ -5,23 +5,20 @@
 """ExecuTorch and LiteRT backends for the static QR-code ONNX exporter."""
 
 import argparse
+from importlib import import_module
 from pathlib import Path
-import subprocess
-import sys
 
-from ai_edge_quantizer import quantizer, recipe
 from executorch.backends.arm.ethosu import EthosUPartitioner, EthosUCompileSpec
 from executorch.exir import EdgeCompileConfig, ExecutorchBackendConfig, to_edge_transform_and_lower
 from executorch.exir._serialize import _deserialize_pte_binary
 from executorch.exir.passes.memory_planning_pass import MemoryPlanningPass
 from executorch.exir.passes.quantize_io_pass import QuantizeInputs, QuantizeOutputs
-import litert_torch
 import numpy as np
 import torch
 
 from export_yolo_pte import make_compile_spec, quantize, save_report
 from qrcode_onnx_utils import check_pte_contract, validate_outputs
-from qrcode_tflite_utils import inspect_tflite, lite_runner
+from qrcode_tflite_utils import lite_runner
 
 
 def torch_predict(model: torch.nn.Module, inputs: np.ndarray) -> list[np.ndarray]:
@@ -32,7 +29,8 @@ def torch_predict(model: torch.nn.Module, inputs: np.ndarray) -> list[np.ndarray
     :returns:       Outputs in original ONNX order.
     """
     with torch.no_grad():
-        return [value.detach().numpy() for value in model(torch.from_numpy(inputs))]
+        tensor = torch.from_numpy(inputs).to(memory_format=torch.channels_last)
+        return [value.detach().numpy() for value in model(tensor)]
 
 
 def lower_integer_pte(quantized: torch.fx.GraphModule, example: torch.Tensor,
@@ -97,7 +95,7 @@ def export_pte(model: torch.nn.Module, paths: list[Path], samples: list[dict],
     """
     spec = make_compile_spec(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    quantized = quantize(model, paths, args, spec)
+    quantized = quantize(model, paths, args, spec, memory_format=torch.channels_last)
     return compile_quantized_pte(quantized, samples, metadata, args)
 
 
@@ -113,9 +111,12 @@ def compile_quantized_pte(quantized: torch.fx.GraphModule, samples: list[dict],
     """
     spec = make_compile_spec(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.save_intermediate:
+        spec.dump_intermediate_artifacts_to(str(args.output.parent / "intermediate"))
     results = validate_outputs(lambda inputs: torch_predict(quantized, inputs), samples, False,
                                args.max_score_error, args.min_box_iou)
-    program, qparams = lower_integer_pte(quantized, torch.from_numpy(samples[0]["input"]),
+    example = torch.from_numpy(samples[0]["input"]).to(memory_format=torch.channels_last)
+    program, qparams = lower_integer_pte(quantized, example,
                                         spec, args.memory_alignment)
     plan = program.executorch_program.execution_plan[0]
     contract = check_pte_contract(plan, metadata)
@@ -154,12 +155,12 @@ def export_tflite(model: torch.nn.Module, calibration: list[np.ndarray],
     directory = args.output_dir / "tflite"
     directory.mkdir(parents=True, exist_ok=True)
     float_path, int8_path = directory / "best_float32.tflite", directory / "best_int8.tflite"
-    edge = litert_torch.convert(model, (torch.from_numpy(calibration[0]),))
+    edge = import_module("litert_torch").convert(model, (torch.from_numpy(calibration[0]),))
     edge.export(str(float_path))
     predict, _ = lite_runner(float_path, metadata, False)
     float_results = validate_outputs(predict, samples, True)
-    compiler = quantizer.Quantizer(str(float_path))
-    compiler.load_quantization_recipe(recipe.static_wi8_ai8())
+    compiler = import_module("ai_edge_quantizer.quantizer").Quantizer(str(float_path))
+    compiler.load_quantization_recipe(import_module("ai_edge_quantizer.recipe").static_wi8_ai8())
     result = compiler.calibrate({"serving_default": [{"args_0": item} for item in calibration]})
     compiler.quantize(calibration_result=result).export_model(str(int8_path), overwrite=True)
     predict, contract = lite_runner(int8_path, metadata, True)
@@ -172,31 +173,11 @@ def export_tflite(model: torch.nn.Module, calibration: list[np.ndarray],
 
 def compile_tflite(args: argparse.Namespace, source: Path | None = None,
                    label: str = "tflm") -> dict:
-    """Run Vela with the same target and memory settings used by the PTE backend.
+    """Keep the existing compilation API while sharing its lightweight implementation.
 
-    :param args:    Export and Vela options for this variant.
-    :param source:  Optional external reference TFLite model.
+    :param args:    Target, memory configuration and compiler options.
+    :param source:  Optional external integer-I/O TFLite model.
     :param label:   Output-directory prefix for this compilation.
-    :returns:       Compiled file, operator checks and exact compiler command.
+    :returns:       Compiled path, exact command and NPU-only operator checks.
     """
-    source = source or args.output_dir / "tflite/best_int8.tflite"
-    directory = args.output_dir / f"{label}_{args.memory_mode}"
-    directory.mkdir(parents=True, exist_ok=True)
-    command = [sys.executable, "-m", "ethosu.vela",
-               str(source),
-               "--accelerator-config", args.target, "--config", str(args.vela_config),
-               "--system-config", args.system_config, "--memory-mode", args.memory_mode,
-               "--output-dir", str(directory), *args.extra_flag]
-    if args.memory_mode == "Dedicated_Sram":
-        command.extend(["--arena-cache-size", str(args.arena_cache_size)])
-    log = directory / "vela.log"
-    with log.open("w", encoding="utf-8") as stream:
-        subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
-    path = directory / f"{source.stem}_vela.tflite"
-    if not path.is_file():
-        raise RuntimeError("Vela did not produce the expected TFLite model")
-    operators = inspect_tflite(path, require_npu=True)
-    print(f"TFLite {args.memory_mode}: {operators}; log={log}", flush=True)
-    return {"path": str(path), "bytes": path.stat().st_size, "command": command,
-            "log": str(log), **operators,
-            "summaries": [str(item) for item in directory.glob("*.csv")]}
+    return import_module("qrcode_tflite_utils").compile_tflite(args, source, label)

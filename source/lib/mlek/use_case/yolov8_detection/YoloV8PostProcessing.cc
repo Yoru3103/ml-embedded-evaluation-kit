@@ -104,39 +104,178 @@ float ToProbability(const float value)
     return Sigmoid(value);
 }
 
-bool ReadTensorValue(
-    const std::shared_ptr<fwk::iface::TensorIface>& tensor,
-    size_t index,
-    float& value)
+struct TensorView {
+    const void* data{nullptr};
+    size_t numElements{0};
+    fwk::iface::TensorType type{fwk::iface::TensorType::INVALID};
+    fwk::iface::QuantParams quantParams{};
+};
+
+bool MakeTensorView(const std::shared_ptr<fwk::iface::TensorIface>& tensor, TensorView& view)
 {
-    if (tensor == nullptr || index >= tensor->GetNumElements()) {
+    if (tensor == nullptr) {
         return false;
     }
 
-    switch (tensor->Type()) {
+    view.type = tensor->Type();
+    switch (view.type) {
     case fwk::iface::TensorType::FP32:
-        value = tensor->GetData<float>()[index];
-        return true;
-    case fwk::iface::TensorType::INT8: {
-        const auto quantParams = tensor->GetQuantParams();
-        if (quantParams.scale <= 0.0F) {
+        break;
+    case fwk::iface::TensorType::INT8:
+    case fwk::iface::TensorType::UINT8:
+        view.quantParams = tensor->GetQuantParams();
+        if (view.quantParams.scale <= 0.0F) {
             return false;
         }
-        value = Dequantize(tensor->GetData<int8_t>()[index], quantParams);
-        return true;
-    }
-    case fwk::iface::TensorType::UINT8: {
-        const auto quantParams = tensor->GetQuantParams();
-        if (quantParams.scale <= 0.0F) {
-            return false;
-        }
-        value = (static_cast<float>(tensor->GetData<uint8_t>()[index]) -
-                 static_cast<float>(quantParams.offset)) * quantParams.scale;
-        return true;
-    }
+        break;
     default:
         return false;
     }
+
+    /* Cache metadata once per pass; no virtual tensor calls in the pixel loops. */
+    view.numElements = tensor->GetNumElements();
+    view.data        = tensor->GetData();
+    return view.data != nullptr;
+}
+
+bool ReadTensorValue(const TensorView& view, size_t index, float& value)
+{
+    if (index >= view.numElements) {
+        return false;
+    }
+
+    switch (view.type) {
+    case fwk::iface::TensorType::FP32:
+        value = static_cast<const float*>(view.data)[index];
+        return true;
+    case fwk::iface::TensorType::INT8:
+        value = Dequantize(static_cast<const int8_t*>(view.data)[index], view.quantParams);
+        return true;
+    case fwk::iface::TensorType::UINT8:
+        value = (static_cast<float>(static_cast<const uint8_t*>(view.data)[index]) -
+                 static_cast<float>(view.quantParams.offset)) *
+                view.quantParams.scale;
+        return true;
+    default:
+        return false;
+    }
+}
+
+struct ProbabilityGate {
+    int minimumCode{0};
+    bool enabled{false};
+};
+
+ProbabilityGate MakeProbabilityGate(const TensorView& view, float threshold)
+{
+    ProbabilityGate gate;
+    if (!(threshold > 0.0F) || !std::isfinite(view.quantParams.scale)) {
+        return gate;
+    }
+
+    int lower = 0;
+    int upper = 0;
+    if (view.type == fwk::iface::TensorType::INT8) {
+        lower = std::numeric_limits<int8_t>::min();
+        upper = std::numeric_limits<int8_t>::max() + 1;
+    } else if (view.type == fwk::iface::TensorType::UINT8) {
+        lower = std::numeric_limits<uint8_t>::min();
+        upper = std::numeric_limits<uint8_t>::max() + 1;
+    } else {
+        return gate;
+    }
+
+    /* Use the same float arithmetic as scoring, including equality at the threshold.
+     * The exclusive upper bound also represents "no quantized value can pass". */
+    while (lower < upper) {
+        const int middle = lower + (upper - lower) / 2;
+        const float value =
+            (static_cast<float>(middle) - static_cast<float>(view.quantParams.offset)) *
+            view.quantParams.scale;
+        if (Sigmoid(value) < threshold) {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    gate.minimumCode = lower;
+    gate.enabled     = true;
+    return gate;
+}
+
+bool ReadGatedTensorValue(const TensorView& view,
+                          size_t index,
+                          const ProbabilityGate& gate,
+                          float& value,
+                          bool& passesGate)
+{
+    if (index >= view.numElements) {
+        return false;
+    }
+    passesGate = true;
+    if (gate.enabled) {
+        const int code = view.type == fwk::iface::TensorType::INT8
+                             ? static_cast<const int8_t*>(view.data)[index]
+                             : static_cast<const uint8_t*>(view.data)[index];
+        passesGate     = code >= gate.minimumCode;
+        if (!passesGate) {
+            return true;
+        }
+    }
+    return ReadTensorValue(view, index, value);
+}
+
+template <typename T>
+size_t FindMaximumClass(const T* pData, size_t classStride, size_t numClasses)
+{
+    T maximum        = std::numeric_limits<T>::lowest();
+    size_t bestClass = 0;
+    for (size_t classIndex = 0; classIndex < numClasses; ++classIndex) {
+        const T value = pData[classIndex * classStride];
+        if (value > maximum) {
+            maximum   = value;
+            bestClass = classIndex;
+        }
+    }
+    return bestClass;
+}
+
+bool ReadMaximumClass(const TensorView& view,
+                      size_t firstIndex,
+                      size_t classStride,
+                      size_t numClasses,
+                      const ProbabilityGate& gate,
+                      float& value,
+                      int& bestClass,
+                      bool& passesGate)
+{
+    if (numClasses == 0 || firstIndex >= view.numElements || classStride == 0 ||
+        numClasses - 1 > (view.numElements - 1 - firstIndex) / classStride) {
+        return false;
+    }
+
+    size_t classIndex = 0;
+    switch (view.type) {
+    case fwk::iface::TensorType::INT8:
+        classIndex = FindMaximumClass(
+            static_cast<const int8_t*>(view.data) + firstIndex, classStride, numClasses);
+        break;
+    case fwk::iface::TensorType::UINT8:
+        classIndex = FindMaximumClass(
+            static_cast<const uint8_t*>(view.data) + firstIndex, classStride, numClasses);
+        break;
+    case fwk::iface::TensorType::FP32:
+        classIndex = FindMaximumClass(
+            static_cast<const float*>(view.data) + firstIndex, classStride, numClasses);
+        break;
+    default:
+        return false;
+    }
+
+    /* Positive per-tensor scale preserves logit order. Equal logits keep the first class. */
+    bestClass = static_cast<int>(classIndex);
+    return ReadGatedTensorValue(
+        view, firstIndex + classIndex * classStride, gate, value, passesGate);
 }
 
 enum class SingleOutputLayout { AttributesFirst, BoxesFirst };
@@ -147,12 +286,11 @@ struct SingleOutputDescription {
     SingleOutputLayout layout{SingleOutputLayout::AttributesFirst};
 };
 
-bool DescribeSingleOutput(
-    const std::vector<size_t>& shape,
-    uint32_t numClasses,
-    SingleOutputDescription& description)
+bool DescribeSingleOutput(const std::vector<size_t>& shape,
+                          uint32_t numClasses,
+                          SingleOutputDescription& description)
 {
-    size_t firstDimension = 0;
+    size_t firstDimension  = 0;
     size_t secondDimension = 0;
 
     if (shape.size() == 3 && shape[0] == 1) {
@@ -254,21 +392,23 @@ bool YoloV8PostProcess::DoPostProcess()
 
     SingleOutputDescription description;
     if (!DescribeSingleOutput(m_outputTensor->Shape(), m_params.numClasses, description)) {
-        printf_err(
-            "Expected YOLOv8 output shape [1, 4 + classes, boxes] or "
-            "[1, boxes, 4 + classes]\n");
+        printf_err("Expected YOLOv8 output shape [1, 4 + classes, boxes] or "
+                   "[1, boxes, 4 + classes]\n");
         return false;
     }
 
     const bool hasObjectness = description.attributes == 5 + m_params.numClasses;
+    TensorView outputView;
+    if (!MakeTensorView(m_outputTensor, outputView)) {
+        printf_err("YOLOv8 output type or quantization is unsupported\n");
+        return false;
+    }
     float maximumCoordinate = 0.0F;
     for (size_t box = 0; box < description.boxCount; ++box) {
         for (size_t coordinate = 0; coordinate < 4; ++coordinate) {
             float value = 0.0F;
             if (!ReadTensorValue(
-                    m_outputTensor,
-                    GetSingleOutputIndex(description, box, coordinate),
-                    value)) {
+                    outputView, GetSingleOutputIndex(description, box, coordinate), value)) {
                 printf_err("YOLOv8 output type or quantization is unsupported\n");
                 return false;
             }
@@ -291,7 +431,7 @@ bool YoloV8PostProcess::DoPostProcess()
         if (hasObjectness) {
             float objectnessValue = 0.0F;
             if (!ReadTensorValue(
-                    m_outputTensor,
+                    outputView,
                     GetSingleOutputIndex(description, box, 4),
                     objectnessValue)) {
                 printf_err("YOLOv8 objectness output is unavailable\n");
@@ -303,7 +443,7 @@ bool YoloV8PostProcess::DoPostProcess()
         for (size_t classIndex = 0; classIndex < m_params.numClasses; ++classIndex) {
             float classValue = 0.0F;
             if (!ReadTensorValue(
-                    m_outputTensor,
+                    outputView,
                     GetSingleOutputIndex(
                         description, box, 4 + classIndex + (hasObjectness ? 1 : 0)),
                     classValue)) {
@@ -327,13 +467,13 @@ bool YoloV8PostProcess::DoPostProcess()
         float boxWidth = 0.0F;
         float boxHeight = 0.0F;
         if (!ReadTensorValue(
-                m_outputTensor, GetSingleOutputIndex(description, box, 0), centerX) ||
+                outputView, GetSingleOutputIndex(description, box, 0), centerX) ||
             !ReadTensorValue(
-                m_outputTensor, GetSingleOutputIndex(description, box, 1), centerY) ||
+                outputView, GetSingleOutputIndex(description, box, 1), centerY) ||
             !ReadTensorValue(
-                m_outputTensor, GetSingleOutputIndex(description, box, 2), boxWidth) ||
+                outputView, GetSingleOutputIndex(description, box, 2), boxWidth) ||
             !ReadTensorValue(
-                m_outputTensor, GetSingleOutputIndex(description, box, 3), boxHeight)) {
+                outputView, GetSingleOutputIndex(description, box, 3), boxHeight)) {
             printf_err("YOLOv8 box output is unavailable\n");
             continue;
         }
@@ -360,22 +500,33 @@ bool YoloV8PostProcess::DoPostProcess()
 YoloV8NewPostProcess::YoloV8NewPostProcess(
     const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
     std::vector<yolov8_detection::DetectionResult>& results,
-    const YoloV8PostProcessParams& params) :
+    const YoloV8PostProcessParams& params,
+    bool useTensorLayout) :
     m_outputTensors{outputTensors},
+    m_useTensorLayout{useTensorLayout},
     m_results{results},
     m_params{params}
 {}
 
 bool YoloV8NewPostProcess::DoPostProcess()
 {
+    const size_t dflBins = m_params.dflBins;
+    const size_t dflValues = 4 * dflBins;
+    if ((dflBins != 8 && dflBins != 16) || dflBins > ms_maxDflBins ||
+        (m_params.orientedBoxes &&
+         (m_outputTensors.size() != 4 || m_params.maxDetections > 1))) {
+        printf_err("DFL requires 8/16 bins; OBB requires four outputs and Top1\n");
+        return false;
+    }
     struct FeatureMap {
-        std::shared_ptr<fwk::iface::TensorIface> tensor;
+        TensorView view;
         size_t height{0};
         size_t width{0};
         size_t channels{0};
         size_t stride{0};
         size_t objectnessOffset{0};
         bool channelsFirst{false};
+        ProbabilityGate classGate;
     };
 
     m_results.clear();
@@ -386,21 +537,20 @@ bool YoloV8NewPostProcess::DoPostProcess()
     }
 
     std::shared_ptr<fwk::iface::TensorIface> objectnessTensor;
+    TensorView objectnessView;
+    ProbabilityGate objectnessGate;
     std::vector<FeatureMap> featureMaps;
 
     for (const auto& tensor : m_outputTensors) {
-        if (tensor == nullptr ||
-            (tensor->Type() != fwk::iface::TensorType::FP32 &&
-             tensor->Type() != fwk::iface::TensorType::INT8 &&
-             tensor->Type() != fwk::iface::TensorType::UINT8)) {
-            printf_err("New YOLOv8 outputs must be float32, int8 or uint8 tensors\n");
+        TensorView view;
+        if (!MakeTensorView(tensor, view)) {
+            printf_err("New YOLOv8 output data, type or quantization is unsupported\n");
             return false;
         }
 
         const auto shape = tensor->Shape();
         const bool isObjectnessShape =
-            (shape.size() == 1) ||
-            (shape.size() == 2 && shape[0] == 1) ||
+            (shape.size() == 1) || (shape.size() == 2 && shape[0] == 1) ||
             (shape.size() == 3 && shape[0] == 1 && (shape[1] == 1 || shape[2] == 1));
         if (isObjectnessShape) {
             if (objectnessTensor != nullptr) {
@@ -408,22 +558,40 @@ bool YoloV8NewPostProcess::DoPostProcess()
                 return false;
             }
             objectnessTensor = tensor;
+            objectnessView   = view;
+            if (!m_params.orientedBoxes) {
+                objectnessGate = MakeProbabilityGate(view, m_params.scoreThreshold);
+            }
             continue;
         }
 
-        if (shape.size() != 4 || shape[0] != 1 ||
-            shape[1] == 0 || shape[2] == 0 || shape[3] == 0) {
+        if (shape.size() != 4 || shape[0] != 1 || shape[1] == 0 || shape[2] == 0 || shape[3] == 0) {
             printf_err("Invalid new YOLOv8 feature map shape\n");
             return false;
         }
 
-        const size_t expectedChannels = ms_dflValues + m_params.numClasses;
-        if (shape[3] == expectedChannels ||
-            (shape[3] >= ms_dflValues && shape[1] < ms_dflValues)) {
-            featureMaps.push_back({tensor, shape[1], shape[2], shape[3], 0, 0, false});
+        const size_t expectedChannels = dflValues + m_params.numClasses;
+        if (shape[3] == expectedChannels || (shape[3] >= dflValues && shape[1] < dflValues)) {
+            featureMaps.push_back({view,
+                                   shape[1],
+                                   shape[2],
+                                   shape[3],
+                                   0,
+                                   0,
+                                   false,
+                                   MakeProbabilityGate(view, m_params.scoreThreshold)});
         } else if (shape[1] == expectedChannels ||
-                   (shape[1] >= ms_dflValues && shape[3] < ms_dflValues)) {
-            featureMaps.push_back({tensor, shape[2], shape[3], shape[1], 0, 0, true});
+                   (shape[1] >= dflValues && shape[3] < dflValues)) {
+            const bool channelsFirst =
+                !m_useTensorLayout || tensor->Layout() != fwk::iface::TensorLayout::NHWC;
+            featureMaps.push_back({view,
+                                   shape[2],
+                                   shape[3],
+                                   shape[1],
+                                   0,
+                                   0,
+                                   channelsFirst,
+                                   MakeProbabilityGate(view, m_params.scoreThreshold)});
         } else {
             printf_err("New YOLOv8 feature map has no DFL channel dimension\n");
             return false;
@@ -435,22 +603,21 @@ bool YoloV8NewPostProcess::DoPostProcess()
         return false;
     }
 
-    std::sort(
-        featureMaps.begin(),
-        featureMaps.end(),
-        [](const FeatureMap& first, const FeatureMap& second) {
-            return first.width > second.width;
-        });
+    std::sort(featureMaps.begin(),
+              featureMaps.end(),
+              [](const FeatureMap& first, const FeatureMap& second) {
+                  return first.width > second.width;
+              });
 
-    const size_t objectnessElements =
-        objectnessTensor == nullptr ? 0 : objectnessTensor->GetNumElements();
-    size_t objectnessOffset = 0;
-    size_t numClasses = 0;
+    const size_t objectnessElements = objectnessTensor == nullptr ? 0 : objectnessView.numElements;
+    size_t objectnessOffset         = 0;
+    size_t numClasses               = 0;
 
     for (auto& featureMap : featureMaps) {
         if (m_params.imageWidth % featureMap.width != 0 ||
-            m_params.imageHeight % featureMap.height != 0 ||
-            featureMap.channels < ms_dflValues) {
+            m_params.imageHeight % featureMap.height != 0 || featureMap.channels < dflValues ||
+            featureMap.view.numElements !=
+                featureMap.height * featureMap.width * featureMap.channels) {
             printf_err("Invalid new YOLOv8 feature map dimensions\n");
             return false;
         }
@@ -462,7 +629,7 @@ bool YoloV8NewPostProcess::DoPostProcess()
             return false;
         }
 
-        const size_t featureMapClasses = featureMap.channels - ms_dflValues;
+        const size_t featureMapClasses = featureMap.channels - dflValues;
         if (numClasses == 0) {
             numClasses = featureMapClasses;
         } else if (numClasses != featureMapClasses) {
@@ -484,108 +651,205 @@ bool YoloV8NewPostProcess::DoPostProcess()
         return false;
     }
 
-    std::vector<yolov8_detection::DetectionResult> candidates;
-    candidates.reserve(objectnessElements);
+    struct ScoredCell {
+        const FeatureMap* featureMap;
+        size_t cell;
+        float score;
+        int classId;
+    };
+
+    if (m_params.maxDetections == 0) {
+        return true;
+    }
+
+    std::vector<ScoredCell> scoredCells;
+    scoredCells.reserve(
+        std::min(objectnessOffset, static_cast<size_t>(m_params.maxDetections) * 4U));
 
     for (const auto& featureMap : featureMaps) {
         for (size_t y = 0; y < featureMap.height; ++y) {
             for (size_t x = 0; x < featureMap.width; ++x) {
                 const size_t cell = y * featureMap.width + x;
+                const size_t classStride =
+                    featureMap.channelsFirst ? featureMap.height * featureMap.width : 1;
+                const size_t firstClassIndex = featureMap.channelsFirst
+                                                    ? dflValues * classStride + cell
+                                                    : cell * featureMap.channels + dflValues;
+                float classValue             = 0.0F;
+                int bestClass                = -1;
+                bool classPassesGate         = false;
+                if (!ReadMaximumClass(featureMap.view,
+                                      firstClassIndex,
+                                      classStride,
+                                      numClasses,
+                                      featureMap.classGate,
+                                      classValue,
+                                      bestClass,
+                                      classPassesGate)) {
+                    printf_err("New YOLOv8 class output is unsupported\n");
+                    return false;
+                }
+                /* The class gate is valid for both scoring modes. Angle is never
+                 * a confidence bound and is only read when decoding an OBB. */
+                if (!classPassesGate) {
+                    continue;
+                }
+
                 float objectnessScore = 1.0F;
-                if (objectnessTensor != nullptr) {
-                    float objectnessValue = 0.0F;
-                    if (!ReadTensorValue(
-                            objectnessTensor,
-                            featureMap.objectnessOffset + cell,
-                            objectnessValue)) {
+                if (objectnessTensor != nullptr && !m_params.orientedBoxes) {
+                    float objectnessValue     = 0.0F;
+                    bool objectnessPassesGate = false;
+                    if (!ReadGatedTensorValue(objectnessView,
+                                              featureMap.objectnessOffset + cell,
+                                              objectnessGate,
+                                              objectnessValue,
+                                              objectnessPassesGate)) {
                         printf_err("New YOLOv8 objectness output is unsupported\n");
                         return false;
                     }
+                    if (!objectnessPassesGate) {
+                        continue;
+                    }
                     objectnessScore = Sigmoid(objectnessValue);
                 }
+                const float bestScore = objectnessScore * Sigmoid(classValue);
 
-                std::array<float, ms_dflBins> dflValues{};
-                std::array<float, 4> distances{};
-
-                for (size_t side = 0; side < 4; ++side) {
-                    float maximum = -std::numeric_limits<float>::infinity();
-                    for (size_t bin = 0; bin < ms_dflBins; ++bin) {
-                        const size_t channel = side * ms_dflBins + bin;
-                        const size_t index =
-                            featureMap.channelsFirst
-                                ? channel * featureMap.height * featureMap.width + cell
-                                : cell * featureMap.channels + channel;
-                        if (!ReadTensorValue(featureMap.tensor, index, dflValues[bin])) {
-                            printf_err("New YOLOv8 feature map output is unsupported\n");
-                            return false;
-                        }
-                        maximum = std::max(maximum, dflValues[bin]);
-                    }
-
-                    float sum = 0.0F;
-                    float weightedSum = 0.0F;
-                    for (size_t bin = 0; bin < ms_dflBins; ++bin) {
-                        const float probability = std::exp(dflValues[bin] - maximum);
-                        sum += probability;
-                        weightedSum += static_cast<float>(bin) * probability;
-                    }
-                    distances[side] = sum > 0.0F ? weightedSum / sum : 0.0F;
-                }
-
-                float bestScore = 0.0F;
-                int bestClass = -1;
-                for (size_t classIndex = 0; classIndex < numClasses; ++classIndex) {
-                    const size_t channel = ms_dflValues + classIndex;
-                    const size_t index =
-                        featureMap.channelsFirst
-                            ? channel * featureMap.height * featureMap.width + cell
-                            : cell * featureMap.channels + channel;
-                    float classValue = 0.0F;
-                    if (!ReadTensorValue(featureMap.tensor, index, classValue)) {
-                        printf_err("New YOLOv8 class output is unsupported\n");
-                        return false;
-                    }
-                    const float classScore = Sigmoid(classValue);
-                    const float score = objectnessScore * classScore;
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestClass = static_cast<int>(classIndex);
-                    }
-                }
-
-                if (bestClass < 0 || bestScore < m_params.scoreThreshold) {
+                if (!(bestScore > 0.0F) || bestScore < m_params.scoreThreshold) {
                     continue;
                 }
 
-                const float centerX = (static_cast<float>(x) + 0.5F) * featureMap.stride;
-                const float centerY = (static_cast<float>(y) + 0.5F) * featureMap.stride;
-                const float left = centerX - distances[0] * featureMap.stride;
-                const float top = centerY - distances[1] * featureMap.stride;
-                const float right = centerX + distances[2] * featureMap.stride;
-                const float bottom = centerY + distances[3] * featureMap.stride;
-
-                const int clippedLeft = std::clamp(
-                    static_cast<int>(left), 0, static_cast<int>(m_params.imageWidth) - 1);
-                const int clippedTop = std::clamp(
-                    static_cast<int>(top), 0, static_cast<int>(m_params.imageHeight) - 1);
-                const int clippedRight = std::clamp(
-                    static_cast<int>(right), 0, static_cast<int>(m_params.imageWidth));
-                const int clippedBottom = std::clamp(
-                    static_cast<int>(bottom), 0, static_cast<int>(m_params.imageHeight));
-
-                if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) {
-                    continue;
-                }
-
-                candidates.push_back({
-                    bestScore,
-                    bestClass,
-                    clippedLeft,
-                    clippedTop,
-                    clippedRight - clippedLeft,
-                    clippedBottom - clippedTop
-                });
+                scoredCells.push_back({&featureMap, cell, bestScore, bestClass});
             }
+        }
+    }
+
+    const auto decodeBox = [&](const ScoredCell& candidate,
+                               yolov8_detection::DetectionResult& result) {
+        const auto& featureMap = *candidate.featureMap;
+        const size_t cell      = candidate.cell;
+        const size_t x         = cell % featureMap.width;
+        const size_t y         = cell / featureMap.width;
+
+        /* Decode boxes only after their confidence passes the threshold. */
+        std::array<float, ms_maxDflBins> logits{};
+        std::array<float, 4> distances{};
+
+        for (size_t side = 0; side < 4; ++side) {
+            float maximum = -std::numeric_limits<float>::infinity();
+            for (size_t bin = 0; bin < dflBins; ++bin) {
+                const size_t channel = side * dflBins + bin;
+                const size_t index   = featureMap.channelsFirst
+                                           ? channel * featureMap.height * featureMap.width + cell
+                                           : cell * featureMap.channels + channel;
+                if (!ReadTensorValue(featureMap.view, index, logits[bin])) {
+                    printf_err("New YOLOv8 feature map output is unsupported\n");
+                    return false;
+                }
+                maximum = std::max(maximum, logits[bin]);
+            }
+
+            float sum         = 0.0F;
+            float weightedSum = 0.0F;
+            for (size_t bin = 0; bin < dflBins; ++bin) {
+                const float probability = std::exp(logits[bin] - maximum);
+                sum += probability;
+                weightedSum += static_cast<float>(bin) * probability;
+            }
+            distances[side] = sum > 0.0F ? weightedSum / sum : 0.0F;
+        }
+
+        const float centerX = (static_cast<float>(x) + 0.5F) * featureMap.stride;
+        const float centerY = (static_cast<float>(y) + 0.5F) * featureMap.stride;
+        float left    = centerX - distances[0] * featureMap.stride;
+        float top     = centerY - distances[1] * featureMap.stride;
+        float right   = centerX + distances[2] * featureMap.stride;
+        float bottom  = centerY + distances[3] * featureMap.stride;
+        float angle = 0.0F;
+        float boxCenterX = centerX;
+        float boxCenterY = centerY;
+        const float boxWidth = (distances[0] + distances[2]) * featureMap.stride;
+        const float boxHeight = (distances[1] + distances[3]) * featureMap.stride;
+        if (m_params.orientedBoxes) {
+            float angleLogit = 0.0F;
+            if (!ReadTensorValue(objectnessView, featureMap.objectnessOffset + cell, angleLogit) ||
+                !std::isfinite(angleLogit)) {
+                printf_err("OBB angle output is invalid\n");
+                return false;
+            }
+            constexpr float pi = 3.14159265358979323846F;
+            angle = (Sigmoid(angleLogit) - 0.25F) * pi;
+            const float cosine = std::cos(angle);
+            const float sine = std::sin(angle);
+            const float offsetX = (distances[2] - distances[0]) * 0.5F * featureMap.stride;
+            const float offsetY = (distances[3] - distances[1]) * 0.5F * featureMap.stride;
+            boxCenterX += offsetX * cosine - offsetY * sine;
+            boxCenterY += offsetX * sine + offsetY * cosine;
+            const float envelopeWidth = boxWidth * std::fabs(cosine) + boxHeight * std::fabs(sine);
+            const float envelopeHeight = boxWidth * std::fabs(sine) + boxHeight * std::fabs(cosine);
+            left = boxCenterX - envelopeWidth * 0.5F;
+            right = boxCenterX + envelopeWidth * 0.5F;
+            top = boxCenterY - envelopeHeight * 0.5F;
+            bottom = boxCenterY + envelopeHeight * 0.5F;
+        }
+
+        const int clippedLeft =
+            std::clamp(static_cast<int>(left), 0, static_cast<int>(m_params.imageWidth) - 1);
+        const int clippedTop =
+            std::clamp(static_cast<int>(top), 0, static_cast<int>(m_params.imageHeight) - 1);
+        const int clippedRight =
+            std::clamp(static_cast<int>(right), 0, static_cast<int>(m_params.imageWidth));
+        const int clippedBottom =
+            std::clamp(static_cast<int>(bottom), 0, static_cast<int>(m_params.imageHeight));
+
+        result = {candidate.score,
+                  candidate.classId,
+                  clippedLeft,
+                  clippedTop,
+                  clippedRight - clippedLeft,
+                  clippedBottom - clippedTop};
+        if (m_params.orientedBoxes) {
+            result.centerX = boxCenterX;
+            result.centerY = boxCenterY;
+            result.boxWidth = boxWidth;
+            result.boxHeight = boxHeight;
+            result.angle = angle;
+            result.rotated = true;
+        }
+        return true;
+    };
+
+    if (m_params.maxDetections == 1) {
+        /* Select globally before DFL; normally decode just one box and skip NMS. */
+        while (!scoredCells.empty()) {
+            const auto best =
+                std::max_element(scoredCells.begin(),
+                                 scoredCells.end(),
+                                 [](const ScoredCell& first, const ScoredCell& second) {
+                                     return first.score < second.score;
+                                 });
+            yolov8_detection::DetectionResult result;
+            if (!decodeBox(*best, result)) {
+                return false;
+            }
+            if (result.width > 0 && result.height > 0) {
+                m_results.push_back(result);
+                return true;
+            }
+            /* A clipped zero-area box must not hide the next valid candidate. */
+            scoredCells.erase(best);
+        }
+        return true;
+    }
+
+    std::vector<yolov8_detection::DetectionResult> candidates;
+    candidates.reserve(scoredCells.size());
+    for (const auto& candidate : scoredCells) {
+        yolov8_detection::DetectionResult result;
+        if (!decodeBox(candidate, result)) {
+            return false;
+        }
+        if (result.width > 0 && result.height > 0) {
+            candidates.push_back(result);
         }
     }
 
