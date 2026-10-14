@@ -13,46 +13,50 @@
 namespace arm::app {
 namespace {
 
-struct InputDescription {
-    fwk::iface::TensorLayout layout{fwk::iface::TensorLayout::INVALID};
-    size_t height{0};
-    size_t width{0};
-};
+    struct InputDescription {
+        fwk::iface::TensorLayout layout{fwk::iface::TensorLayout::INVALID};
+        size_t height{0};
+        size_t width{0};
+        size_t channels{0};
+    };
 
-bool GetInputDescription(const std::vector<size_t>& shape, InputDescription& description)
-{
-    if (shape.size() != 4 || shape[0] != 1) {
+    bool GetInputDescription(const std::vector<size_t>& shape, InputDescription& description)
+    {
+        if (shape.size() != 4 || shape[0] != 1 || shape[1] == 0 || shape[2] == 0 || shape[3] == 0) {
+            return false;
+        }
+
+        /* Generated samples are RGB; models can consume RGB or grayscale. */
+        if ((shape[1] == 1 || shape[1] == 3) &&
+            ((shape[3] != 1 && shape[3] != 3) || shape[2] == shape[3])) {
+            description.layout   = fwk::iface::TensorLayout::NCHW;
+            description.height   = shape[2];
+            description.width    = shape[3];
+            description.channels = shape[1];
+            return true;
+        }
+
+        if ((shape[3] == 1 || shape[3] == 3) &&
+            ((shape[1] != 1 && shape[1] != 3) || shape[1] == shape[2])) {
+            description.layout   = fwk::iface::TensorLayout::NHWC;
+            description.height   = shape[1];
+            description.width    = shape[2];
+            description.channels = shape[3];
+            return true;
+        }
+
         return false;
     }
 
-    /* TFLite does not carry a reliable layout annotation. Infer it from the RGB channel. */
-    if (shape[1] == 3 && shape[3] != 3) {
-        description.layout = fwk::iface::TensorLayout::NCHW;
-        description.height = shape[2];
-        description.width = shape[3];
-        return true;
+    long QuantizeInput(const uint8_t value, const fwk::iface::QuantParams& quantParams)
+    {
+        const float realValue = static_cast<float>(value) / 255.0F;
+        return std::lround(realValue / quantParams.scale) + quantParams.offset;
     }
-
-    if (shape[3] == 3 && shape[1] != 3) {
-        description.layout = fwk::iface::TensorLayout::NHWC;
-        description.height = shape[1];
-        description.width = shape[2];
-        return true;
-    }
-
-    return false;
-}
-
-long QuantizeInput(const uint8_t value, const fwk::iface::QuantParams& quantParams)
-{
-    const float realValue = static_cast<float>(value) / 255.0F;
-    return std::lround(realValue / quantParams.scale) + quantParams.offset;
-}
 
 } /* anonymous namespace */
 
-YoloV8PreProcess::YoloV8PreProcess(
-    const std::shared_ptr<fwk::iface::TensorIface>& inputTensor) :
+YoloV8PreProcess::YoloV8PreProcess(const std::shared_ptr<fwk::iface::TensorIface>& inputTensor) :
     m_inputTensor{inputTensor}
 {}
 
@@ -65,24 +69,24 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
 
     InputDescription description;
     if (!GetInputDescription(m_inputTensor->Shape(), description)) {
-        printf_err("Expected YOLOv8 input shape [1, 3, H, W] or [1, H, W, 3]\n");
+        printf_err("Expected RGB or grayscale NCHW/NHWC input\n");
         return false;
     }
 
-    const size_t planeSize = description.height * description.width;
+    const size_t planeSize     = description.height * description.width;
     const size_t requiredBytes = planeSize * 3;
     if (inputSize < requiredBytes) {
         printf_err("Input image is too small\n");
         return false;
     }
 
-    const auto* source = static_cast<const uint8_t*>(input);
-    const auto tensorType = m_inputTensor->Type();
+    const auto* source     = static_cast<const uint8_t*>(input);
+    const auto tensorType  = m_inputTensor->Type();
     const auto quantParams = m_inputTensor->GetQuantParams();
 
-    const bool isQuantized = tensorType == fwk::iface::TensorType::INT8 ||
-                             tensorType == fwk::iface::TensorType::UINT8;
-    if (isQuantized && quantParams.scale <= 0.0F) {
+    const bool isQuantized =
+        tensorType == fwk::iface::TensorType::INT8 || tensorType == fwk::iface::TensorType::UINT8;
+    if (isQuantized && (!std::isfinite(quantParams.scale) || quantParams.scale <= 0.0F)) {
         printf_err("YOLOv8 quantized input has invalid quantization parameters\n");
         return false;
     }
@@ -93,11 +97,18 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
     }
 
     for (size_t pixel = 0; pixel < planeSize; ++pixel) {
-        for (size_t channel = 0; channel < 3; ++channel) {
-            const uint8_t sourceValue = source[pixel * 3 + channel];
+        for (size_t channel = 0; channel < description.channels; ++channel) {
+            /* Match Pillow RGB-to-L rounding after the common resize/crop step. */
+            const uint8_t sourceValue =
+                description.channels == 1
+                    ? static_cast<uint8_t>((19595U * source[pixel * 3] +
+                                            38470U * source[pixel * 3 + 1] +
+                                            7471U * source[pixel * 3 + 2] + 32768U) >>
+                                           16)
+                    : source[pixel * 3 + channel];
             const size_t destinationIndex = description.layout == fwk::iface::TensorLayout::NCHW
                                                 ? channel * planeSize + pixel
-                                                : pixel * 3 + channel;
+                                                : pixel * description.channels + channel;
 
             if (tensorType == fwk::iface::TensorType::FP32) {
                 m_inputTensor->GetData<float>()[destinationIndex] =
@@ -111,7 +122,6 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
                 m_inputTensor->GetData<uint8_t>()[destinationIndex] = static_cast<uint8_t>(
                     std::clamp(quantizedValue, static_cast<long>(0), static_cast<long>(255)));
             }
-
         }
     }
 

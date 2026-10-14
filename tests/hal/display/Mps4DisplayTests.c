@@ -11,6 +11,8 @@
 
 #include "RTE_Components.h"
 
+bool test_detection_drawing(void);
+
 #define GUARD_BYTES 16
 #define FRAME_BYTES (HDLCD_RES_WIDTH * HDLCD_RES_HEIGHT * HDLCD_BYTES_PER_PIXEL)
 
@@ -49,14 +51,14 @@ void __DSB(void)
         }                                                                   \
     } while (0)
 
-static void reset_frame_buffer(void)
+void reset_frame_buffer(void)
 {
     memset(s_frame_buffer, 0x5a, sizeof(s_frame_buffer));
     memset(s_lcd_pixels, 0x5a, sizeof(s_lcd_pixels));
 }
 
 /** Compare every framebuffer byte and both guard regions with a literal pixel map. */
-static bool check_pixels(const char* expected)
+bool check_pixels(const char* expected)
 {
     CHECK(strlen(expected) == HDLCD_RES_WIDTH * HDLCD_RES_HEIGHT);
     for (size_t index = 0; index < GUARD_BYTES; ++index) {
@@ -207,6 +209,20 @@ static bool test_uncached_frame_buffer(void)
                         "........");
 }
 
+static bool test_image_cache_publication(void)
+{
+    uint8_t image[8 * 6 * 3];
+    memset(image, 0x33, sizeof(image));
+    reset_frame_buffer();
+    CHECK(hal_display_show_image(image, 8, 6, 3, 0, 0, 1) == 0);
+    CHECK(memcmp(s_frame_buffer + GUARD_BYTES, s_lcd_pixels, FRAME_BYTES) == 0);
+    for (size_t index = 0; index < GUARD_BYTES; ++index) {
+        CHECK(s_frame_buffer[index] == 0x5a);
+        CHECK(s_frame_buffer[GUARD_BYTES + FRAME_BYTES + index] == 0x5a);
+    }
+    return true;
+}
+
 int main(void)
 {
     if (hal_display_init() != 0) {
@@ -223,6 +239,8 @@ int main(void)
         test_fullscreen_rectangle,
         test_configured_display_bounds,
         test_uncached_frame_buffer,
+        test_image_cache_publication,
+        test_detection_drawing,
     };
 
     for (size_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index) {
