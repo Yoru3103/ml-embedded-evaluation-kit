@@ -55,14 +55,14 @@ USER_OPTION(
 
 USER_OPTION(
     ${use_case}_DFL_BINS
-    "Bins per DFL distribution (8 or 16)."
-    16
+    "Bins per DFL distribution (0 infers the count from output channels)."
+    0
     STRING)
 
 USER_OPTION(
     ${use_case}_OBB
     "Decode the fourth output as raw OBB angle logits with rotated NMS."
-    OFF
+    ON
     BOOL)
 
 USER_OPTION(

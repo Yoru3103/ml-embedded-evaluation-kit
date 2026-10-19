@@ -118,6 +118,19 @@ block(SCOPE_FOR VARIABLES)
             CACHE BOOL "Use the Ethos-U driver supplied by MLEK" FORCE)
     endif()
 
+    if (EXECUTORCH_BUILD_CORTEX_M)
+        # Reuse the pinned main-repository dependency on clean builds too.
+        # Otherwise ExecuTorch downloads a second CMSIS-NN into the build tree.
+        assert_defined(CMSIS_NN_SRC_PATH)
+        if (NOT EXISTS "${CMSIS_NN_SRC_PATH}/CMakeLists.txt" OR
+            NOT EXISTS "${CMSIS_NN_SRC_PATH}/Include/arm_nnfunctions.h")
+            message(FATAL_ERROR "CMSIS-NN submodule is missing at ${CMSIS_NN_SRC_PATH}. "
+                                "Run git submodule update --init --recursive.")
+        endif()
+        set(CMSIS_NN_LOCAL_PATH "${CMSIS_NN_SRC_PATH}"
+            CACHE PATH "CMSIS-NN source supplied by MLEK" FORCE)
+    endif()
+
     # Add ET main subdirectory
     add_subdirectory(${EXECUTORCH_SRC_PATH}
         ${CMAKE_BINARY_DIR}/executorch EXCLUDE_FROM_ALL)
