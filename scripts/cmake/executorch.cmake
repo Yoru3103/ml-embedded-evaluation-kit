@@ -47,6 +47,13 @@ set(EXECUTORCH_BUILD_EXTENSION_RUNNER_UTIL      ON)
 set(EXECUTORCH_ENABLE_LOGGING                   ON)
 set(EXECUTORCH_BUILD_DEVTOOLS                   OFF)
 set(EXECUTORCH_ENABLE_EVENT_TRACER              OFF)
+set(MLEK_ET_OPERATOR_TRACING OFF)
+if (yolov8_detection_PROFILE_STAGES AND
+    (("yolov8_detection" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
+    set(MLEK_ET_OPERATOR_TRACING ON)
+    # A caller-owned EventTracer needs runtime callbacks, without ETDump/devtools.
+    add_compile_definitions(ET_EVENT_TRACER_ENABLED)
+endif()
 set(GFLAGS_INTTYPES_FORMAT                      C99)
 
 if(TARGET_PLATFORM STREQUAL native)
@@ -106,6 +113,9 @@ endblock()
 
 # Collate the targets for easily linking against.
 add_library(mlek_executorch INTERFACE)
+if (MLEK_ET_OPERATOR_TRACING)
+    target_compile_definitions(mlek_executorch INTERFACE ET_EVENT_TRACER_ENABLED)
+endif()
 
 target_link_libraries(mlek_executorch INTERFACE
     program_schema

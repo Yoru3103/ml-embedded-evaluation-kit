@@ -108,6 +108,10 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
                      iface::MemoryRegion& nnModel,
                      const void* backendData)
 {
+    if (backendData) {
+        const auto* data          = static_cast<const TflmBackendData*>(backendData);
+        m_backendData.m_pProfiler = data->m_pProfiler;
+    }
     /* Following tf lite micro example:
      * Map the model into a usable data structure. This doesn't involve any
      * copying or parsing, it's a very lightweight operation. */
@@ -176,7 +180,8 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
         std::make_unique<tflite::MicroInterpreter>(this->m_backendData.m_pModel,
                                                    this->GetOpResolver(),
                                                    this->m_backendData.m_pAllocator,
-                                                   resourceVariables);
+                                                   resourceVariables,
+                                                   m_backendData.m_pProfiler);
 
     if (!this->m_backendData.m_pInterpreter) {
         printf_err("Failed to allocate interpreter\n");

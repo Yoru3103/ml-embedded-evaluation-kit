@@ -217,7 +217,7 @@ bool EtModel::Init(iface::MemoryRegion& computeBuffer,
 
     size_t methodMemBeforeMark = this->m_backendData.m_methodAllocPtr->UsedSizeCurrent();
 
-    executorch::runtime::EventTracer* eventTracerPtr = nullptr;
+    auto* eventTracerPtr = this->m_backendData.m_eventTracer;
     static auto method =
         this->m_backendData.m_program->get().load_method(this->m_backendData.m_methodName.c_str(),
                                                          this->m_backendData.m_memMgrPtr.get(),

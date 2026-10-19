@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,30 +21,29 @@
 
 namespace arm {
 namespace app {
-    Profiler::Profiler()
-        : Profiler("Unknown")
-    {}
+    Profiler::Profiler() : Profiler("Unknown") {}
 
-    Profiler::Profiler(const char* name)
-        : m_name(name)
-    {}
+    Profiler::Profiler(const char* name) : m_name(name) {}
 
-    bool Profiler::StartProfiling(const char* name)
+    bool Profiler::StartProfiling(const char* name, bool includeNpu)
     {
         if (name) {
             this->SetName(name);
         }
 
         if (!this->m_started) {
+            this->m_includeNpu = includeNpu;
             hal_pmu_reset();
             this->m_tstampSt.initialised = false;
-            hal_pmu_get_counters(&this->m_tstampSt);
+            if (m_includeNpu) {
+                hal_pmu_get_counters(&this->m_tstampSt);
+            } else {
+                hal_pmu_get_cpu_counters(&this->m_tstampSt);
+            }
             if (this->m_tstampSt.initialised) {
                 if (this->m_profStats.count(this->m_name) == 0) {
-                    this->m_profStats.insert(
-                            std::pair<std::string, std::vector<Statistics>>(
-                                    this->m_name, std::vector<Statistics>(this->m_tstampSt.num_counters))
-                                    );
+                    this->m_profStats.insert(std::pair<std::string, std::vector<Statistics>>(
+                        this->m_name, std::vector<Statistics>(this->m_tstampSt.num_counters)));
                 }
                 this->m_started = true;
                 return true;
@@ -58,14 +57,15 @@ namespace app {
     {
         if (this->m_started) {
             this->m_tstampEnd.initialised = false;
-            hal_pmu_get_counters(&this->m_tstampEnd);
+            if (m_includeNpu) {
+                hal_pmu_get_counters(&this->m_tstampEnd);
+            } else {
+                hal_pmu_get_cpu_counters(&this->m_tstampEnd);
+            }
             hal_pmu_final();
             this->m_started = false;
             if (this->m_tstampEnd.initialised) {
-                this->UpdateRunningStats(
-                    this->m_tstampSt,
-                    this->m_tstampEnd,
-                    this->m_name);
+                this->UpdateRunningStats(this->m_tstampSt, this->m_tstampEnd, this->m_name);
                 return true;
             }
         }
@@ -83,6 +83,50 @@ namespace app {
         return false;
     }
 
+    bool Profiler::RecordProfiling(const pmu_counters& start,
+                                   const pmu_counters& end,
+                                   const char* name,
+                                   bool includeNpu)
+    {
+        if (m_started || !name || !start.initialised || !end.initialised ||
+            start.num_counters == 0 || start.num_counters > NUM_PMU_COUNTERS ||
+            end.num_counters == 0 || end.num_counters > NUM_PMU_COUNTERS) {
+            return false;
+        }
+        if (!includeNpu) {
+            const auto cpuOnly = [](const pmu_counters& source) {
+                pmu_counters result{};
+                result.initialised = source.initialised;
+                for (uint32_t index = 0; index < source.num_counters; ++index) {
+                    const auto& counter = source.counters[index];
+                    if (counter.name && std::strncmp(counter.name, "NPU ", 4) != 0) {
+                        result.counters[result.num_counters++] = counter;
+                    }
+                }
+                return result;
+            };
+            return RecordProfiling(cpuOnly(start), cpuOnly(end), name);
+        }
+        if (start.num_counters != end.num_counters) {
+            return false;
+        }
+        for (uint32_t index = 0; index < start.num_counters; ++index) {
+            const auto& first = start.counters[index];
+            const auto& last  = end.counters[index];
+            if (!first.name || !last.name || !first.unit || !last.unit ||
+                std::strcmp(first.name, last.name) != 0 ||
+                std::strcmp(first.unit, last.unit) != 0 || last.value < first.value) {
+                return false;
+            }
+        }
+        m_profStats.try_emplace(name, start.num_counters);
+        if (m_profStats.at(name).size() != start.num_counters) {
+            return false;
+        }
+        UpdateRunningStats(start, end, name);
+        return true;
+    }
+
     void Profiler::Reset()
     {
         if (this->m_started) {
@@ -94,19 +138,18 @@ namespace app {
         memset(&this->m_tstampEnd, 0, sizeof(this->m_tstampEnd));
     }
 
-    void calcProfilingStat(uint64_t currentValue,
-                           Statistics& data)
+    void calcProfilingStat(uint64_t currentValue, Statistics& data)
     {
         data.total += currentValue;
-        data.min = data.samplesNum == 1 ? currentValue : std::min(data.min, currentValue);
-        data.max = std::max(data.max, currentValue);
+        data.min  = data.samplesNum == 1 ? currentValue : std::min(data.min, currentValue);
+        data.max  = std::max(data.max, currentValue);
         data.avrg = (static_cast<double>(data.total) / data.samplesNum);
     }
 
     void Profiler::GetAllResultsAndReset(std::vector<ProfileResult>& results)
     {
-        for (const auto& item: this->m_profStats) {
-            auto name = item.first;
+        for (const auto& item : this->m_profStats) {
+            auto name                      = item.first;
             std::vector<Statistics> series = item.second;
             ProfileResult result{};
             result.name = item.first;
@@ -122,15 +165,17 @@ namespace app {
         this->Reset();
     }
 
-    void printStatisticsHeader(uint32_t samplesNum) {
+    void printStatisticsHeader(uint32_t samplesNum)
+    {
         info("Number of samples: %" PRIu32 "\n", samplesNum);
         info("%s\n", "Total / Avg./ Min / Max");
     }
 
-    void Profiler::PrintProfilingResult(bool printFullStat) {
+    void Profiler::PrintProfilingResult(bool printFullStat)
+    {
         std::vector<ProfileResult> results{};
         GetAllResultsAndReset(results);
-        for(ProfileResult& result: results) {
+        for (ProfileResult& result : results) {
             if (!result.data.empty()) {
                 info("Profile for %s:\n", result.name.c_str());
                 if (printFullStat) {
@@ -138,11 +183,15 @@ namespace app {
                 }
             }
 
-            for (Statistics &stat: result.data) {
+            for (Statistics& stat : result.data) {
                 if (printFullStat) {
                     info("%s %s: %" PRIu64 "/ %.0f / %" PRIu64 " / %" PRIu64 " \n",
-                         stat.name.c_str(), stat.unit.c_str(),
-                         stat.total, stat.avrg, stat.min, stat.max);
+                         stat.name.c_str(),
+                         stat.unit.c_str(),
+                         stat.total,
+                         stat.avrg,
+                         stat.min,
+                         stat.max);
                 } else {
                     info("%s: %.0f %s\n", stat.name.c_str(), stat.avrg, stat.unit.c_str());
                 }
@@ -151,20 +200,18 @@ namespace app {
     }
 
     void Profiler::SetName(const char* str)
-    {
-        this->m_name = std::string(str);
-    }
+    { this->m_name = std::string(str); }
 
-    void Profiler::UpdateRunningStats(pmu_counters start, pmu_counters end,
-                                      const std::string& name)
+    void Profiler::UpdateRunningStats(pmu_counters start, pmu_counters end, const std::string& name)
     {
-        struct ProfilingUnit unit = {
-            .counters = end
-        };
+        struct ProfilingUnit unit = {.counters = end};
 
-        if (end.num_counters != start.num_counters ||
-            !end.initialised || !start.initialised) {
+        if (end.num_counters != start.num_counters || !end.initialised || !start.initialised) {
             printf_err("Invalid start or end counters\n");
+            return;
+        }
+
+        if (end.num_counters == 0 || end.num_counters > NUM_PMU_COUNTERS) {
             return;
         }
 
@@ -181,13 +228,11 @@ namespace app {
             this->m_profStats[name][i].name = unit.counters.counters[i].name;
             this->m_profStats[name][i].unit = unit.counters.counters[i].unit;
             ++this->m_profStats[name][i].samplesNum;
-            calcProfilingStat(
-                    unit.counters.counters[i].value,
-                    this->m_profStats[name][i]);
+            calcProfilingStat(unit.counters.counters[i].value, this->m_profStats[name][i]);
         }
 
         ProfileResult result{};
-        result.name = this->m_name;
+        result.name       = this->m_name;
         result.samplesNum = this->m_profStats[name][0].samplesNum;
 
         for (Statistics& stat : this->m_profStats[name]) {

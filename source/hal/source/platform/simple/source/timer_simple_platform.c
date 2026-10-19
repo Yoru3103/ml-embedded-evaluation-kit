@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2022, 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright 2021-2022, 2025-2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,13 +16,13 @@
  */
 #include "timer_simple_platform.h"
 
-#include "hal_log.h"     /* Logging macros. */
 #include "RTE_Components.h" /* CPU definitions and functions. */
+#include "hal_log.h"        /* Logging macros. */
 
 #include <inttypes.h>
 
-static uint64_t cpu_cycle_count = 0;    /* 64-bit cpu cycle counter */
-extern uint32_t SystemCoreClock;        /* Expected to come from the cmsis-device lib */
+static uint64_t cpu_cycle_count = 0; /* 64-bit cpu cycle counter */
+extern uint32_t SystemCoreClock;     /* Expected to come from the cmsis-device lib */
 
 /**
  * @brief   Gets the system tick triggered cycle counter for the CPU.
@@ -43,11 +43,8 @@ static int Init_SysTick(void);
  * @param counters Pointer to the counter struct - the one to be populated.
  * @return true if successfully added, false otherwise
  */
-static bool add_pmu_counter(
-        uint64_t value,
-        const char* name,
-        const char* unit,
-        pmu_counters* counters);
+static bool
+add_pmu_counter(uint64_t value, const char* name, const char* unit, pmu_counters* counters);
 
 void platform_reset_counters(void)
 {
@@ -63,51 +60,56 @@ void platform_reset_counters(void)
     debug("system tick config ready\n");
 }
 
-void platform_get_counters(pmu_counters* counters)
+static void append_cpu_counters(pmu_counters* counters)
 {
-    counters->num_counters = 0;
-    counters->initialised = true;
-    uint32_t i = 0;
-
-#if defined (ARM_NPU)
-    ethosu_pmu_counters npu_counters = ethosu_get_pmu_counters();
-    for (i = 0; i < ETHOSU_USED_PMU_NCOUNTERS; ++i) {
-        add_pmu_counter(
-                npu_counters.npu_evt_counters[i].counter_value,
-                npu_counters.npu_evt_counters[i].name,
-                npu_counters.npu_evt_counters[i].unit,
-                counters);
-    }
-    for (i = 0; i < ETHOSU_DERIVED_NCOUNTERS; ++i) {
-        add_pmu_counter(
-                npu_counters.npu_derived_counters[i].counter_value,
-                npu_counters.npu_derived_counters[i].name,
-                npu_counters.npu_derived_counters[i].unit,
-                counters);
-    }
-    add_pmu_counter(
-            npu_counters.npu_total_ccnt,
-            "NPU TOTAL",
-            "cycles",
-            counters);
-#else  /* defined (ARM_NPU) */
-    UNUSED(i);
-#endif /* defined (ARM_NPU) */
-
 #if defined(CPU_PROFILE_ENABLED)
-    add_pmu_counter(
-            Get_SysTick_Cycle_Count(),
-            "CPU TOTAL",
-            "cycles",
-            counters);
+    add_pmu_counter(Get_SysTick_Cycle_Count(), "CPU TOTAL", "cycles", counters);
 #endif /* defined(CPU_PROFILE_ENABLED) */
 
 #if !defined(CPU_PROFILE_ENABLED)
     UNUSED(Get_SysTick_Cycle_Count);
-#if !defined(ARM_NPU)
+#    if !defined(ARM_NPU)
     UNUSED(add_pmu_counter);
-#endif /* !defined(ARM_NPU) */
-#endif /* !defined(CPU_PROFILE_ENABLED) */
+#    endif /* !defined(ARM_NPU) */
+#endif     /* !defined(CPU_PROFILE_ENABLED) */
+#if !defined(CPU_PROFILE_ENABLED)
+    UNUSED(counters);
+#endif
+}
+
+void platform_get_cpu_counters(pmu_counters* counters)
+{
+    counters->num_counters = 0;
+    counters->initialised  = true;
+    append_cpu_counters(counters);
+}
+
+void platform_get_counters(pmu_counters* counters)
+{
+    counters->num_counters = 0;
+    counters->initialised  = true;
+    uint32_t i             = 0;
+
+#if defined(ARM_NPU)
+    ethosu_pmu_counters npu_counters = ethosu_get_pmu_counters();
+    for (i = 0; i < ETHOSU_USED_PMU_NCOUNTERS; ++i) {
+        add_pmu_counter(npu_counters.npu_evt_counters[i].counter_value,
+                        npu_counters.npu_evt_counters[i].name,
+                        npu_counters.npu_evt_counters[i].unit,
+                        counters);
+    }
+    for (i = 0; i < ETHOSU_DERIVED_NCOUNTERS; ++i) {
+        add_pmu_counter(npu_counters.npu_derived_counters[i].counter_value,
+                        npu_counters.npu_derived_counters[i].name,
+                        npu_counters.npu_derived_counters[i].unit,
+                        counters);
+    }
+    add_pmu_counter(npu_counters.npu_total_ccnt, "NPU TOTAL", "cycles", counters);
+#else  /* defined (ARM_NPU) */
+    UNUSED(i);
+#endif /* defined (ARM_NPU) */
+
+    append_cpu_counters(counters);
 }
 
 void SysTick_Handler(void)
@@ -135,8 +137,8 @@ static uint64_t Get_SysTick_Cycle_Count(void)
  */
 static int Init_SysTick(void)
 {
-    const uint32_t ticks_10ms = SystemCoreClock/100 + 1;
-    int err = 0;
+    const uint32_t ticks_10ms = SystemCoreClock / 100 + 1;
+    int err                   = 0;
 
     /* Reset CPU cycle count value. */
     cpu_cycle_count = 0;
@@ -159,16 +161,14 @@ static int Init_SysTick(void)
     return err;
 }
 
-static bool add_pmu_counter(uint64_t value,
-                            const char* name,
-                            const char* unit,
-                            pmu_counters* counters)
+static bool
+add_pmu_counter(uint64_t value, const char* name, const char* unit, pmu_counters* counters)
 {
     const uint32_t idx = counters->num_counters;
     if (idx < NUM_PMU_COUNTERS) {
         counters->counters[idx].value = value;
-        counters->counters[idx].name = name;
-        counters->counters[idx].unit = unit;
+        counters->counters[idx].name  = name;
+        counters->counters[idx].unit  = unit;
         ++counters->num_counters;
         return true;
     }

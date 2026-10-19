@@ -1,6 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Copyright 2022-2023, 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +20,8 @@
 #include "hal.h"
 
 #include <cstdint>
-#include <string>
 #include <map>
+#include <string>
 #include <vector>
 
 namespace arm {
@@ -72,7 +72,7 @@ namespace app {
         ~Profiler() = default;
 
         /** @brief  Start profiling => get starting time-stamp. */
-        bool StartProfiling(const char* name = nullptr);
+        bool StartProfiling(const char* name = nullptr, bool includeNpu = true);
 
         /** @brief  Stop profiling => get the ending time-stamp. */
         bool StopProfiling();
@@ -80,6 +80,12 @@ namespace app {
         /** @brief  Stops the profiling and internally resets the
          *          platform timers. */
         bool StopProfilingAndReset();
+
+        /** @brief Record completed timestamps without resetting or reading the hardware. */
+        bool RecordProfiling(const pmu_counters& start,
+                             const pmu_counters& end,
+                             const char* name,
+                             bool includeNpu = true);
 
         /** @brief  Reset the platform timers. */
         void Reset();
@@ -98,12 +104,12 @@ namespace app {
         void SetName(const char* str);
 
     private:
-        ProfilingStats     m_profStats;             /* Profiling stats map. */
-        pmu_counters       m_tstampSt{};            /* Container for a current starting timestamp. */
-        pmu_counters       m_tstampEnd{};           /* Container for a current ending timestamp. */
-        bool               m_started = false;       /* Indicates profiler has been started. */
-        std::string        m_name;                  /* Name given to this profiler. */
-
+        ProfilingStats m_profStats; /* Profiling stats map. */
+        pmu_counters m_tstampSt{};  /* Container for a current starting timestamp. */
+        pmu_counters m_tstampEnd{}; /* Container for a current ending timestamp. */
+        bool m_started = false;     /* Indicates profiler has been started. */
+        bool m_includeNpu{true};
+        std::string m_name; /* Name given to this profiler. */
 
         /**
          * @brief       Updates the running average stats with those computed
@@ -114,8 +120,7 @@ namespace app {
          * @param[in]   name    Name for the profiling running stats series to be
          *                      updated.
          **/
-        void UpdateRunningStats(pmu_counters start, pmu_counters end,
-                                const std::string& name);
+        void UpdateRunningStats(pmu_counters start, pmu_counters end, const std::string& name);
     };
 
 } /* namespace app */
