@@ -206,14 +206,28 @@ int hal_display_show_image(const uint8_t* data,
     uint8_t* dst               = (uint8_t*)(HDLCD_FRAME_BUFFER_BASE_ADDRESS);
     uint8_t* src               = (uint8_t*)data;
 
+    if (data == NULL || downsample_factor == 0 || (channels != 1 && channels != 3)) {
+        printf_err("Unsupported image parameters\n");
+        return -1;
+    }
+
     if (channels <= HDLCD_BYTES_PER_PIXEL) {
         for (uint32_t j = 0; j < height / downsample_factor; ++j) {
             uint8_t* dst_row = dst + ((j + pos_y) * line_stride);
             uint8_t* src_row = src + (j * width * channels * downsample_factor);
             for (uint32_t i = 0; i < width / downsample_factor; ++i) {
-                memcpy(dst_row + ((pos_x + i) * HDLCD_BYTES_PER_PIXEL),
-                       src_row + (i * channels * downsample_factor),
-                       channels);
+                uint8_t* dst_pixel       = dst_row + ((pos_x + i) * HDLCD_BYTES_PER_PIXEL);
+                const uint8_t* src_pixel = src_row + (i * channels * downsample_factor);
+                if (channels == 1) {
+                    dst_pixel[0] = src_pixel[0];
+                    dst_pixel[1] = src_pixel[0];
+                    dst_pixel[2] = src_pixel[0];
+                } else {
+                    memcpy(dst_pixel, src_pixel, channels);
+                }
+#if HDLCD_BYTES_PER_PIXEL == 4
+                dst_pixel[3] = 0;
+#endif
             }
         }
     } else {
