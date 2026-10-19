@@ -15,7 +15,7 @@
 #  limitations under the License.
 
 """
-Utility script to convert a set of RGB images in a given location into
+Utility script to convert a set of RGB or grayscale images into
 corresponding cpp files and a single hpp file referencing the vectors
 from the cpp files.
 """
@@ -43,6 +43,7 @@ class ImagesParams:
     image_size: typing.Sequence
     image_array_names: typing.List[str]
     image_filenames: typing.List[str]
+    channels: int = 3
 
 
 def write_hpp_file(
@@ -65,7 +66,7 @@ def write_hpp_file(
     hdr = gen_header(env, header_template_file)
 
     img_w, img_h = images_params.image_size
-    image_size = str(img_w * img_h * 3)
+    image_size = str(img_w * img_h * images_params.channels)
 
     env \
         .get_template('sample-data/images/images.h.template') \
@@ -122,7 +123,7 @@ def resize_crop_image(
 
 
 def write_individual_img_cc_file(
-        rgb_data: np.ndarray,
+        image_data: np.ndarray,
         image_filename: str,
         cc_filename: Path,
         header_template_file: str,
@@ -132,7 +133,7 @@ def write_individual_img_cc_file(
     """
     Write image.cc
 
-    @param rgb_data:                Image data
+    @param image_data:              Image data
     @param image_filename:          Image file name
     @param cc_filename:             image.cc path
     @param header_template_file:    Header template file name
@@ -145,7 +146,8 @@ def write_individual_img_cc_file(
     hdr = gen_header(env, header_template_file, image_filename)
 
     hex_line_generator = (', '.join(map(hex, sub_arr))
-                          for sub_arr in np.array_split(rgb_data, math.ceil(len(rgb_data) / 20)))
+                          for sub_arr in np.array_split(image_data,
+                                                        math.ceil(len(image_data) / 20)))
     env \
         .get_template('sample-data/images/image.c.template') \
         .stream(common_template_header=hdr,
@@ -182,6 +184,14 @@ def main():
     )
 
     parser.add_argument(
+        "--channels",
+        type=int,
+        choices=(1, 3),
+        default=3,
+        help="Number of sample image channels."
+    )
+
+    parser.add_argument(
         "--license_template",
         type=str,
         help="Header template file",
@@ -211,7 +221,7 @@ def main():
         filename = Path(filepath).name
 
         try:
-            original_image = Image.open(filepath).convert("RGB")
+            original_image = Image.open(filepath).convert("L" if args.channels == 1 else "RGB")
         except UnidentifiedImageError:
             print(f"-- Skipping file {filepath} due to unsupported image format.")
             continue
@@ -226,8 +236,8 @@ def main():
         array_name = "im" + str(image_idx)
         image_array_names.append(array_name)
 
-        rgb_data = resize_crop_image(original_image, args.image_size)
-        write_individual_img_cc_file(rgb_data,
+        image_data = resize_crop_image(original_image, args.image_size)
+        write_individual_img_cc_file(image_data,
                                      filename,
                                      cc_filename,
                                      args.license_template,
@@ -240,7 +250,8 @@ def main():
     header_filepath = Path(args.package_gen_dir) / "sample_files.h"
     common_cc_filepath = Path(args.package_gen_dir) / "sample_files.c"
 
-    images_params = ImagesParams(image_idx, args.image_size, image_array_names, image_filenames)
+    images_params = ImagesParams(image_idx, args.image_size, image_array_names,
+                                image_filenames, args.channels)
 
     if len(image_filenames) > 0:
         write_hpp_file(

@@ -3,6 +3,7 @@
  * <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "QrCodePreProcessing.hpp"
 #include "mlek/use_case/yolov8_detection/YoloV8PostProcessing.hpp"
 #include "mlek/use_case/yolov8_detection/YoloV8PreProcessing.hpp"
 
@@ -41,6 +42,17 @@ public:
     { return m_shape; }
     QuantParams GetQuantParams() override
     { return m_quant; }
+    void SetQuantParams(QuantParams quant)
+    { m_quant = quant; }
+    float Value(size_t index)
+    {
+        if (m_type == TensorType::FP32) {
+            return static_cast<float*>(GetData())[index];
+        }
+        const int raw = m_type == TensorType::INT8 ? static_cast<int8_t*>(GetData())[index]
+                                                   : static_cast<uint8_t*>(GetData())[index];
+        return (static_cast<float>(raw) - static_cast<float>(m_quant.offset)) * m_quant.scale;
+    }
     void Set(size_t index, float value)
     {
         if (m_type == TensorType::FP32) {
@@ -254,22 +266,170 @@ bool TestRotatedNms()
     return true;
 }
 
-int DecodeFile(const char* path, size_t imageSize, size_t channels, uint32_t numClasses)
+bool TestQrCodeInputLookup(TensorType type)
+{
+    auto input = std::make_shared<MemoryTensor>(
+        std::vector<size_t>{1, 256, 256, 1}, type, TensorLayout::NHWC);
+    QrCodePreProcess process{input};
+    std::vector<uint8_t> image(256 * 256);
+    for (size_t index = 0; index < image.size(); ++index) {
+        image[index] = static_cast<uint8_t>(index);
+    }
+    for (QuantParams quant : {QuantParams{0.0037831603549420834F, -128},
+                              QuantParams{0.01F, 17},
+                              QuantParams{1.0F / 255.0F, -128},
+                              QuantParams{0.0037831603549420834F, 0},
+                              QuantParams{0.02F, 119}}) {
+        input->SetQuantParams(quant);
+        for (size_t repeat = 0; repeat < 2; ++repeat) {
+            CHECK(process.DoPreProcess(image.data(), image.size()));
+            for (size_t index = 0; index < image.size(); ++index) {
+                if (type == TensorType::FP32) {
+                    CHECK(static_cast<float*>(input->GetData())[index] == image[index] / 255.0F);
+                } else {
+                    const long expected =
+                        std::lround((image[index] / 255.0F) / quant.scale) + quant.offset;
+                    if (type == TensorType::INT8) {
+                        CHECK(static_cast<int8_t*>(input->GetData())[index] ==
+                              std::clamp(expected, -128L, 127L));
+                    } else {
+                        CHECK(static_cast<uint8_t*>(input->GetData())[index] ==
+                              std::clamp(expected, 0L, 255L));
+                    }
+                }
+            }
+            std::reverse(image.begin(), image.end());
+        }
+    }
+    CHECK(!process.DoPreProcess(nullptr, image.size()));
+    CHECK(!process.DoPreProcess(image.data(), image.size() - 1));
+    if (type != TensorType::FP32) {
+        input->SetQuantParams({0.0F, 0});
+        CHECK(!process.DoPreProcess(image.data(), image.size()));
+    }
+    return true;
+}
+
+bool TestQuantizedDflParity(size_t bins, TensorType type, TensorLayout layout)
+{
+    std::vector<std::shared_ptr<TensorIface>> integerOutputs;
+    std::vector<std::shared_ptr<TensorIface>> floatOutputs;
+    const size_t channels = 4 * bins + 15;
+    size_t headIndex      = 0;
+    for (size_t side : {size_t{4}, size_t{2}, size_t{1}, size_t{0}}) {
+        const bool angle     = side == 0;
+        const auto shape     = angle ? std::vector<size_t>{1, 1, 21}
+                               : layout == TensorLayout::NCHW
+                                   ? std::vector<size_t>{1, channels, side, side}
+                                   : std::vector<size_t>{1, side, side, channels};
+        const float scales[] = {0.037123F, 0.07191F, 0.02341F, 0.01357F};
+        auto quantized       = std::make_shared<MemoryTensor>(
+            shape,
+            type,
+            layout,
+            QuantParams{scales[headIndex++], type == TensorType::INT8 ? -17 : 137});
+        auto floating = std::make_shared<MemoryTensor>(shape, TensorType::FP32, layout);
+        for (size_t index = 0; index < quantized->GetNumElements(); ++index) {
+            quantized->Set(index, -8.0F);
+        }
+        if (angle) {
+            for (size_t index = 0; index < 21; ++index) {
+                quantized->Set(index, (static_cast<int>(index % 7) - 3) * 0.417F);
+            }
+        } else {
+            for (size_t cell = 0; cell < side * side; ++cell) {
+                for (size_t channel = 0; channel < 4 * bins; ++channel) {
+                    const size_t index = layout == TensorLayout::NCHW ? channel * side * side + cell
+                                                                      : cell * channels + channel;
+                    quantized->Set(
+                        index, (static_cast<int>((channel * 37 + cell * 19) % 211) - 105) * 0.043F);
+                }
+                if (cell % 3 == 0) {
+                    const size_t channel = 4 * bins + cell % 15;
+                    quantized->Set(layout == TensorLayout::NCHW ? channel * side * side + cell
+                                                                : cell * channels + channel,
+                                   1.823F);
+                }
+            }
+        }
+        for (size_t index = 0; index < quantized->GetNumElements(); ++index) {
+            floating->Set(index, quantized->Value(index));
+        }
+        integerOutputs.push_back(quantized);
+        floatOutputs.push_back(floating);
+    }
+    const YoloV8PostProcessParams params{32, 32, 15, 20, 0.25F, 0.45F};
+    std::vector<yolov8_detection::DetectionResult> integerResults, floatResults;
+    YoloV8NewPostProcess integerProcess{integerOutputs, integerResults, params};
+    YoloV8NewPostProcess floatProcess{floatOutputs, floatResults, params};
+    CHECK(floatProcess.DoPostProcess());
+    CHECK(integerProcess.DecodeDetections());
+    CHECK(integerResults.empty());
+    integerProcess.SuppressDetections();
+    for (size_t pass = 0; pass < 3; ++pass) {
+        CHECK(!integerResults.empty() && integerResults.size() == floatResults.size());
+        for (size_t index = 0; index < integerResults.size(); ++index) {
+            const auto& integer  = integerResults[index];
+            const auto& floating = floatResults[index];
+            CHECK(integer.classId == floating.classId);
+            CHECK(integer.score == floating.score);
+            CHECK(integer.angleRadians == floating.angleRadians);
+            CHECK(std::abs(integer.centerX - floating.centerX) < 2e-4F);
+            CHECK(std::abs(integer.centerY - floating.centerY) < 2e-4F);
+            CHECK(std::abs(integer.width - floating.width) < 2e-4F);
+            CHECK(std::abs(integer.height - floating.height) < 2e-4F);
+        }
+        if (pass == 1) {
+            // Rebind the same processor to changed scales/zero points after a warm call.
+            for (size_t index = 0; index < integerOutputs.size(); ++index) {
+                auto quantized = std::static_pointer_cast<MemoryTensor>(integerOutputs[index]);
+                auto floating  = std::static_pointer_cast<MemoryTensor>(floatOutputs[index]);
+                auto quant     = quantized->GetQuantParams();
+                quant.scale *= 0.93F;
+                quant.offset += 3;
+                quantized->SetQuantParams(quant);
+                for (size_t value = 0; value < quantized->GetNumElements(); ++value) {
+                    floating->Set(value, quantized->Value(value));
+                }
+            }
+        }
+        CHECK(integerProcess.DoPostProcess());
+        CHECK(floatProcess.DoPostProcess());
+    }
+    return true;
+}
+
+int DecodeFile(const char* path,
+               size_t imageSize,
+               size_t channels,
+               uint32_t numClasses,
+               TensorType type = TensorType::FP32)
 {
     std::ifstream stream{path, std::ios::binary};
+    // Integer fixture format: scale (float32), zero point (int32), then raw bytes per tensor.
+    const auto readTensor = [&stream, type](const std::shared_ptr<MemoryTensor>& tensor) {
+        if (type != TensorType::FP32) {
+            float scale    = 0.0F;
+            int32_t offset = 0;
+            stream.read(reinterpret_cast<char*>(&scale), sizeof(scale));
+            stream.read(reinterpret_cast<char*>(&offset), sizeof(offset));
+            tensor->SetQuantParams({scale, offset});
+        }
+        stream.read(static_cast<char*>(tensor->GetData()), tensor->Bytes());
+    };
     std::vector<std::shared_ptr<TensorIface>> outputs;
     for (size_t stride : {size_t{8}, size_t{16}, size_t{32}}) {
         const size_t size = imageSize / stride;
         auto tensor       = std::make_shared<MemoryTensor>(
-            std::vector<size_t>{1, channels, size, size}, TensorType::FP32, TensorLayout::NCHW);
-        stream.read(static_cast<char*>(tensor->GetData()), tensor->Bytes());
+            std::vector<size_t>{1, channels, size, size}, type, TensorLayout::NCHW);
+        readTensor(tensor);
         outputs.push_back(tensor);
     }
     const size_t anchors = (imageSize / 8) * (imageSize / 8) + (imageSize / 16) * (imageSize / 16) +
                            (imageSize / 32) * (imageSize / 32);
     auto angle           = std::make_shared<MemoryTensor>(
-        std::vector<size_t>{1, 1, anchors}, TensorType::FP32, TensorLayout::NCHW);
-    stream.read(static_cast<char*>(angle->GetData()), angle->Bytes());
+        std::vector<size_t>{1, 1, anchors}, type, TensorLayout::NCHW);
+    readTensor(angle);
     if (!stream) {
         return 1;
     }
@@ -300,16 +460,29 @@ int DecodeFile(const char* path, size_t imageSize, size_t channels, uint32_t num
 
 int main(int argc, char** argv)
 {
-    if (argc == 5) {
-        return DecodeFile(argv[1], std::stoul(argv[2]), std::stoul(argv[3]), std::stoul(argv[4]));
+    if (argc == 5 || argc == 6) {
+        TensorType type = TensorType::FP32;
+        if (argc == 6) {
+            const std::string name{argv[5]};
+            if (name != "int8" && name != "uint8") {
+                return 1;
+            }
+            type = name == "int8" ? TensorType::INT8 : TensorType::UINT8;
+        }
+        return DecodeFile(
+            argv[1], std::stoul(argv[2]), std::stoul(argv[3]), std::stoul(argv[4]), type);
     }
     if (!TestRotatedNms() || !TestOrdinaryBox()) {
         return 1;
     }
     for (TensorType type : {TensorType::FP32, TensorType::INT8, TensorType::UINT8}) {
+        if (!TestQrCodeInputLookup(type)) {
+            return 1;
+        }
         for (TensorLayout layout : {TensorLayout::NCHW, TensorLayout::NHWC}) {
             for (size_t bins : {size_t{16}, size_t{8}}) {
-                if (!TestAngleDoesNotChangeConfidence(bins, type, layout)) {
+                if (!TestAngleDoesNotChangeConfidence(bins, type, layout) ||
+                    (type != TensorType::FP32 && !TestQuantizedDflParity(bins, type, layout))) {
                     return 1;
                 }
             }

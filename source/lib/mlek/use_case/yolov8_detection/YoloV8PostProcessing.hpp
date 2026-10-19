@@ -10,6 +10,7 @@
 #include "mlek/fwk/iface/Tensor.hpp"
 #include "mlek/use_case/yolov8_detection/DetectionResult.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -55,10 +56,29 @@ public:
 
     bool DoPostProcess() override;
 
+    /** Decode candidates above the class threshold, without suppression. */
+    bool DecodeDetections();
+
+    /** Apply class-aware NMS to the last successfully decoded candidates. */
+    void SuppressDetections();
+
 private:
+    struct LookupTables {
+        fwk::iface::QuantParams quant;
+        fwk::iface::TensorType type{fwk::iface::TensorType::INVALID};
+        std::vector<float> exponentials;
+        std::vector<float> probabilities;
+
+        void
+        Update(const fwk::iface::QuantParams& params, fwk::iface::TensorType tensorType, bool dfl);
+    };
+
     std::vector<std::shared_ptr<fwk::iface::TensorIface>> m_outputTensors;
     std::vector<yolov8_detection::DetectionResult>& m_results;
     YoloV8PostProcessParams m_params;
+    std::vector<yolov8_detection::DetectionResult> m_candidates;
+    bool m_rotatedNms{false};
+    std::array<LookupTables, 4> m_lookups;
 };
 
 } /* namespace arm::app */

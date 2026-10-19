@@ -10,6 +10,8 @@ add_executable(yolov8_processing_tests
     YoloV8ProcessingTests.cc
     ${MLEK_TEST_ROOT}/source/lib/mlek/use_case/yolov8_detection/YoloV8PreProcessing.cc
     ${MLEK_TEST_ROOT}/source/lib/mlek/use_case/yolov8_detection/YoloV8PostProcessing.cc)
-target_include_directories(yolov8_processing_tests PRIVATE ${MLEK_TEST_ROOT}/source/lib)
+target_include_directories(yolov8_processing_tests PRIVATE
+    ${MLEK_TEST_ROOT}/source/lib
+    ${MLEK_TEST_ROOT}/source/app/use_case/qrcode/include)
 target_compile_features(yolov8_processing_tests PRIVATE cxx_std_17)
 add_test(NAME yolov8-processing COMMAND yolov8_processing_tests)

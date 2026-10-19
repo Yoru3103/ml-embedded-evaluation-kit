@@ -123,6 +123,53 @@ namespace {
     float Sigmoid(const float value)
     { return 1.0F / (1.0F + std::exp(-value)); }
 
+    /** Cache virtual tensor access once, rather than once per output element. */
+    struct OutputReader {
+        const void* data{nullptr};
+        size_t elements{0};
+        fwk::iface::TensorType type{fwk::iface::TensorType::INVALID};
+        fwk::iface::QuantParams quant;
+
+        bool Init(const std::shared_ptr<fwk::iface::TensorIface>& tensor)
+        {
+            data     = tensor->GetData();
+            elements = tensor->GetNumElements();
+            type     = tensor->Type();
+            if (type == fwk::iface::TensorType::INT8 || type == fwk::iface::TensorType::UINT8) {
+                quant = tensor->GetQuantParams();
+                return data != nullptr && std::isfinite(quant.scale) && quant.scale > 0.0F;
+            }
+            return data != nullptr && type == fwk::iface::TensorType::FP32;
+        }
+
+        bool IsQuantized() const
+        { return type != fwk::iface::TensorType::FP32; }
+
+        bool ReadRaw(size_t index, float& value) const
+        {
+            if (index >= elements) {
+                return false;
+            }
+            if (type == fwk::iface::TensorType::INT8) {
+                value = static_cast<const int8_t*>(data)[index];
+            } else if (type == fwk::iface::TensorType::UINT8) {
+                value = static_cast<const uint8_t*>(data)[index];
+            } else {
+                value = static_cast<const float*>(data)[index];
+            }
+            return std::isfinite(value);
+        }
+
+        float ToFloat(float value) const
+        { return IsQuantized() ? (value - quant.offset) * quant.scale : value; }
+
+        size_t LookupIndex(float value) const
+        {
+            return static_cast<size_t>(static_cast<int>(value) +
+                                       (type == fwk::iface::TensorType::INT8 ? 128 : 0));
+        }
+    };
+
     float ToProbability(const float value)
     {
         /* Ultralytics exports probabilities, while some quantized heads expose logits. */
@@ -364,6 +411,30 @@ bool YoloV8PostProcess::DoPostProcess()
     return true;
 }
 
+void YoloV8NewPostProcess::LookupTables::Update(const fwk::iface::QuantParams& params,
+                                                fwk::iface::TensorType tensorType,
+                                                bool dfl)
+{
+    if (type == tensorType && quant.scale == params.scale && quant.offset == params.offset) {
+        return;
+    }
+    quant = params;
+    type  = tensorType;
+    probabilities.resize(256);
+    if (dfl) {
+        exponentials.resize(256);
+    }
+    const int minimum = type == fwk::iface::TensorType::INT8 ? -128 : 0;
+    for (size_t index = 0; index < 256; ++index) {
+        probabilities[index] =
+            Sigmoid((minimum + static_cast<int>(index) - quant.offset) * quant.scale);
+        if (dfl) {
+            // q_max - q is in [0, 255]; the zero point cancels in softmax.
+            exponentials[index] = std::exp(-quant.scale * index);
+        }
+    }
+}
+
 YoloV8NewPostProcess::YoloV8NewPostProcess(
     const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
     std::vector<yolov8_detection::DetectionResult>& results,
@@ -373,8 +444,18 @@ YoloV8NewPostProcess::YoloV8NewPostProcess(
 
 bool YoloV8NewPostProcess::DoPostProcess()
 {
+    if (!DecodeDetections()) {
+        return false;
+    }
+    SuppressDetections();
+    return true;
+}
+
+bool YoloV8NewPostProcess::DecodeDetections()
+{
     struct FeatureMap {
-        std::shared_ptr<fwk::iface::TensorIface> tensor;
+        OutputReader reader;
+        const LookupTables* lookup{nullptr};
         size_t height{0};
         size_t width{0};
         size_t channels{0};
@@ -384,6 +465,8 @@ bool YoloV8NewPostProcess::DoPostProcess()
     };
 
     m_results.clear();
+    m_candidates.clear();
+    m_rotatedNms = false;
     if (m_params.numClasses == 0 || m_params.imageWidth == 0 || m_params.imageHeight == 0) {
         printf_err("Raw YOLOv8 heads require a class count and nonzero image dimensions\n");
         return false;
@@ -398,6 +481,7 @@ bool YoloV8NewPostProcess::DoPostProcess()
 
     std::shared_ptr<fwk::iface::TensorIface> angleTensor;
     std::vector<FeatureMap> featureMaps;
+    featureMaps.reserve(3);
 
     for (const auto& tensor : m_outputTensors) {
         if (tensor == nullptr || (tensor->Type() != fwk::iface::TensorType::FP32 &&
@@ -425,13 +509,18 @@ bool YoloV8NewPostProcess::DoPostProcess()
             return false;
         }
 
+        OutputReader reader;
+        if (!reader.Init(tensor)) {
+            printf_err("Invalid new YOLOv8 output storage or quantization\n");
+            return false;
+        }
         const auto validChannels = [this](size_t channels) {
             return channels > m_params.numClasses && (channels - m_params.numClasses) % 4 == 0;
         };
         if (shape[2] == shape[3] && validChannels(shape[1])) {
-            featureMaps.push_back({tensor, shape[2], shape[3], shape[1], 0, 0, true});
+            featureMaps.push_back({reader, nullptr, shape[2], shape[3], shape[1], 0, 0, true});
         } else if (shape[1] == shape[2] && validChannels(shape[3])) {
-            featureMaps.push_back({tensor, shape[1], shape[2], shape[3], 0, 0, false});
+            featureMaps.push_back({reader, nullptr, shape[1], shape[2], shape[3], 0, 0, false});
         } else {
             printf_err("New YOLOv8 feature map has no DFL/class channel dimension\n");
             return false;
@@ -449,10 +538,22 @@ bool YoloV8NewPostProcess::DoPostProcess()
                   return first.width > second.width;
               });
 
-    const size_t angleElements = angleTensor == nullptr ? 0 : angleTensor->GetNumElements();
+    OutputReader angleReader;
+    auto& angleLookup = m_lookups.back();
+    if (angleTensor != nullptr) {
+        if (!angleReader.Init(angleTensor)) {
+            printf_err("Invalid new YOLOv8 angle storage or quantization\n");
+            return false;
+        }
+        if (angleReader.IsQuantized() && m_params.angleIsLogits) {
+            angleLookup.Update(angleReader.quant, angleReader.type, false);
+        }
+    }
+    const size_t angleElements = angleTensor == nullptr ? 0 : angleReader.elements;
     size_t angleOffset         = 0;
     const size_t numClasses    = m_params.numClasses;
 
+    size_t featureIndex = 0;
     for (auto& featureMap : featureMaps) {
         if (m_params.imageWidth % featureMap.width != 0 ||
             m_params.imageHeight % featureMap.height != 0 || featureMap.channels <= numClasses) {
@@ -467,6 +568,11 @@ bool YoloV8NewPostProcess::DoPostProcess()
             return false;
         }
 
+        if (featureMap.reader.elements !=
+            featureMap.height * featureMap.width * featureMap.channels) {
+            printf_err("New YOLOv8 feature map storage size is invalid\n");
+            return false;
+        }
         const size_t bins = (featureMap.channels - numClasses) / 4;
         if (bins < 2 || bins > 32 || (dflBins != 0 && dflBins != bins)) {
             printf_err("New YOLOv8 feature maps have invalid or inconsistent DFL bins\n");
@@ -475,6 +581,12 @@ bool YoloV8NewPostProcess::DoPostProcess()
         dflBins   = bins;
         dflValues = 4 * bins;
 
+        if (featureMap.reader.IsQuantized()) {
+            auto& lookup = m_lookups[featureIndex];
+            lookup.Update(featureMap.reader.quant, featureMap.reader.type, true);
+            featureMap.lookup = &lookup;
+        }
+        ++featureIndex;
         featureMap.angleOffset = angleOffset;
         angleOffset += featureMap.height * featureMap.width;
     }
@@ -484,24 +596,61 @@ bool YoloV8NewPostProcess::DoPostProcess()
         return false;
     }
 
-    std::vector<yolov8_detection::DetectionResult> candidates;
-    candidates.reserve(angleElements);
+    m_candidates.reserve(angleOffset);
     std::vector<float> dflLogits(dflBins);
 
     for (const auto& featureMap : featureMaps) {
         for (size_t y = 0; y < featureMap.height; ++y) {
             for (size_t x = 0; x < featureMap.width; ++x) {
-                const size_t cell  = y * featureMap.width + x;
+                const size_t cell = y * featureMap.width + x;
+                // Positive per-tensor scale and sigmoid preserve logit ordering.
+                float bestLogit = -std::numeric_limits<float>::infinity();
+                float bestScore = 0.0F;
+                int bestClass   = -1;
+                for (size_t classIndex = 0; classIndex < numClasses; ++classIndex) {
+                    const size_t channel = dflValues + classIndex;
+                    const size_t index = featureMap.channelsFirst
+                                             ? channel * featureMap.height * featureMap.width + cell
+                                             : cell * featureMap.channels + channel;
+                    float value        = 0.0F;
+                    if (!featureMap.reader.ReadRaw(index, value)) {
+                        printf_err("New YOLOv8 class output is unsupported\n");
+                        return false;
+                    }
+                    if (value > bestLogit) {
+                        bestLogit = value;
+                        const float score =
+                            featureMap.reader.IsQuantized()
+                                ? featureMap.lookup
+                                      ->probabilities[featureMap.reader.LookupIndex(value)]
+                                : Sigmoid(value);
+                        // Preserve the original first-class tie rule, including sigmoid saturation.
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestClass = static_cast<int>(classIndex);
+                        }
+                    }
+                }
+                if (bestClass < 0 || bestScore < m_params.scoreThreshold) {
+                    continue;
+                }
+
                 float angleRadians = 0.0F;
                 if (angleTensor != nullptr) {
                     float angleValue = 0.0F;
-                    if (!ReadTensorValue(angleTensor, featureMap.angleOffset + cell, angleValue)) {
+                    if (!angleReader.ReadRaw(featureMap.angleOffset + cell, angleValue)) {
                         printf_err("New YOLOv8 angle output is unsupported\n");
                         return false;
                     }
                     constexpr float kPi = 3.14159265358979323846F;
                     angleRadians =
-                        m_params.angleIsLogits ? (Sigmoid(angleValue) - 0.25F) * kPi : angleValue;
+                        m_params.angleIsLogits
+                            ? ((angleReader.IsQuantized()
+                                    ? angleLookup.probabilities[angleReader.LookupIndex(angleValue)]
+                                    : Sigmoid(angleValue)) -
+                               0.25F) *
+                                  kPi
+                            : angleReader.ToFloat(angleValue);
                 }
 
                 std::array<float, 4> distances{};
@@ -514,7 +663,7 @@ bool YoloV8NewPostProcess::DoPostProcess()
                             featureMap.channelsFirst
                                 ? channel * featureMap.height * featureMap.width + cell
                                 : cell * featureMap.channels + channel;
-                        if (!ReadTensorValue(featureMap.tensor, index, dflLogits[bin])) {
+                        if (!featureMap.reader.ReadRaw(index, dflLogits[bin])) {
                             printf_err("New YOLOv8 feature map output is unsupported\n");
                             return false;
                         }
@@ -524,35 +673,15 @@ bool YoloV8NewPostProcess::DoPostProcess()
                     float sum         = 0.0F;
                     float weightedSum = 0.0F;
                     for (size_t bin = 0; bin < dflBins; ++bin) {
-                        const float probability = std::exp(dflLogits[bin] - maximum);
+                        const float probability =
+                            featureMap.reader.IsQuantized()
+                                ? featureMap.lookup
+                                      ->exponentials[static_cast<size_t>(maximum - dflLogits[bin])]
+                                : std::exp(dflLogits[bin] - maximum);
                         sum += probability;
                         weightedSum += static_cast<float>(bin) * probability;
                     }
                     distances[side] = sum > 0.0F ? weightedSum / sum : 0.0F;
-                }
-
-                float bestScore = 0.0F;
-                int bestClass   = -1;
-                for (size_t classIndex = 0; classIndex < numClasses; ++classIndex) {
-                    const size_t channel = dflValues + classIndex;
-                    const size_t index = featureMap.channelsFirst
-                                             ? channel * featureMap.height * featureMap.width + cell
-                                             : cell * featureMap.channels + channel;
-                    float classValue   = 0.0F;
-                    if (!ReadTensorValue(featureMap.tensor, index, classValue)) {
-                        printf_err("New YOLOv8 class output is unsupported\n");
-                        return false;
-                    }
-                    /* The auxiliary output contains angles; confidence is class-only. */
-                    const float score = Sigmoid(classValue);
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestClass = static_cast<int>(classIndex);
-                    }
-                }
-
-                if (bestClass < 0 || bestScore < m_params.scoreThreshold) {
-                    continue;
                 }
 
                 const float cosine  = std::cos(angleRadians);
@@ -570,14 +699,20 @@ bool YoloV8NewPostProcess::DoPostProcess()
                 yolov8_detection::DetectionResult result{
                     bestScore, bestClass, centerX, centerY, boxWidth, boxHeight, angleRadians};
                 if (IntersectsImage(result, m_params)) {
-                    candidates.push_back(result);
+                    m_candidates.push_back(result);
                 }
             }
         }
     }
 
-    ApplyClassAwareNms(candidates, m_results, m_params, angleTensor != nullptr);
+    m_rotatedNms = angleTensor != nullptr;
     return true;
+}
+
+void YoloV8NewPostProcess::SuppressDetections()
+{
+    m_results.clear();
+    ApplyClassAwareNms(m_candidates, m_results, m_params, m_rotatedNms);
 }
 
 } /* namespace arm::app */
