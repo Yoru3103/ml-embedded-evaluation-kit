@@ -10,6 +10,7 @@
 #include "mlek/fwk/iface/Tensor.hpp"
 #include "mlek/use_case/yolov8_detection/DetectionResult.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -25,14 +26,14 @@ struct YoloV8PostProcessParams {
     float nmsThreshold{0.45F};
     uint32_t dflBins{16};
     bool orientedBoxes{false};
+    bool angleIsLogits{true}; /**< Raw angles map to (sigmoid(value) - 0.25) * pi. */
 };
 
 class YoloV8PostProcess : public BasePostProcess {
 public:
-    YoloV8PostProcess(
-        const std::shared_ptr<fwk::iface::TensorIface>& outputTensor,
-        std::vector<yolov8_detection::DetectionResult>& results,
-        const YoloV8PostProcessParams& params);
+    YoloV8PostProcess(const std::shared_ptr<fwk::iface::TensorIface>& outputTensor,
+                      std::vector<yolov8_detection::DetectionResult>& results,
+                      const YoloV8PostProcessParams& params);
 
     bool DoPostProcess() override;
 
@@ -45,29 +46,43 @@ private:
 /**
  * @brief Post-processes the four-output YOLOv8 DFL model.
  *
- * Three feature maps contain four DFL distributions followed by class logits.
- * The configured fourth output is either legacy objectness or raw OBB angle logits.
- * Class selection uses the largest logit, keeping the first class for equal logits.
- * Quantized probability bounds reject impossible candidates before per-cell Sigmoid.
- * With maxDetections == 1, decode the highest-scoring valid box and skip NMS.
+ * The model has three feature maps containing four DFL distributions followed by
+ * class logits, optionally plus one concatenated angle output. The DFL bin count
+ * is derived from the feature-map channels and the configured class count.
  */
 class YoloV8NewPostProcess : public BasePostProcess {
 public:
-    YoloV8NewPostProcess(
-        const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
-        std::vector<yolov8_detection::DetectionResult>& results,
-        const YoloV8PostProcessParams& params,
-        bool useTensorLayout = false);
+    YoloV8NewPostProcess(const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
+                         std::vector<yolov8_detection::DetectionResult>& results,
+                         const YoloV8PostProcessParams& params,
+                         bool useTensorLayout = false);
 
     bool DoPostProcess() override;
 
+    /** Decode candidates above the class threshold, without suppression. */
+    bool DecodeDetections();
+
+    /** Apply class-aware NMS to the last successfully decoded candidates. */
+    void SuppressDetections();
+
 private:
-    static constexpr size_t ms_maxDflBins = 16;
+    struct LookupTables {
+        fwk::iface::QuantParams quant;
+        fwk::iface::TensorType type{fwk::iface::TensorType::INVALID};
+        std::vector<float> exponentials;
+        std::vector<float> probabilities;
+
+        void
+        Update(const fwk::iface::QuantParams& params, fwk::iface::TensorType tensorType, bool dfl);
+    };
 
     std::vector<std::shared_ptr<fwk::iface::TensorIface>> m_outputTensors;
-    bool m_useTensorLayout;
     std::vector<yolov8_detection::DetectionResult>& m_results;
     YoloV8PostProcessParams m_params;
+    std::vector<yolov8_detection::DetectionResult> m_candidates;
+    bool m_rotatedNms{false};
+    bool m_useTensorLayout{false};
+    std::array<LookupTables, 4> m_lookups;
 };
 
 } /* namespace arm::app */

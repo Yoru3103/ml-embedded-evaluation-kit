@@ -97,8 +97,8 @@ TEST_CASE("YOLO raw heads produce the same detections for NCHW and NHWC storage"
         } else {
             CHECK(actual[0].score == Approx(reference[0].score));
             CHECK(actual[0].classId == reference[0].classId);
-            CHECK(actual[0].x == reference[0].x);
-            CHECK(actual[0].y == reference[0].y);
+            CHECK(actual[0].centerX == Approx(reference[0].centerX));
+            CHECK(actual[0].centerY == Approx(reference[0].centerY));
             CHECK(actual[0].width == reference[0].width);
             CHECK(actual[0].height == reference[0].height);
         }
@@ -118,5 +118,61 @@ TEST_CASE("YOLO TFLite input infers storage from shape", "[yolov8]")
         for (size_t channel = 0; channel < 3; ++channel) {
             CHECK(actual[channel * 2 + pixel] == Approx(pixels[pixel * 3 + channel] / 255.0F));
         }
+    }
+}
+
+TEST_CASE("YOLO native NHWC input can use shape inference", "[yolov8]")
+{
+    using arm::app::fwk::iface::TensorLayout;
+    const uint8_t pixels[] = {0, 32, 64, 96, 128, 160};
+    auto tensor            = std::make_shared<TestTensor>(
+        std::vector<size_t>{1, 1, 2, 3}, TensorLayout::NCHW, std::vector<float>(6));
+    arm::app::YoloV8PreProcess process(tensor, false);
+    REQUIRE(process.DoPreProcess(pixels, sizeof(pixels)));
+    auto* actual = static_cast<float*>(tensor->GetData());
+    for (size_t index = 0; index < 6; ++index) {
+        CHECK(actual[index] == Approx(pixels[index] / 255.0F));
+    }
+}
+
+TEST_CASE("YOLO OBB accepts singleton four dimensional angle outputs", "[yolov8]")
+{
+    using arm::app::fwk::iface::TensorIface;
+    using arm::app::fwk::iface::TensorLayout;
+    using arm::app::yolov8_detection::DetectionResult;
+    const arm::app::YoloV8PostProcessParams params{32, 32, 1, 1, 0.25F, 0.45F, 8, true};
+    std::vector<DetectionResult> reference;
+    for (const auto& angleShape : {std::vector<size_t>{1, 1, 21},
+                                   std::vector<size_t>{1, 1, 21, 1},
+                                   std::vector<size_t>{1, 21, 1, 1}}) {
+        std::vector<std::shared_ptr<TensorIface>> outputs;
+        for (const size_t size : {4, 2, 1}) {
+            std::vector<float> data(33 * size * size, -8.0F);
+            for (size_t cell = 0; cell < size * size; ++cell) {
+                for (size_t side = 0; side < 4; ++side) {
+                    data[cell * 33 + side * 8 + 1] = 8.0F;
+                }
+            }
+            if (size == 4) {
+                data[5 * 33 + 32] = 8.0F;
+            }
+            outputs.push_back(std::make_shared<TestTensor>(
+                std::vector<size_t>{1, size, size, 33}, TensorLayout::NCHW, std::move(data)));
+        }
+        outputs.push_back(std::make_shared<TestTensor>(
+            angleShape, TensorLayout::NCHW, std::vector<float>(21, 1.0F)));
+        std::vector<DetectionResult> actual;
+        arm::app::YoloV8NewPostProcess process(outputs, actual, params, false);
+        REQUIRE(process.DoPostProcess());
+        REQUIRE(actual.size() == 1);
+        if (reference.empty()) {
+            reference = actual;
+        }
+        CHECK(actual[0].score == Approx(reference[0].score));
+        CHECK(actual[0].angleRadians == Approx(reference[0].angleRadians));
+        CHECK(actual[0].centerX == Approx(reference[0].centerX));
+        CHECK(actual[0].centerY == Approx(reference[0].centerY));
+        CHECK(actual[0].width == reference[0].width);
+        CHECK(actual[0].height == reference[0].height);
     }
 }

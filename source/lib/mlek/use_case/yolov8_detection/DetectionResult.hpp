@@ -11,16 +11,12 @@ namespace arm::app::yolov8_detection {
 struct DetectionResult {
     float score{0.0F};
     int classId{-1};
-    int x{0};
-    int y{0};
-    int width{0};
-    int height{0};
+    /* Geometry in model pixels; angle zero describes an ordinary rectangle. */
     float centerX{0.0F};
     float centerY{0.0F};
-    float boxWidth{0.0F};
-    float boxHeight{0.0F};
-    float angle{0.0F}; /* Radians; x/y/width/height remain the clipped display envelope. */
-    bool rotated{false};
+    float width{0.0F};
+    float height{0.0F};
+    float angleRadians{0.0F};
 };
 
 } /* namespace arm::app::yolov8_detection */

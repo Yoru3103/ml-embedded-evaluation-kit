@@ -37,15 +37,19 @@ USER_OPTION(
 
 USER_OPTION(
     ${use_case}_OBB
-    "Decode the fourth output as raw OBB angle logits; requires Top1."
+    "Decode the fourth output as raw OBB angle logits with rotated NMS."
     OFF
     BOOL)
 
 USER_OPTION(
     ${use_case}_MAX_DETECTIONS
     "Maximum number of detections after NMS."
-    20
+    5
     STRING)
+
+if (${${use_case}_OBB} AND ${${use_case}_MAX_DETECTIONS} GREATER 5)
+    message(FATAL_ERROR "OBB supports at most five detections after rotated NMS.")
+endif()
 
 USER_OPTION(
     ${use_case}_SCORE_THRESHOLD

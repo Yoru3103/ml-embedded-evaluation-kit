@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "UseCaseHandler.hpp"
+#include "DetectionDrawing.hpp"
 
 #include "sample_files.h"
 #include "UseCaseCommonUtils.hpp"
@@ -33,31 +34,6 @@ const char* GetLabel(const std::vector<std::string>& labels, int classId)
     return labels[static_cast<size_t>(classId)].c_str();
 }
 
-void DrawDetectionBoxes(
-    const std::vector<yolov8_detection::DetectionResult>& results,
-    uint32_t startX,
-    uint32_t startY,
-    uint32_t downscale)
-{
-    constexpr uint32_t thickness = 1;
-
-    for (const auto& result : results) {
-        const uint32_t x = startX + result.x / downscale;
-        const uint32_t y = startY + result.y / downscale;
-        const uint32_t width = result.width / downscale;
-        const uint32_t height = result.height / downscale;
-
-        if (width <= thickness || height <= thickness) {
-            continue;
-        }
-
-        hal_display_show_box(x, y, width, thickness, COLOR_GREEN);
-        hal_display_show_box(x, y + height - thickness, width, thickness, COLOR_GREEN);
-        hal_display_show_box(x, y, thickness, height, COLOR_GREEN);
-        hal_display_show_box(x + width - thickness, y, thickness, height, COLOR_GREEN);
-    }
-}
-
 void PrintResults(const std::vector<yolov8_detection::DetectionResult>& results,
                   const std::vector<std::string>& labels)
 {
@@ -66,18 +42,18 @@ void PrintResults(const std::vector<yolov8_detection::DetectionResult>& results,
     for (size_t index = 0; index < results.size(); index++) {
         const auto& result = results[index];
 
-        info("%zu: class=%d label=%s score=%f x=%d y=%d w=%d h=%d\n",
+        info("%zu: class=%d label=%s score=%f cx=%f cy=%f w=%f h=%f\n",
              index,
              result.classId,
              GetLabel(labels, result.classId),
              result.score,
-             result.x,
-             result.y,
+             result.centerX,
+             result.centerY,
              result.width,
              result.height);
-        if (result.rotated) {
+        if (YOLOV8_OBB) {
             info("   obb: cx=%f cy=%f w=%f h=%f angle_rad=%f\n",
-                 result.centerX, result.centerY, result.boxWidth, result.boxHeight, result.angle);
+                 result.centerX, result.centerY, result.width, result.height, result.angleRadians);
         }
     }
 }
@@ -321,11 +297,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         PrintResults(results, labels);
         hal_display_show_box(textStartX, textStartY, textPanelWidth, 16, COLOR_BLACK);
         PresentResults(results, labels, textStartX, textStartY);
-        DrawDetectionBoxes(
-            results,
-            imageStartX,
-            imageStartY,
-            downscale);
+        DrawDetectionBoxes(results, imageStartX, imageStartY, imageWidth, imageHeight, downscale);
 
 #if VERIFY_TEST_OUTPUT
         for (size_t outputIndex = 0; outputIndex < model.GetNumOutputs(); ++outputIndex) {
