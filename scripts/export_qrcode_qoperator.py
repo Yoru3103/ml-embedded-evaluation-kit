@@ -94,7 +94,7 @@ def parse_args() -> argparse.Namespace:
 
 def validate_image(path: Path, session: ort.InferenceSession, predict: object,
                    contract: dict, output_dir: Path) -> dict:
-    """Compare one grayscale image and write its actual INT8 firmware fixture.
+    """Compare one grayscale image and write its typed firmware fixture.
 
     :param path:        Original BMP.
     :param session:     Source ONNX Runtime session.
@@ -134,7 +134,7 @@ def validate_samples(args: argparse.Namespace, metadata: dict, raw_path: Path) -
 
     :param args:        Export options.
     :param metadata:    Source tensor interface.
-    :param raw_path:    Integer TFLite path.
+    :param raw_path:    TFLite path with the requested boundary tensor types.
     :returns:           Interface, operator and numerical validation records.
     """
     predict, contract = lite_runner(raw_path, metadata, not args.preserve_boundary_qdq)

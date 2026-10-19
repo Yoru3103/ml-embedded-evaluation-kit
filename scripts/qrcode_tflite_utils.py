@@ -22,11 +22,11 @@ def compile_tflite(args: argparse.Namespace, source: Path | None = None,
                    label: str = "tflm", allow_float_boundaries: bool = False) -> dict:
     """Compile an INT8 model without importing either model-export backend.
 
-    :param args:    Target, memory configuration and compiler options.
-    :param source:  Optional external integer-I/O TFLite model.
-    :param label:   Output-directory prefix for this compilation.
+    :param args:                    Target, memory configuration and compiler options.
+    :param source:                  Optional external TFLite model.
+    :param label:                   Output-directory prefix for this compilation.
     :param allow_float_boundaries:  Permit only one CPU Q and four CPU DQ boundary operators.
-    :returns:       Compiled path, exact command and NPU-only operator checks.
+    :returns:                       Compiled path, exact command and boundary policy checks.
     """
     source = source or args.output_dir / "tflite/best_int8.tflite"
     directory = args.output_dir / f"{label}_{args.memory_mode}"
@@ -52,14 +52,33 @@ def compile_tflite(args: argparse.Namespace, source: Path | None = None,
             "summaries": [str(item) for item in directory.glob("*.csv")]}
 
 
+def validate_compiled_boundaries(model: Any, counts: dict, allow_float_boundaries: bool):
+    """Require NPU execution with only the explicitly requested CPU boundaries.
+
+    :param model:                   Parsed FlatBuffer model.
+    :param counts:                  Operator counts.
+    :param allow_float_boundaries:  Require one Q and four DQ operators with float I/O.
+    """
+    cpu = {name: count for name, count in counts.items() if name != "ethos-u"}
+    expected_cpu = {"QUANTIZE": 1, "DEQUANTIZE": 4} if allow_float_boundaries else {}
+    if cpu != expected_cpu or not counts.get("ethos-u", 0):
+        raise ValueError(f"Compiled TFLite violates the requested NPU boundary policy: {counts}")
+    graph = model.Subgraphs(0)
+    indices = [graph.Inputs(index) for index in range(graph.InputsLength())]
+    indices += [graph.Outputs(index) for index in range(graph.OutputsLength())]
+    expected_type = TensorType.FLOAT32 if allow_float_boundaries else TensorType.INT8
+    if not indices or any(graph.Tensors(index).Type() != expected_type for index in indices):
+        raise ValueError("Compiled TFLite does not match the requested boundary tensor type")
+
+
 def inspect_tflite(path: Path, require_npu: bool = False,
                    allow_float_boundaries: bool = False) -> dict:
     """Count executed FlatBuffer operators, ignoring unused opcode-table entries.
 
-    :param path:        TFLite file to inspect.
-    :param require_npu: Reject every operator except the Ethos-U custom operator.
+    :param path:                    TFLite file to inspect.
+    :param require_npu:             Validate the compiled NPU graph and boundary policy.
     :param allow_float_boundaries:  Permit CPU boundary Q/DQ with a float32 interface.
-    :returns:           Actual operator counts and NPU/CPU partition summary.
+    :returns:                       Actual operator counts and NPU/CPU partition summary.
     """
     data = path.read_bytes()
     if not Model.ModelBufferHasIdentifier(data, 0):
@@ -78,16 +97,8 @@ def inspect_tflite(path: Path, require_npu: bool = False,
             counts[name] += 1
     cpu = {name: count for name, count in counts.items() if name != "ethos-u"}
     npu = counts.get("ethos-u", 0)
-    expected_cpu = {"QUANTIZE": 1, "DEQUANTIZE": 4} if allow_float_boundaries else {}
-    if require_npu and (cpu != expected_cpu or not npu):
-        raise ValueError(f"TFLite must contain only Ethos-U operators: {dict(counts)}")
     if require_npu:
-        graph = model.Subgraphs(0)
-        indices = [graph.Inputs(index) for index in range(graph.InputsLength())]
-        indices += [graph.Outputs(index) for index in range(graph.OutputsLength())]
-        expected_type = TensorType.FLOAT32 if allow_float_boundaries else TensorType.INT8
-        if not indices or any(graph.Tensors(index).Type() != expected_type for index in indices):
-            raise ValueError("Compiled TFLite does not match the requested boundary tensor type")
+        validate_compiled_boundaries(model, counts, allow_float_boundaries)
     return {"operators": dict(counts), "cpu_operators": cpu,
             "cpu_operator_count": sum(cpu.values()), "npu_delegate_count": npu}
 

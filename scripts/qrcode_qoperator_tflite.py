@@ -81,7 +81,6 @@ class QOperatorTflite:
             self.model.description += b"; float boundaries with explicit Q/DQ"
         self.model.buffers = [self.schema.BufferT()]
         self.model.operatorCodes = []
-        self.codes: dict[tuple[int, int], int] = {}
         self.subgraph = self.schema.SubGraphT()
         self.subgraph.name = b"main"
         self.subgraph.tensors = []
@@ -163,16 +162,17 @@ class QOperatorTflite:
         :param options: Builtin options object.
         """
         code = getattr(self.schema.BuiltinOperator, kind[0])
-        key = (code, kind[1])
-        if key not in self.codes:
+        code_index = next((index for index, entry in enumerate(self.model.operatorCodes)
+                           if (entry.builtinCode, entry.version) == (code, kind[1])),
+                          len(self.model.operatorCodes))
+        if code_index == len(self.model.operatorCodes):
             entry = self.schema.OperatorCodeT()
             entry.builtinCode = code
             entry.deprecatedBuiltinCode = min(code, 127)
             entry.version = kind[1]
-            self.codes[key] = len(self.model.operatorCodes)
             self.model.operatorCodes.append(entry)
         operator = self.schema.OperatorT()
-        operator.opcodeIndex = self.codes[key]
+        operator.opcodeIndex = code_index
         operator.inputs, operator.outputs = inputs, [output]
         operator.builtinOptions = options
         operator.builtinOptionsType = getattr(self.schema.BuiltinOptions,
@@ -442,7 +442,7 @@ class QOperatorTflite:
         handlers[node.op_type](node, attrs)
 
     def write(self, path: Path) -> dict:
-        """Translate the graph and save a fully integer model.
+        """Save the INT8 network with the requested integer or floating boundaries.
 
         :param path:    Destination TFLite file.
         :returns:       Quantization-preservation and interface summary.
