@@ -22,6 +22,7 @@ from PIL import Image
 from export_model import run_export, select_tflite_backend
 from export_qrcode_onnx import parse_args, run_exports
 from test_qrcode_contract import make_obb_graph
+from qrcode_tflite_utils import validate_tflite_models
 import qrcode_onnx2tf
 
 
@@ -29,14 +30,14 @@ def make_tflite(integer: bool) -> bytes:
     """Build constant outputs whose values match the small ONNX fixture.
 
     :param integer: Use INT8 tensors with explicit quantization parameters.
-    :returns:       Valid TFLite bytes with one NHWC input and four NCHW outputs.
+    :returns:       Valid TFLite bytes with NHWC images and unchanged angle output.
     """
     model = schema.ModelT()
     model.version = 3
     graph = schema.SubGraphT()
     graph.tensors = []
     model.buffers = [schema.BufferT()]
-    shapes = [[1, 32, 32, 3], [1, 65, 4, 4], [1, 65, 2, 2], [1, 65, 1, 1], [1, 1, 21]]
+    shapes = [[1, 32, 32, 3], [1, 4, 4, 65], [1, 2, 2, 65], [1, 1, 1, 65], [1, 1, 21]]
     for index, shape in enumerate(shapes):
         tensor = schema.TensorT()
         tensor.name, tensor.shape = f"tensor{index}", shape
@@ -65,9 +66,15 @@ def convert_fixture(**options: dict):
     """
     calibration = np.load(options["custom_input_op_name_np_data_path"][0][1])
     np.testing.assert_array_equal(calibration, np.full((1, 32, 32, 3), 1.0, np.float32))
+    staged = onnx.load(options["input_onnx_file_path"])
+    shapes = {value.name: [dim.dim_value for dim in value.type.tensor_type.shape.dim]
+              for value in staged.graph.value_info}
+    np.testing.assert_array_equal(shapes["box_8"], [1, 64, 4, 4])
+    np.testing.assert_array_equal(shapes["class_8"], [1, 1, 4, 4])
     directory = Path(options["output_folder_path"])
     for suffix, integer in (("float32", False), ("full_integer_quant", True)):
         (directory / f"network_{suffix}.tflite").write_bytes(make_tflite(integer))
+    Path(options["input_onnx_file_path"]).write_bytes(b"converter rewrote its input")
 
 
 class ExportModelTests(unittest.TestCase):
@@ -113,6 +120,7 @@ class ExportModelTests(unittest.TestCase):
             directory = Path(temporary)
             model = directory / "network.onnx"
             onnx.save(make_obb_graph(3, 16, 1), model)
+            original = model.read_bytes()
             calibration = directory / "images"
             calibration.mkdir()
             Image.new("RGB", (32, 32), "white").save(calibration / "sample.png")
@@ -133,6 +141,7 @@ class ExportModelTests(unittest.TestCase):
             self.assertEqual(report["tflite"]["int8"]["tensor_contract"]["input_layout"], "NHWC")
             self.assertTrue(Path(report["tflite"]["int8"]["path"]).is_file())
             self.assertNotIn("float_validation", report)
+            self.assertEqual(model.read_bytes(), original)
 
     def test_converter_exit_records_failure(self):
         """Persist a failed report when the third-party converter exits the process."""
@@ -154,6 +163,66 @@ class ExportModelTests(unittest.TestCase):
             report = json.loads((args.output_dir / "export_report.json").read_text())
             self.assertEqual(report["status"], "failed")
             self.assertNotIn("tflm", report)
+
+    def test_qoperator_rejects_recalibration(self):
+        """Keep existing board calibration intact when native conversion is unsupported."""
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model = directory / "boardcal.onnx"
+            graph = make_obb_graph(3, 16, 1)
+            graph.graph.node[0].op_type = "QLinearConv"
+            onnx.save(graph, model)
+            original = model.read_bytes()
+            args = SimpleNamespace(output_dir=directory / "export")
+            with patch("qrcode_onnx2tf.convert_onnx") as converter:
+                with self.assertRaisesRegex(ValueError, "boardcal"):
+                    qrcode_onnx2tf.export_tflite(model, [], [], {}, args)
+            converter.assert_not_called()
+            self.assertEqual(model.read_bytes(), original)
+
+    def test_failed_validation_retains_diagnostics(self):
+        """Keep converter models for inspection without replacing validated artifacts."""
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            model = directory / "network.onnx"
+            onnx.save(make_obb_graph(3, 16, 1), model)
+            Image.new("RGB", (32, 32), "white").save(directory / "sample.png")
+            config = directory / "vela.ini"
+            config.write_text("")
+            args = parse_args(["--model", str(model), "--to", "tflite",
+                               "--calibration-dir", str(directory), "--vela-config", str(config),
+                               "--output-dir", str(directory / "export")])
+            previous = args.output_dir / "tflite/best_int8.tflite"
+            previous.parent.mkdir(parents=True)
+            previous.write_bytes(b"last validated model")
+            with patch("qrcode_onnx2tf.CONVERTER_PYTHON", directory / "missing-python"), \
+                 patch("qrcode_onnx2tf.import_module",
+                       return_value=SimpleNamespace(convert=convert_fixture)), \
+                 patch("qrcode_onnx2tf.validate_tflite_models",
+                       side_effect=ValueError("quantization limit")), \
+                 patch("qrcode_tflite_utils.compile_tflite") as compile_model:
+                with self.assertRaisesRegex(ValueError, "quantization limit"):
+                    run_export(args)
+            compile_model.assert_not_called()
+            self.assertEqual(previous.read_bytes(), b"last validated model")
+            self.assertTrue((previous.parent / "onnx2tf_outputs/network_float32.tflite").is_file())
+            self.assertTrue((previous.parent /
+                             "onnx2tf_outputs/network_full_integer_quant.tflite").is_file())
+            report = json.loads((args.output_dir / "export_report.json").read_text())
+            self.assertEqual(report["status"], "failed")
+
+    def test_reject_wrong_tflite_layout(self):
+        """Reject a converter that silently emits a different deployment interface."""
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "model.tflite"
+            path.write_bytes(make_tflite(False))
+            metadata = {"input": {"shape": [1, 3, 32, 32]},
+                        "outputs": [{"shape": shape} for shape in
+                                    [[1, 65, 4, 4], [1, 65, 2, 2],
+                                     [1, 65, 1, 1], [1, 1, 21]]]}
+            args = SimpleNamespace(io_layout="nchw", max_score_error=0.15, min_box_iou=0.9)
+            with self.assertRaisesRegex(ValueError, "layout"):
+                validate_tflite_models(path, path, [], metadata, args)
 
 
 if __name__ == "__main__":

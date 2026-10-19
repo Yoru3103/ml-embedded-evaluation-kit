@@ -9,7 +9,7 @@ import argparse
 from importlib import import_module
 import json
 
-from export_qrcode_onnx import parse_args, select_tflite_backend, write_manifest
+from export_qrcode_onnx import export_manifest, parse_args, select_tflite_backend
 
 
 def run_export(args: argparse.Namespace) -> dict:
@@ -26,14 +26,21 @@ def run_export(args: argparse.Namespace) -> dict:
         raise ValueError(f"Unsupported model format: {args.model.suffix}")
     if args.reference_tflite is not None:
         raise ValueError("--reference-tflite is supported only for ONNX input")
+    if args.format == "pte":
+        result = import_module("export_qrcode_pt").try_export_pte(args)
+        if result is not None:
+            return result
+    if getattr(args, "output_type", "int8") != "int8":
+        raise ValueError("--output-type float32 requires the raw QR-code ONNX exporter "
+                         "or the native OBB PT-to-PTE exporter")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = args.output_dir / "export_report.json"
     report = {"status": "started", "source": str(args.model), "format": args.format,
-              "tflite_backend": args.tflite_backend, "pte": {}, "tflm": {}}
-    write_manifest(manifest, report)
+              "tflite_backend": args.tflite_backend, "io_layout": args.io_layout.upper(),
+              "pte": {}, "tflm": {}}
     modes = (["Dedicated_Sram", "Shared_Sram"] if args.memory_mode == "all"
              else [args.memory_mode])
-    try:
+    with export_manifest(manifest, report):
         if args.format in ("both", "pte"):
             exporter = import_module("export_yolo_pte")
             for mode in modes:
@@ -43,7 +50,10 @@ def run_export(args: argparse.Namespace) -> dict:
                 variant.diagnose_only = False
                 report["pte"][mode] = exporter.run_export(variant)
         if args.format in ("both", "tflite"):
-            float_path, int8_path = import_module("export_yolo_tflite").export_models(
+            module = import_module("export_yolo_tflite")
+            exporter = (module.export_nhwc_models if args.io_layout == "nhwc"
+                        else module.export_models)
+            float_path, int8_path = exporter(
                 args.model, args.data, args.image_size, args.calibration_split,
                 args.output_dir / "tflite")
             report["tflite"] = {"float32": str(float_path), "int8": str(int8_path),
@@ -57,12 +67,6 @@ def run_export(args: argparse.Namespace) -> dict:
                 # Ultralytics retains float I/O, so Vela may leave boundary operators on CPU.
                 report["tflm"][mode] = import_module("qrcode_tflite_utils").compile_tflite(
                     variant, int8_path, require_npu=False)
-        report["status"] = "completed"
-    except Exception as error:
-        report.update(status="failed", error=str(error))
-        raise
-    finally:
-        write_manifest(manifest, report)
     print(json.dumps({"report": str(manifest), "status": report["status"]}), flush=True)
     return report
 

@@ -18,7 +18,8 @@ import onnxruntime as ort
 import torch
 from executorch.exir.schema import ScalarType
 
-from qrcode_onnx_utils import adapt_model, check_pte_contract, compare_tensors, detection_metrics
+from qrcode_onnx_utils import (
+    adapt_model, check_pte_contract, compare_tensors, detection_metrics, validate_outputs)
 from qrcode_tflite_utils import inspect_tflite
 
 
@@ -136,6 +137,24 @@ class QrcodeExportTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare_tensors(reference, actual)
 
+    def test_nhwc_pte_contract(self):
+        """Check deployment NHWC shapes while retaining angle and output order."""
+        source = [[1, 3, 256, 256], [1, 79, 32, 32], [1, 79, 16, 16],
+                  [1, 79, 8, 8], [1, 1, 1344]]
+        deployed = [[1, 256, 256, 3], [1, 32, 32, 79], [1, 16, 16, 79],
+                    [1, 8, 8, 79], [1, 1, 1344]]
+        values = [SimpleNamespace(val=SimpleNamespace(
+            sizes=shape, scalar_type=ScalarType.CHAR, dim_order=list(range(len(shape)))))
+                  for shape in deployed]
+        plan = SimpleNamespace(inputs=[0], outputs=[1, 2, 3, 4], values=values)
+        metadata = {"input": {"shape": source[0]},
+                    "outputs": [{"shape": shape} for shape in source[1:]]}
+        contract = check_pte_contract(plan, metadata, "nhwc")
+        self.assertEqual(contract["input"]["shape"], [1, 256, 256, 3])
+        self.assertEqual(contract["outputs"][3]["shape"], [1, 1, 1344])
+        with self.assertRaises(ValueError):
+            check_pte_contract(plan, metadata, "nchw")
+
     def test_raw_head_detection_metrics(self):
         """Derive confidence from class logits independently of the angle head."""
         heads = [np.zeros((1, 65, size, size), dtype=np.float32) for size in (4, 2, 1)]
@@ -163,6 +182,31 @@ class QrcodeExportTests(unittest.TestCase):
             self.assertEqual(metrics["float_best_class"], 14)
             self.assertEqual(metrics["quantized_best_class"], 14)
             self.assertEqual(metrics["max_absolute_score_error"], 0)
+
+    def test_float_parity_near_zero_logits(self):
+        """Allow observed FP32 kernel rounding while rejecting larger raw-output changes."""
+        reference = np.array([[[0.014]]], dtype=np.float32)
+        sample = {"image": "gray.bmp", "input": np.zeros((1, 1, 1, 1), dtype=np.float32),
+                  "reference": [reference]}
+        actual = reference + 0.000136
+        self.assertEqual(len(validate_outputs(lambda _: [actual], [sample], strict=True)), 1)
+        actual = reference + 0.001
+        with self.assertRaises(AssertionError):
+            validate_outputs(lambda _: [actual], [sample], strict=True)
+
+    def test_angle_rounding_keeps_detection_head_limit(self):
+        """Accept measured angle kernel error without relaxing the detection heads."""
+        angle = np.array([[[0.152]]], dtype=np.float32)
+        sample = {"image": "angle_rounding.bmp", "input": np.zeros((1, 1, 1, 1)),
+                  "reference": [angle]}
+        actual = angle + 0.00023684
+        self.assertEqual(len(validate_outputs(lambda _: [actual], [sample], strict=True)), 1)
+        sample["reference"] = [angle.reshape((1, 1, 1, 1))]
+        with self.assertRaisesRegex(AssertionError, "angle_rounding.bmp.*output=0"):
+            validate_outputs(lambda _: [actual.reshape((1, 1, 1, 1))], [sample], strict=True)
+        sample["reference"] = [np.array([[[1.014]]], dtype=np.float32)]
+        actual = sample["reference"][0] + 0.0005271
+        self.assertEqual(len(validate_outputs(lambda _: [actual], [sample], strict=True)), 1)
 
     def test_actual_npu_operators(self):
         """Ignore unused CPU opcode entries but reject CPU operators in the graph."""

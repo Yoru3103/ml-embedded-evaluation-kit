@@ -8,6 +8,24 @@ from pathlib import Path
 import onnx
 
 
+def load_model(path: Path | onnx.ModelProto) -> onnx.ModelProto:
+    """Load a private graph and restore missing Microsoft quantized operator domains.
+
+    :param path:    Model path or an in-memory graph.
+    :returns:       Graph copy with known QOperator domains restored.
+    """
+    graph = (onnx.load(str(path)) if isinstance(path, Path)
+             else onnx.ModelProto.FromString(path.SerializeToString()))
+    restored = False
+    for node in graph.graph.node:
+        if not node.domain and node.op_type in {"QLinearAdd", "QLinearMul", "QLinearConcat"}:
+            node.domain = "com.microsoft"
+            restored = True
+    if restored and not any(item.domain == "com.microsoft" for item in graph.opset_import):
+        graph.opset_import.append(onnx.helper.make_opsetid("com.microsoft", 1))
+    return graph
+
+
 def _unwrap(name: str, producers: dict) -> onnx.NodeProto:
     """Follow layout-preserving wrappers to an output's producing operation.
 
@@ -96,7 +114,7 @@ def describe_model(path: Path | onnx.ModelProto) -> tuple[onnx.ModelProto, dict]
     :returns:           Checked graph and its ordered deployment interface.
     :raises ValueError: Unsupported tensor layout or raw-head contract.
     """
-    graph = onnx.load(str(path)) if isinstance(path, Path) else path
+    graph = load_model(path)
     onnx.checker.check_model(graph)
     tensors = _tensor_interface(graph)
     shape = tensors[0]["shape"]

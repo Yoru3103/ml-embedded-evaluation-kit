@@ -14,6 +14,8 @@ from onnx import helper, numpy_helper
 from PIL import Image
 
 from qrcode_contract import describe_model
+import qrcode_contract
+import onnxruntime as ort
 from yolo_pte_utils import load_image
 
 
@@ -62,6 +64,28 @@ class QrcodeContractTests(unittest.TestCase):
                 self.assertEqual(metadata["dfl_bins"], bins)
                 self.assertEqual(metadata["num_classes"], classes)
                 self.assertEqual(metadata["auxiliary_kind"], "angle_logits")
+
+    def test_missing_qoperator_domain(self):
+        """Restore a Microsoft operator's domain without modifying source graph data."""
+        scale = numpy_helper.from_array(np.array(0.25, dtype=np.float32), "scale")
+        zero = numpy_helper.from_array(np.array(0, dtype=np.int8), "zero")
+        node = helper.make_node("QLinearAdd",
+                                ["x", "scale", "zero", "y", "scale", "zero", "scale", "zero"],
+                                ["sum"])
+        graph = helper.make_graph([node], "quantized_add", [
+            helper.make_tensor_value_info(name, onnx.TensorProto.INT8, [1, 1, 2, 2])
+            for name in ("x", "y")],
+            [helper.make_tensor_value_info("sum", onnx.TensorProto.INT8, [1, 1, 2, 2])],
+            [scale, zero])
+        source = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=8)
+        original = source.SerializeToString()
+        restored = qrcode_contract.load_model(source)
+        onnx.checker.check_model(restored)
+        session = ort.InferenceSession(restored.SerializeToString())
+        result = session.run(None, {"x": np.full((1, 1, 2, 2), 4, np.int8),
+                                   "y": np.full((1, 1, 2, 2), 2, np.int8)})
+        np.testing.assert_array_equal(result[0], np.full((1, 1, 2, 2), 6, np.int8))
+        self.assertEqual(source.SerializeToString(), original)
 
     def test_activated_angles_are_rejected(self):
         """Do not silently apply sigmoid twice when a graph changes its angle interface."""

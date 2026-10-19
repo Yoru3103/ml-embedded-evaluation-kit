@@ -6,6 +6,8 @@
 """Export the four-output QR-code ONNX model to Ethos-U PTE and INT8 TFLite."""
 
 import argparse
+from collections.abc import Iterator
+from contextlib import contextmanager
 import hashlib
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
@@ -53,7 +55,8 @@ def parse_args(argv: list[str] | None = None,
                         default=ROOT / "resources_downloaded/yolo_QRcode/best.onnx")
     parser.add_argument("--calibration-dir", type=Path,
                         default=ROOT / "resources/qrcode/smaples")
-    parser.add_argument("--validation-dir", type=Path)
+    parser.add_argument("--validation-dir", type=Path,
+                        help="Defaults to --calibration-dir (resources/qrcode/smaples)")
     parser.add_argument("--reference-tflite", type=Path,
                         help="Optional external INT8 model for numerical and Vela comparison")
     parser.add_argument("--output-dir", type=Path,
@@ -63,6 +66,11 @@ def parse_args(argv: list[str] | None = None,
                         default="auto", help="auto: ONNX uses onnx2tf; PT uses LiteRT")
     parser.add_argument("--onnx2tf-backend", choices=("tf_converter", "flatbuffer_direct"),
                         default="tf_converter", help="ONNX2TF conversion engine")
+    parser.add_argument("--io-layout", choices=("nhwc", "nchw"), default="nhwc",
+                        help="Deployment interface; nchw retains legacy PyTorch exports")
+    parser.add_argument("--output-type", choices=("int8", "float32"), default="int8",
+                        help="Raw QR heads: int8 or model-side dequantized float32; "
+                             "input stays int8")
     parser.add_argument("--data", type=Path, help="Dataset YAML for PT-to-TFLite calibration")
     parser.add_argument("--image-size", type=int, default=320, help="PT input size")
     parser.add_argument("--calibration-split", choices=("train", "val"), default="train")
@@ -81,6 +89,11 @@ def parse_args(argv: list[str] | None = None,
     parser.add_argument("--per-channel", action=argparse.BooleanOptionalAction, default=True,
                         help="PTE/ONNX2TF per-channel weights; LiteRT uses its static INT8 recipe")
     parser.add_argument("--save-intermediate", action=argparse.BooleanOptionalAction, default=True)
+    pt2 = parser.add_mutually_exclusive_group()
+    pt2.add_argument("--pt2-only", action="store_true",
+                     help="Native QR PT: calibrate/cache PT2 without compiling PTE")
+    pt2.add_argument("--quantized-pt2", type=Path,
+                     help="Native QR PT: compile a cached quantized.pt2 without recalibration")
     parser.add_argument("--target", default="ethos-u85-1024")
     parser.add_argument("--vela-config", type=Path, default=ROOT / "scripts/vela/default_vela.ini")
     parser.add_argument("--system-config", default="Ethos_U85_SYS_DRAM_Mid_1024")
@@ -91,6 +104,8 @@ def parse_args(argv: list[str] | None = None,
     parser.add_argument("--memory-alignment", type=int, default=16)
     parser.add_argument("--max-planned-memory", type=int)
     args = parser.parse_args(argv)
+    if args.validation_dir is None:
+        args.validation_dir = args.calibration_dir
     validate_source_options(args, parser, source_formats, argv)
     validate_common_options(args, parser)
     for name in ("model", "output_dir", "calibration_dir", "vela_config", "validation_dir",
@@ -107,6 +122,9 @@ def validate_common_options(args: argparse.Namespace, parser: argparse.ArgumentP
     :param args:    Parsed command-line options.
     :param parser:  Parser reporting invalid settings.
     """
+    if (args.pt2_only or args.quantized_pt2 is not None) and (
+            args.model.suffix.lower() != ".pt" or args.format != "pte"):
+        parser.error("PT2 options require a PT source and --to pte")
     if not args.vela_config.is_file() or not args.calibration_dir.is_dir():
         parser.error("Vela configuration and calibration directory must exist")
     if args.validation_dir is not None and not args.validation_dir.is_dir():
@@ -145,6 +163,9 @@ def validate_source_options(args: argparse.Namespace, parser: argparse.ArgumentP
         args.tflite_backend = select_tflite_backend(args.model, args.tflite_backend)
     except ValueError as error:
         parser.error(str(error))
+    if (args.io_layout == "nchw" and args.format != "pte"
+            and args.tflite_backend == "onnx2tf"):
+        parser.error("ONNX2TF exports NHWC; use --io-layout nhwc or --tflite-backend litert")
     if args.model.suffix.lower() == ".pt":
         if args.image_size <= 0 or args.image_size % 32 or not 0 <= args.max_score_drop <= 1:
             parser.error("PT image size must be a positive multiple of 32 and score drop in [0,1]")
@@ -165,7 +186,8 @@ def make_samples(paths: list[Path], metadata: dict,
     load_image = import_module("yolo_pte_utils").load_image
     options = ort.SessionOptions()
     options.intra_op_num_threads = args.threads
-    session = ort.InferenceSession(str(args.model), sess_options=options,
+    graph = import_module("qrcode_contract").load_model(args.model)
+    session = ort.InferenceSession(graph.SerializeToString(), sess_options=options,
                                   providers=["CPUExecutionProvider"])
     samples = []
     for path in paths:
@@ -185,6 +207,26 @@ def write_manifest(path: Path, report: dict):
     :param report:  Configuration and completed stages.
     """
     path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+@contextmanager
+def export_manifest(path: Path, report: dict) -> Iterator[dict]:
+    """Record completion or failure for source-specific export stages.
+
+    :param path:    Destination JSON manifest.
+    :param report:  Mutable report updated by the export stages.
+    :returns:       Context yielding the mutable report.
+    """
+    write_manifest(path, report)
+    try:
+        yield report
+    except Exception as error:
+        report.update(status="failed", error=str(error))
+        raise
+    else:
+        report["status"] = "completed"
+    finally:
+        write_manifest(path, report)
 
 
 def compare_reference(args: argparse.Namespace, samples: list[dict], metadata: dict,

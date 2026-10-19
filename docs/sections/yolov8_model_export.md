@@ -47,6 +47,16 @@ single decoded detection output and three/four-output DFL heads.
 
 ## ExecuTorch PTE export
 
+For the grayscale QR-code OBB checkpoint, use the unified
+`export_model.py --model .../best-bifpn.pt --to pte --image-size 256 --io-layout nhwc`
+entry point. It captures the four raw OBB outputs directly from PyTorch and
+retains integer I/O for the `qrcode` use case. See the
+[QR-code use-case guide](../../source/app/use_case/qrcode/README.md#exporting-the-bifpn-obb-checkpoint)
+for calibration, output paths and the folding/parity checks. This direct path
+does not require exporting an intermediate ONNX graph.
+
+The following standalone exporter is for ordinary Detect checkpoints:
+
 ```bash
 python scripts/export_yolo_pte.py \
     --model /path/to/best.pt \
@@ -132,6 +142,23 @@ YOLO detection contract. The unified entry point selects the source adapter; it 
 not make unsupported model architectures compatible automatically. ONNX2Torch produces
 an in-memory PyTorch model, so an intermediate `.pt` checkpoint is not required.
 
+The unified and four-output ONNX exporters default to `--io-layout nhwc`. ONNX2Torch
+retains NCHW computation semantics; a shared `ChannelLastIO` adapter exposes NHWC
+images and feature maps to both ExecuTorch and LiteRT. Calibration tensors use the
+same NHWC interface. Validation maps feature maps back to source NCHW for comparison,
+while angle `[1,1,anchors]` and decoded PT outputs `[1,4+C,anchors]` remain unchanged.
+The four-output ONNX reports and PT PTE reports record actual serialized shapes.
+Use `--io-layout nchw` with the
+PyTorch export routes to retain an older firmware interface. ONNX2TF always exports
+NHWC through its own layout conversion. The standalone PT scripts retain NCHW as
+their default and also accept `--io-layout nhwc`.
+
+Firmware must use the exported model's layout: RGB NHWC data is interleaved, and
+raw detection heads are indexed as `[batch,height,width,channel]`. Existing firmware
+and old NCHW model artifacts require their original contract. Selecting NHWC does
+not prove that all internal transposes disappear; inspect Vela's per-layer report
+and measure NPU cycles on the target.
+
 ```bash
 # ONNX to PTE, using ONNX2Torch and the existing shared quantization APIs.
 resources_downloaded/env/bin/python scripts/export_model.py \
@@ -185,8 +212,8 @@ validation, ExecuTorch and Vela use the shared environment. The TFLite export re
 records the converter's actual Python executable and ONNX2TF version. If the dedicated
 environment is absent, the exporter uses ONNX2TF installed in the current interpreter.
 
-The existing PT-to-PTE API preserves floating-point I/O. Ultralytics' PT-to-LiteRT
-API also preserves floating-point I/O around its INT8 graph, so Vela can retain CPU
+The existing PT-to-PTE API preserves floating-point I/O. PT-to-LiteRT also preserves
+floating-point I/O around its INT8 graph, so Vela can retain CPU
 boundary operators. The unified report records actual CPU/NPU operator counts for
 that path. PT-to-TFLite calibration uses the complete `--data` dataset split selected
 by `--calibration-split`, with Ultralytics' own preprocessing. `--calibration-dir`,
@@ -212,7 +239,9 @@ resources_downloaded/env/bin/python scripts/export_qrcode_onnx.py --memory-mode 
     /home/xx/alif_ml-embedded-evaluation-kit/20260827_Model/best_int8_new.tflite
 ```
 
-The default calibration directory is `resources/object_detection/samples_QRcode/`.
+The default calibration directory is `resources/qrcode/smaples/` (the existing
+directory spelling). Validation defaults to that same selected calibration directory;
+use `--validation-dir` to select an independent dataset.
 The same `/255` preparation is used by both frameworks. Input channels are read from
 the source graph: RGB stays RGB, while one-channel input uses Pillow luminance after
 resizing and cropping. `--preprocessing mlek-crop` uses the same centered crop as
@@ -235,9 +264,25 @@ than guessing class counts from the total head channels. The grayscale reference
 `best_bifpn_gray_qop_int8_boardcal_20260819.onnx` has `[1,1,256,256]` input and 47-channel
 heads: 32 DFL values (8 bins per distance) plus the same 15 class logits. Its QOperator
 graph can be inspected and run with ONNX Runtime; that does not establish support for
-converting QOperator operations through onnx2torch.
-The existing RGB deployment models use **INT8 input and all four INT8 outputs**, preserving
-the original NCHW shapes and output order. Quantize input with
+converting QOperator operations through onnx2torch. ONNX2TF 2.6.9 also has unresolved
+compatibility problems for this grayscale QOperator model: its TensorFlow backend
+misinterprets intermediate layouts and quantization semantics, and the direct backend
+generates incompatible intermediate shapes. Successful conversion of `best.onnx`
+does not establish support for this already quantized model. Keep numerical checks
+enabled; neither a generated file nor a completed converter process proves equivalence.
+The ONNX2TF exporter rejects QLinear graphs before conversion to preserve existing
+boardcal quantization parameters. It does not reconstruct floating weights or recalibrate
+these models. Native INT8 experiments also failed the existing numerical acceptance
+limits, so no validated grayscale Dedicated SRAM 384 KiB artifact is available yet.
+
+The model reader restores missing `com.microsoft` domains for QLinearAdd/Mul/Concat
+on an in-memory copy. Reference inference uses this same normalized graph. ONNX2TF
+receives a staged copy and its in-place simplifier/name-generation passes are disabled,
+so conversion cannot rewrite the original ONNX file. Detailed converter output is
+retained at `<output-dir>/tflite/onnx2tf.log`, including when conversion fails.
+Four-output deployment models use **INT8 input and all four INT8 outputs**, preserving
+output order with NHWC images and feature maps by default. Previously exported RGB
+models used the original NCHW interface. Quantize input with
 `clip(round(rgb / 255 / scale) + zero_point, -128, 127)` and dequantize each output with
 `(value - zero_point) * scale`. Each output has its own parameters; read them from the
 report. The reference TFLite has NHWC heads in a different output order, which the
@@ -290,7 +335,8 @@ Outputs are under `resources_downloaded/yolo_QRcode/`:
 
 The report includes the source SHA-256, package versions, calibration paths, original
 output names, compiler arguments and stage status. PTE serialized shapes and dimension
-orders must match ONNX, with INT8 tensors and only Ethos-U delegates. The script checks
+orders must match the selected deployment layout, with INT8 tensors and only Ethos-U
+delegates. The original ONNX contract stays NCHW in the report. The script checks
 the serialized forward execution plan and rejects **any CPU operator**. PTE integer
 I/O parameters are stored as configuration methods and in the JSON sidecar.
 Vela-compiled TFLite must contain only `ethos-u` custom operators and INT8 I/O. The check

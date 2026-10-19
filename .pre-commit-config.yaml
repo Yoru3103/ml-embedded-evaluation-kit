@@ -45,6 +45,7 @@ repos:
           - --error-exitcode=1
           - --check-level=exhaustive
           - --enable=performance,portability
+          - -Isource/app/main/include
           - --suppress=missingInclude
           - --suppress=missingIncludeSystem
           - --suppress=preprocessorErrorDirective
