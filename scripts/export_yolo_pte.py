@@ -22,6 +22,7 @@ from executorch.exir.schema import ExecutionPlan, ScalarType
 from torchao.quantization.pt2e.quantize_pt2e import convert_pt2e, prepare_pt2e
 
 from yolo_pte_utils import compare_outputs, find_images, load_image, load_model
+from model_layout import ChannelLastIO, model_input
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +40,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--image-size", type=int, default=320)
     parser.add_argument("--preprocessing", choices=("mlek-crop", "letterbox"), default="mlek-crop")
+    parser.add_argument("--io-layout", choices=("nhwc", "nchw"), default="nchw",
+                        help="Deployment input layout; unified export defaults to nhwc")
     parser.add_argument("--per-channel", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--max-score-drop", type=float, default=0.20,
@@ -97,6 +100,8 @@ def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace
     # 导入第一张校准图片
     example = load_image(paths[0], args.image_size, args.preprocessing,
                          getattr(args, "input_channels", 3))
+    layout = getattr(args, "io_layout", "nchw")
+    example = model_input(example, layout)
     # 将浮点模型捕获为计算图
     exported = torch.export.export(model, (example,), strict=True)
     graph_dir = args.output.parent / f"{args.output.stem}_graphs"
@@ -110,8 +115,8 @@ def quantize(model: torch.nn.Module, paths: list[Path], args: argparse.Namespace
     prepared = prepare_pt2e(exported.module(check_guards=False), quantizer)
     with torch.no_grad():
         for index, path in enumerate(paths, 1):
-            prepared(load_image(path, args.image_size, args.preprocessing,
-                                getattr(args, "input_channels", 3)))
+            prepared(model_input(load_image(path, args.image_size, args.preprocessing,
+                                             getattr(args, "input_channels", 3)), layout))
             if index % 16 == 0 or index == len(paths):
                 print(f"Calibrated {index}/{len(paths)}", flush=True)
     # 根据统计结果计算量化参数，生成量化后的计算图
@@ -127,11 +132,13 @@ def validate(model: torch.nn.Module, quantized: torch.fx.GraphModule,
              paths: list[Path], args: argparse.Namespace) -> list[dict]:
     """Check the exported FP32 graph and quantized outputs on the same input tensors."""
     example = load_image(paths[0], args.image_size, args.preprocessing)
+    layout = getattr(args, "io_layout", "nchw")
+    example = model_input(example, layout)
     exported = torch.export.export(model, (example,), strict=True).module(check_guards=False)
     results = []
     with torch.no_grad():
         for path in paths:
-            inputs = load_image(path, args.image_size, args.preprocessing)
+            inputs = model_input(load_image(path, args.image_size, args.preprocessing), layout)
             reference = model(inputs)
             torch.testing.assert_close(actual=exported(inputs), expected=reference)
             result = {"image": str(path), **compare_outputs(reference, quantized(inputs))}
@@ -155,13 +162,16 @@ def lower(quantized: torch.fx.GraphModule, example: torch.Tensor,
         memory_planning_pass=MemoryPlanningPass(alignment=args.memory_alignment)))
 
 
-def check_io_contract(plan: ExecutionPlan, image_size: int, num_classes: int) -> dict:
+def check_io_contract(plan: ExecutionPlan, image_size: int, num_classes: int,
+                      layout: str = "nchw") -> dict:
     """Reject PTE layouts or types that the original MLEK pipeline cannot consume."""
     if len(plan.inputs) != 1 or len(plan.outputs) != 1:
         raise ValueError("MLEK requires exactly one input and one output")
     input_tensor = plan.values[plan.inputs[0]].val
     output_tensor = plan.values[plan.outputs[0]].val
-    if input_tensor.sizes != [1, 3, image_size, image_size]:
+    input_shape = ([1, image_size, image_size, 3] if layout == "nhwc"
+                   else [1, 3, image_size, image_size])
+    if input_tensor.sizes != input_shape:
         raise ValueError("Unexpected input shape")
     if (len(output_tensor.sizes) != 3 or output_tensor.sizes[:2] != [1, 4 + num_classes]
             or output_tensor.sizes[2] <= 0):
@@ -202,6 +212,9 @@ def run_export(args: argparse.Namespace) -> dict:
                          args.validation_limit, args.seed + 1)
     example = load_image(paths[0], args.image_size, args.preprocessing)
     model, names = load_model(args.model, args.image_size, example)
+    if args.io_layout == "nhwc":
+        model = ChannelLastIO(model).eval()
+    example = model_input(example, args.io_layout)
     spec = make_compile_spec(args)          # 后续vela编译参数 供后续量化器和后端编译使用
     quantized = quantize(model, paths, args, spec)
     results = validate(model, quantized, checks, args)
@@ -210,7 +223,7 @@ def run_export(args: argparse.Namespace) -> dict:
         "configuration": {key: str(value) if isinstance(value, Path) else value
                           for key, value in vars(args).items()},
         "classes": names,
-        "contract": {"input": "float32 contiguous RGB NCHW /255",
+        "contract": {"input": f"float32 contiguous RGB {args.io_layout.upper()} /255",
                      "output": "float32 contiguous [1,4+C,N]: normalized XYWH + probabilities",
                      "postprocessing": "original MLEK YOLO; no sigmoid or score scaling"},
         "calibration_images": [str(path) for path in paths],
@@ -226,7 +239,8 @@ def run_export(args: argparse.Namespace) -> dict:
         return report
     program = lower(quantized, example, spec, args)
     plan = program.executorch_program.execution_plan[0]
-    report["serialized_tensor_layouts"] = check_io_contract(plan, args.image_size, len(names))
+    report["serialized_tensor_layouts"] = check_io_contract(
+        plan, args.image_size, len(names), args.io_layout)
     buffers = list(plan.non_const_buffer_sizes)
     report["planned_buffer_bytes"] = buffers
     report["planned_total_bytes"] = sum(buffers)

@@ -5,12 +5,39 @@
 """Export a trained Ultralytics YOLO model to TFLite."""
 
 import argparse
+from importlib import import_module
 from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
 
 from ultralytics import YOLO
 from ultralytics.utils import YAML
+
+
+def export_nhwc_models(weights: Path, data: Path, imgsz: int, calibration_split: str,
+                       output_dir: Path | None) -> tuple[Path, Path]:
+    """Reuse PT adaptation and Ultralytics calibration with an NHWC LiteRT interface.
+
+    :param weights:             Non-end-to-end detection checkpoint.
+    :param data:                Original calibration dataset YAML.
+    :param imgsz:               Square image resolution.
+    :param calibration_split:   Dataset split used for calibration.
+    :param output_dir:          Export destination; defaults beside the checkpoint.
+    :returns:                   Floating and integer TFLite paths with float NHWC boundaries.
+    """
+    torch = import_module("torch")
+    exporter_class = import_module("ultralytics.engine.exporter").Exporter
+    model, _ = import_module("yolo_pte_utils").load_model(
+        weights, imgsz, torch.zeros(1, 3, imgsz, imgsz))
+    with TemporaryDirectory(prefix="yolo_tflite_calibration-") as temporary_dir_name:
+        calibration_data = make_calibration_yaml(data, calibration_split, Path(temporary_dir_name))
+        exporter = exporter_class(overrides={"format": "litert", "data": str(calibration_data),
+                                              "imgsz": imgsz, "batch": 1, "fraction": 1.0})
+        exporter.model, exporter.imgsz = model.model, [imgsz, imgsz]
+        calibration = [(batch["img"].cpu().float() / 255.0).numpy()
+                       for batch in exporter.get_int8_calibration_dataloader()]
+    return import_module("qrcode_tflite_utils").export_litert_models(
+        model, calibration, output_dir or weights.parent, "nhwc", float_io=True)
 
 
 def make_calibration_yaml(data: Path, split: str, temporary_dir: Path) -> Path:
@@ -128,9 +155,11 @@ def main():
                         help="Dataset split for INT8 calibration (default: train).")
     parser.add_argument("--output-dir", type=Path,
                         help="Directory for TFLite files (default: checkpoint directory).")
+    parser.add_argument("--io-layout", choices=("nhwc", "nchw"), default="nchw")
     args = parser.parse_args()
 
-    export_models(
+    exporter = export_nhwc_models if args.io_layout == "nhwc" else export_models
+    exporter(
         weights=args.weights.resolve(),
         data=args.data.resolve(),
         imgsz=args.imgsz,
