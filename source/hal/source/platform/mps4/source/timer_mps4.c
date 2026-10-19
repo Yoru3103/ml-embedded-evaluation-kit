@@ -53,6 +53,9 @@ add_pmu_counter(uint64_t value, const char* name, const char* unit, pmu_counters
  */
 static uint64_t get_tstamp_milliseconds(uint64_t cpu_cycles);
 
+/** Append CPU timing counters to an existing snapshot. */
+static void append_cpu_counters(pmu_counters* counters);
+
 void platform_reset_counters(void)
 {
     MPS4_PLATFORM_FPGAIO->CLK1HZ   = 0;
@@ -94,6 +97,18 @@ void platform_get_counters(pmu_counters* counters)
     UNUSED(i);
 #endif /* defined (ARM_NPU) */
 
+    append_cpu_counters(counters);
+}
+
+void platform_get_cpu_counters(pmu_counters* counters)
+{
+    counters->num_counters = 0;
+    counters->initialised  = true;
+    append_cpu_counters(counters);
+}
+
+static void append_cpu_counters(pmu_counters* counters)
+{
 #if defined(CPU_PROFILE_ENABLED)
     const uint64_t cpu_cycles = Get_SysTick_Cycle_Count();
 
@@ -103,6 +118,7 @@ void platform_get_counters(pmu_counters* counters)
 #endif /* defined(CPU_PROFILE_ENABLED) */
 
 #if !defined(CPU_PROFILE_ENABLED)
+    UNUSED(counters);
     UNUSED(get_tstamp_milliseconds);
     UNUSED(Get_SysTick_Cycle_Count);
     UNUSED(unit_ms);

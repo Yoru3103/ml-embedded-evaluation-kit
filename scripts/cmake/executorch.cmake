@@ -47,6 +47,11 @@ set(EXECUTORCH_BUILD_EXTENSION_RUNNER_UTIL      ON)
 set(EXECUTORCH_ENABLE_LOGGING                   ON)
 set(EXECUTORCH_BUILD_DEVTOOLS                   OFF)
 set(EXECUTORCH_ENABLE_EVENT_TRACER              OFF)
+if (CPU_PROFILE_ENABLED AND (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
+    # The application supplies its own EventTracer. Enable runtime callbacks
+    # without the ETDump/devtools dependency required by the upstream option.
+    add_compile_definitions(ET_EVENT_TRACER_ENABLED)
+endif()
 set(GFLAGS_INTTYPES_FORMAT                      C99)
 
 if(TARGET_PLATFORM STREQUAL native)
@@ -106,6 +111,9 @@ endblock()
 
 # Collate the targets for easily linking against.
 add_library(mlek_executorch INTERFACE)
+if (CPU_PROFILE_ENABLED AND (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
+    target_compile_definitions(mlek_executorch INTERFACE ET_EVENT_TRACER_ENABLED)
+endif()
 
 target_link_libraries(mlek_executorch INTERFACE
     program_schema

@@ -1,5 +1,7 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2022, 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,18 +20,14 @@
 #include "platform_drivers.h"
 
 #if defined(ARM_NPU)
-#include "ethosu_profiler.h"
+#    include "ethosu_profiler.h"
 #endif
 
 void hal_pmu_init(void)
-{
-    platform_reset_counters();
-}
+{ platform_reset_counters(); }
 
 void hal_pmu_reset(void)
-{
-    platform_reset_counters();
-}
+{ platform_reset_counters(); }
 
 void hal_pmu_final(void)
 {
@@ -39,6 +37,7 @@ void hal_pmu_final(void)
 }
 
 void hal_pmu_get_counters(pmu_counters* counters)
-{
-    platform_get_counters(counters);
-}
+{ platform_get_counters(counters); }
+
+void hal_pmu_get_cpu_counters(pmu_counters* counters)
+{ platform_get_cpu_counters(counters); }
