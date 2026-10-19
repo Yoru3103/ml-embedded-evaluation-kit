@@ -2,9 +2,10 @@
 # <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""ExecuTorch and LiteRT backends for the static QR-code ONNX exporter."""
+"""Shared QR-code PTE preparation, compilation and LiteRT conversion."""
 
 import argparse
+from copy import deepcopy
 from pathlib import Path
 
 from executorch.backends.arm.ethosu import EthosUPartitioner, EthosUCompileSpec
@@ -16,12 +17,13 @@ from executorch.exir.passes.quantize_io_pass import QuantizeInputs, QuantizeOutp
 import numpy as np
 import torch
 
-from export_yolo_pte import make_compile_spec, quantize, save_report
-from qrcode_onnx_utils import adapt_model, check_pte_contract, validate_outputs
-from qrcode_tflite_utils import export_litert_models, validate_tflite_models
-from model_layout import ChannelLastIO, model_input
-from qrcode_pte_passes import separate_quantized_relu
-from qrcode_output_io import check_pte_execution
+from model_export.common.quantization import make_compile_spec, quantize
+from model_export.common.reporting import save_report
+from model_export.qrcode.onnx_utils import adapt_model, check_pte_contract, validate_outputs
+from model_export.qrcode.tflite_utils import export_litert_models, validate_tflite_models
+from model_export.common.layout import ChannelLastIO, model_input
+from model_export.qrcode.pte_passes import separate_quantized_relu
+from model_export.qrcode.output_io import check_pte_execution
 
 
 def torch_predict(model: torch.nn.Module, inputs: np.ndarray,
@@ -122,23 +124,49 @@ def write_pte(program: object, path: Path, metadata: dict, layout: str = "nchw",
         temporary.unlink(missing_ok=True)
 
 
-def export_pte(model: torch.nn.Module, paths: list[Path], samples: list[dict],
-               metadata: dict, args: argparse.Namespace) -> dict:
-    """Calibrate and compile one Ethos-U PTE, checking its serialized interface.
+def quantize_pte(model: torch.nn.Module, paths: list[Path], metadata: dict,
+                 args: argparse.Namespace) -> torch.fx.GraphModule:
+    """Prepare the layout and calibrate through one path for direct and cached exports.
 
-    :param model:       Adapted static ONNX graph.
+    :param model:       Floating native PT or adapted ONNX model with NCHW interfaces.
     :param paths:       Selected calibration images.
-    :param samples:     Cached ONNX reference predictions.
     :param metadata:    Original tensor contract.
-    :param args:        Export, compiler and memory options for this variant.
-    :returns:           Compilation and host quantization report.
+    :param args:        Layout, quantization and intermediate-output options.
+    :returns:           Calibrated PT2E graph ready for serialization or compilation.
     """
-    spec = make_compile_spec(args)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    if getattr(args, "io_layout", "nchw") == "nhwc":
+    options = argparse.Namespace(**vars(args))
+    if options.memory_mode == "all":
+        options.memory_mode = "Dedicated_Sram"
+    options.input_channels = metadata["input_channels"]
+    if not hasattr(options, "output"):
+        options.output = options.output_dir / f"pte_{options.memory_mode}/best.pte"
+    options.output.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(options, "io_layout", "nchw") == "nhwc":
         model = ChannelLastIO(model).eval()
-    quantized = quantize(model, paths, args, spec)
-    return compile_quantized_pte(quantized, samples, metadata, args)
+    return quantize(model, paths, options, make_compile_spec(options))
+
+
+
+
+def compile_pte_variants(quantized: torch.fx.GraphModule, samples: list[dict],
+                         metadata: dict, args: argparse.Namespace, reports: dict) -> dict:
+    """Compile independent memory variants from one calibrated or reloaded graph.
+
+    :param quantized:   Calibrated PT2E graph, preserved across compiler mutations.
+    :param samples:     Source reference predictions.
+    :param metadata:    Original tensor contract.
+    :param args:        Requested memory modes and compiler options.
+    :param reports:     Mutable report retaining each completed variant on failure.
+    :returns:           Per-memory-mode deployment reports.
+    """
+    modes = (["Dedicated_Sram", "Shared_Sram"] if args.memory_mode == "all"
+             else [args.memory_mode])
+    for mode in modes:
+        options = argparse.Namespace(**vars(args))
+        options.memory_mode = mode
+        options.output = args.output_dir / f"pte_{mode}/best.pte"
+        reports[mode] = compile_quantized_pte(deepcopy(quantized), samples, metadata, options)
+    return reports
 
 
 def compile_quantized_pte(quantized: torch.fx.GraphModule, samples: list[dict],

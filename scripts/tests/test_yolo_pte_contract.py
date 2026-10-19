@@ -9,9 +9,10 @@ import unittest
 
 import torch
 
-from export_yolo_pte import check_io_contract
 from executorch.exir.schema import ScalarType
-from yolo_pte_utils import ExportYolo
+
+from model_export.yolo.pte import check_io_contract
+from model_export.yolo.utils import ExportYolo
 
 
 class DetectionHead(torch.nn.Module):

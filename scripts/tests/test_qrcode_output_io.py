@@ -16,9 +16,10 @@ from executorch.exir.schema import DelegateCall, Instruction, KernelCall, Operat
 import flatbuffers
 import numpy as np
 
-from qrcode_output_io import check_pte_execution, dequantize_tflite_outputs
-from qrcode_tflite_utils import inspect_tflite, lite_runner
 from test_export_model import make_tflite
+
+from model_export.qrcode.output_io import check_pte_execution, dequantize_tflite_outputs
+from model_export.qrcode.tflite_utils import inspect_tflite, lite_runner
 
 
 def pack_model(model: schema.ModelT) -> bytes:

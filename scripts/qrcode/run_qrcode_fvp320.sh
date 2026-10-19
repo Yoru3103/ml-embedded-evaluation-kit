@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Usage: bash scripts/run_qrcode_fvp320.sh [all|variant]
+# Usage: bash scripts/qrcode/run_qrcode_fvp320.sh [all|variant]
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 selection="${1:-all}"
 fvp_path="${FVP_PATH:-$HOME/FVP_Corstone_SSE-320/models/Linux64_GCC-9.3/FVP_Corstone_SSE-320}"
 fvp_timeout="${FVP_TIMEOUT:-180}"

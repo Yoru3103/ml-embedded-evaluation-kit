@@ -18,9 +18,10 @@ import onnxruntime as ort
 import torch
 from executorch.exir.schema import ScalarType
 
-from qrcode_onnx_utils import (
+
+from model_export.qrcode.onnx_utils import (
     adapt_model, check_pte_contract, compare_tensors, detection_metrics, validate_outputs)
-from qrcode_tflite_utils import inspect_tflite
+from model_export.qrcode.tflite_utils import inspect_tflite
 
 
 def make_graph() -> onnx.ModelProto:

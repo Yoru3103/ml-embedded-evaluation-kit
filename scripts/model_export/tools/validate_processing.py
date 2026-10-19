@@ -19,11 +19,11 @@ from ultralytics.utils.metrics import batch_probiou
 from ultralytics.utils.ops import xywhr2xyxyxyxy
 from ultralytics.utils.tal import dist2rbox
 
-from qrcode_contract import describe_model
-from qrcode_export_backends import torch_predict
-from qrcode_onnx_utils import detection_metrics, detection_values
-from qrcode_tflite_utils import lite_runner
-from yolo_pte_utils import load_image
+from model_export.qrcode.contract import describe_model
+from model_export.qrcode.backends import torch_predict
+from model_export.qrcode.onnx_utils import detection_metrics, detection_values
+from model_export.qrcode.tflite_utils import lite_runner
+from model_export.common.images import load_image
 
 
 def reference_decode(outputs: list[np.ndarray], metadata: dict) -> tuple[np.ndarray, np.ndarray]:

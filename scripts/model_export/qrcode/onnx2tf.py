@@ -16,10 +16,12 @@ from tempfile import TemporaryDirectory
 import numpy as np
 import onnx
 
-from qrcode_contract import load_model
-from qrcode_tflite_utils import validate_tflite_models
+from model_export.qrcode.contract import load_model
+from model_export.qrcode.tflite_utils import validate_tflite_models
 
-CONVERTER_PYTHON = (Path(__file__).resolve().parents[1]
+from model_export.common.paths import ROOT
+
+CONVERTER_PYTHON = (ROOT
                     / "resources_downloaded/env-onnx2tf/bin/python")
 
 

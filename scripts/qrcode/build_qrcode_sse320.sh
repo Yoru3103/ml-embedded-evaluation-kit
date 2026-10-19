@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Usage: bash scripts/build_qrcode_sse320.sh [all|fvp|fpga] [all|variant]
+# Usage: bash scripts/qrcode/build_qrcode_sse320.sh [all|fvp|fpga] [all|variant]
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 deployment_selection="${1:-all}"
 variant_selection="${2:-all}"
 build_jobs="${BUILD_JOBS:-8}"

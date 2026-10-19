@@ -213,8 +213,8 @@ Conv/ReLU 量化融合时要求零点等于量化最小值；上述模式因此�
 
 | 文件 | 修改内容 |
 | --- | --- |
-| `scripts/qrcode_pte_passes.py` | `separate_quantized_relu()` 复用 ReLU 输出的 scale、zero point、范围和类型，在卷积与 ReLU 之间补充 Q/DQ 边界 |
-| `scripts/qrcode_export_backends.py` | `lower_integer_pte()` 在分区前调用上述变换；保留最终 PTE 的全 NPU、整数 I/O 和内存检查 |
+| `scripts/model_export/qrcode/pte_passes.py` | `separate_quantized_relu()` 复用 ReLU 输出的 scale、zero point、范围和类型，在卷积与 ReLU 之间补充 Q/DQ 边界 |
+| `scripts/model_export/qrcode/backends.py` | `lower_integer_pte()` 在分区前调用上述变换；保留最终 PTE 的全 NPU、整数 I/O 和内存检查 |
 | `scripts/tests/test_qrcode_pte_passes.py` | 覆盖负值、零、半步舍入、饱和值，以及重复调用不再插入边界 |
 | `scripts/tests/test_qrcode_pt_export.py` | 在端到端测试图中增加带 ReLU 的卷积分支和有符号拼接，验证最终序列化 PTE 无 CPU 算子 |
 

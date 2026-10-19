@@ -17,7 +17,7 @@ from ethosu.vela.tflite.Model import Model
 from ethosu.vela.tflite.TensorType import TensorType
 import numpy as np
 
-from qrcode_output_io import check_tflite_output_execution, dequantize_tflite_outputs
+from model_export.qrcode.output_io import check_tflite_output_execution, dequantize_tflite_outputs
 
 
 def export_litert_models(model: object, calibration: list[np.ndarray], directory: Path,
@@ -31,7 +31,7 @@ def export_litert_models(model: object, calibration: list[np.ndarray], directory
     :param float_io:    Retain float boundaries for the legacy PT application.
     :returns:           Floating and integer TFLite paths.
     """
-    layouts = import_module("model_layout")
+    layouts = import_module("model_export.common.layout")
     directory.mkdir(parents=True, exist_ok=True)
     float_path, int8_path = directory / "best_float32.tflite", directory / "best_int8.tflite"
     if layout == "nhwc":
@@ -246,7 +246,7 @@ def validate_tflite_models(float_path: Path, int8_path: Path, samples: list[dict
     :param args:        Quantization acceptance limits.
     :returns:           Artifact paths, tensor interfaces and validation metrics.
     """
-    validate_outputs = import_module("qrcode_onnx_utils").validate_outputs
+    validate_outputs = import_module("model_export.qrcode.onnx_utils").validate_outputs
     result = {"validation_scope": "ONNX versus host LiteRT; compiled NPU execution untested"}
     if getattr(args, "output_type", "int8") == "float32":
         int8_path = dequantize_tflite_outputs(

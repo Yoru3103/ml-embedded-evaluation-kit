@@ -133,12 +133,15 @@ not implement a second quantizer or NPU compiler.
 | ONNX to PTE | ONNX2Torch, static PyTorch adaptation, shared PT2E quantization, ExecuTorch/Ethos-U |
 | ONNX to TFLite (default) | ONNX2TF, full INT8 TFLite, Vela |
 | ONNX to TFLite (`--tflite-backend litert`) | ONNX2Torch, LiteRT Torch, AI Edge Quantizer, Vela |
-| PT to PTE | Existing YOLO PT exporter, PT2E quantization, ExecuTorch/Ethos-U |
+| OBB PT to PTE (`--to pte`) | Native grayscale raw heads, shared PT2E quantization, ExecuTorch/Ethos-U |
+| Detect PT to PTE | Existing YOLO PT exporter, PT2E quantization, ExecuTorch/Ethos-U |
 | PT to TFLite | Existing Ultralytics LiteRT exporter, INT8 quantization, Vela |
 
 ONNX-to-PTE accepts the supported static four-output QR-code/OBB contract described
-below. PT inputs must be Ultralytics checkpoints with the existing single-output
-YOLO detection contract. The unified entry point selects the source adapter; it does
+below. With `--to pte`, supported Ultralytics OBB checkpoints use the native grayscale
+QR-code route with 256-pixel inputs, 15 classes and 8 DFL bins. Detect checkpoints
+use the existing single-output YOLO detection contract. The unified entry point
+selects the source adapter; it does
 not make unsupported model architectures compatible automatically. ONNX2Torch produces
 an in-memory PyTorch model, so an intermediate `.pt` checkpoint is not required.
 
@@ -189,6 +192,34 @@ accept a PT checkpoint directly. Without `--output-dir`, the unified entry point
 writes to `<source-directory>/<source-stem>_export/`. `--memory-mode all` compiles
 both Dedicated and Shared SRAM variants. Conversion failures mark the export report
 as failed; no other converter is substituted automatically.
+
+#### Shared QR-code PTE quantization and compilation
+
+Implementation and artifact navigation: [model export directory guide](../../scripts/model_export/README.md).
+The root export scripts are compatibility CLI launchers; shared PT2E calibration lives in
+`model_export/common/quantization.py`, and QR-code compilation in `model_export/qrcode/backends.py`.
+
+Native OBB PT and adapted ONNX models use `model_export.qrcode.backends.quantize_pte()`
+to select input channels, adapt NCHW/NHWC interfaces and call the shared PT2E
+quantizer. Direct exports and `--pt2-only` use this same preparation path.
+
+- Direct export quantizes once, then calls `compile_pte_variants()` to compile
+  the requested memory modes.
+- `--pt2-only` saves the calibrated graph as `quantized.pt2`, together with
+  `references.npz` and `pt2_report.json`, without compiling a PTE. These cache
+  options apply to the native OBB PT route.
+- `--quantized-pt2 /path/to/quantized.pt2` validates and loads that cache, then
+  calls the same `compile_pte_variants()` without recalibrating.
+
+Each memory variant compiles an independent copy of the calibrated graph through
+`compile_quantized_pte()`, so compiler transformations cannot affect later variants.
+With `--memory-mode all`, calibration runs once and both SRAM modes use the same
+quantization result. Intermediate graphs from direct exports are saved under the
+first memory mode (`Dedicated_Sram` when exporting both modes).
+
+The PTE matrix scripts prepare the common PT2 cache once and reuse it for all
+cache capacities. INT8 and FP32 output configurations can share this cache:
+`--output-type` controls the compiled output boundary, not calibration.
 
 ONNX2TF is an optional dependency, loaded only when its route is selected. Its
 default engine here is `--onnx2tf-backend tf_converter`, which reads ONNX directly
@@ -364,8 +395,8 @@ Floating interfaces continue to use the existing preprocessing.
 Build and run the baseline firmware after model validation:
 
 ```bash
-bash scripts/build_qrcode_sse320.sh all all
-bash scripts/run_qrcode_fvp320.sh all
+bash scripts/qrcode/build_qrcode_sse320.sh all all
+bash scripts/qrcode/run_qrcode_fvp320.sh all
 ```
 
 The builder generates eight separate directories for FVP/FPGA, PTE/TFLite and both
@@ -380,11 +411,11 @@ The FVP runner uses the vendor runtime in a subshell and writes each project's
 Dedicated SRAM fast-cache comparison includes **64, 128, 256, 384 and 768 KiB**:
 
 ```bash
-resources_downloaded/env/bin/python scripts/compile_qrcode_fastcache.py
-bash scripts/build_qrcode_fastcache_sse320.sh all all all
-bash scripts/run_qrcode_fastcache_fvp320.sh all all
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.compile_fastcache
+bash scripts/qrcode/build_qrcode_fastcache_sse320.sh all all all
+bash scripts/qrcode/run_qrcode_fastcache_fvp320.sh all all
 # One case:
-bash scripts/build_qrcode_fastcache_sse320.sh fpga pte 256
+bash scripts/qrcode/build_qrcode_fastcache_sse320.sh fpga pte 256
 ```
 
 The compiler reuses the validated INT8 TFLite and calibrated PT2E graphs, keeping

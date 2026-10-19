@@ -58,20 +58,20 @@ onnx2torch 转换链。
 | `source/app/use_case/yolov8_detection/src/DetectionDrawing.cc` | `DrawDetectionBoxes` / `DrawLine` | 中心、宽高、弧度统一转换四个顶点；线段裁剪后逐像素连成旋转框，角度 0 走相同流程；仅裁剪显示，不改变后处理几何。 |
 | `source/hal/source/components/display/source/hdlcd_mps4/hal_display_mps4.c` | `publish_frame_buffer` | 图片、文字、填充矩形和清屏共用缓存发布，确保 HDLCD 从 DDR 看到更新。 |
 | `source/hal/source/platform/mps4/source/timer_mps4.c` | `platform_get_counters` / `get_tstamp_milliseconds` / `get_mps4_core_clock` | CPU TOTAL 和 DURATION 共用一次 64 位 SysTick 快照；取消超过 1 秒切换 100 Hz 来源；SCC 为零时 FVP 使用启动代码的 SystemCoreClock，默认 25 MHz；修正 SysTick 周期的额外一拍。 |
-| `scripts/qrcode_contract.py` | `describe_model` | 从原始及 QOperator ONNX 图读取真实 DFL、类别和角度接口，拒绝已激活角度等不一致格式。 |
-| `scripts/qrcode_onnx_utils.py` | `detection_values` / `decode_boxes` / `detection_metrics` | Python 校验采用相同的类别置信度和旋转框公式；类别数明确传入；记录量化后的最高类别。 |
-| `scripts/yolo_pte_utils.py` | `load_image` | 居中裁剪匹配 `gen_rgb_cpp.py`；裁剪后按模型通道转换 RGB/L。 |
-| `scripts/export_qrcode_onnx.py`、`scripts/export_yolo_pte.py`、`scripts/compile_qrcode_fastcache.py` | 样本加载、校准、接口读取 | 传递模型输入通道和类别数，共用经过检查的模型接口。 |
-| `scripts/export_qrcode_onnx.py`、`scripts/qrcode_onnx2tf.py` | `validate_common_options` / 转换错误处理 | 兼容工作区并行新增的导出入口；拆分公共参数校验以通过 PyLint；转换器 SystemExit 转为 RuntimeError，确保失败状态写入报告。 |
+| `scripts/model_export/qrcode/contract.py` | `describe_model` | 从原始及 QOperator ONNX 图读取真实 DFL、类别和角度接口，拒绝已激活角度等不一致格式。 |
+| `scripts/model_export/qrcode/onnx_utils.py` | `detection_values` / `decode_boxes` / `detection_metrics` | Python 校验采用相同的类别置信度和旋转框公式；类别数明确传入；记录量化后的最高类别。 |
+| `scripts/model_export/yolo/utils.py` | `load_image` | 居中裁剪匹配 `gen_rgb_cpp.py`；裁剪后按模型通道转换 RGB/L。 |
+| `scripts/model_export/qrcode/onnx.py`、`scripts/model_export/yolo/pte.py`、`scripts/model_export/tools/compile_fastcache.py` | 样本加载、校准、接口读取 | 传递模型输入通道和类别数，共用经过检查的模型接口。 |
+| `scripts/model_export/qrcode/onnx.py`、`scripts/model_export/qrcode/onnx2tf.py` | `validate_common_options` / 转换错误处理 | 兼容工作区并行新增的导出入口；拆分公共参数校验以通过 PyLint；转换器 SystemExit 转为 RuntimeError，确保失败状态写入报告。 |
 | `tests/processing/yolov8_detection/`、`CMakeLists.txt` | `yolov8-processing` | 独立 C++ 前后处理测试，验证统一结果、普通框角度 0 和 NMS，接入 native CTest。 |
 | `tests/hal/display/DetectionDrawingTests.cc` | `test_detection_drawing` | 调用真实 MPS4 HAL，核对 0°、±45°、90°、缩放、裁剪、图像区域边界及缓存发布；覆盖 RGB24/ARGB32 两种 framebuffer。 |
 | `tests/hal/timer/`、`CMakeLists.txt` | `mps4-timer-fvp` / `mps4-timer-fpga` | 核对 SCC 和回退频率、999/1000/1001 ms 连续性、长时 64 位换算、SysTick 待处理溢出和中断屏蔽恢复；验证板载 100 Hz 值不影响 DURATION。 |
 | `scripts/tests/test_qrcode_onnx_export.py`、`scripts/tests/test_qrcode_contract.py` | 回归测试 | 角度不影响分数/类别；8/16 bin；模型图接口；居中裁剪及灰度；原有导出校验。 |
-| `scripts/validate_qrcode_processing.py` | `reference_decode` / `check_detections` | 真实模型输出送入实际 C++ 后处理，与 Torch softmax 和 Ultralytics `dist2rbox`、`batch_probiou` 独立核对。 |
+| `scripts/model_export/tools/validate_processing.py` | `reference_decode` / `check_detections` | 真实模型输出送入实际 C++ 后处理，与 Torch softmax 和 Ultralytics `dist2rbox`、`batch_probiou` 独立核对。 |
 | `docs/sections/yolov8_model_export.md` | QR-code ONNX export | 更正原 objectness 说明及置信度公式，注明旧报告的分数指标需要重新验证。 |
 
 现有文件还按仓库 `clang-format` 规则格式化，可用 `git diff -w` 减少空白变化的干扰。
-`scripts/export_yolo_pte.py` 原有的导出说明注释保留。
+`scripts/model_export/yolo/pte.py` 原有的导出说明注释保留。
 
 ## 验证和复现
 
@@ -94,7 +94,7 @@ native 工程中的 6 项 CTest 通过，包含两种 MPS4 framebuffer 像素格
 ### 真实模型交叉核对
 
 ```bash
-PYTHONPATH=scripts resources_downloaded/env/bin/python scripts/validate_qrcode_processing.py \
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.validate_processing \
     --model resources_downloaded/yolo_QRcode/best.onnx \
     --model resources_downloaded/yolo_QRcode/best_bifpn_gray_qop_int8_boardcal_20260819.onnx \
     --decoder build-qrcode-processing-tests/yolov8_processing_tests \

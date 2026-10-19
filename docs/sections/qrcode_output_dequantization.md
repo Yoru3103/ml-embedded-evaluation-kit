@@ -61,7 +61,7 @@ ONNX2TF 和 LiteRT 两种转换方式。原始 INT8 文件保留，浮点输出�
 已有 Vela 模型可直接追加四个输出反量化，无需再次校准或编译：
 
 ```bash
-resources_downloaded/env/bin/python scripts/qrcode_output_io.py \
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.qrcode.output_io \
   --model resources_downloaded/qrcode/merged_onnx2tf/tflm_Dedicated_Sram/best_gray_full_integer_quant_vela.tflite \
   --output resources_downloaded/qrcode/output_dequantization/tflm_Dedicated_Sram/best_float_outputs_vela.tflite
 ```
@@ -84,16 +84,16 @@ Vela 的 `OfflineMemoryAllocation` 元数据同步扩展，
 
 | 入口 | 输入文件 | 默认输出目录 |
 | --- | --- | --- |
-| `scripts/build_qrcode_tflite_dequant_matrix.sh` | 未经 Vela 编译的 INT8 TFLite | `build-qrcode-tflite-dequant-matrix/` |
-| `scripts/build_qrcode_pte_dequant_matrix.sh` | 原始 OBB PT 权重 | `build-qrcode-pte-dequant-matrix/` |
+| `scripts/qrcode/build_qrcode_tflite_dequant_matrix.sh` | 未经 Vela 编译的 INT8 TFLite | `build-qrcode-tflite-dequant-matrix/` |
+| `scripts/qrcode/build_qrcode_pte_dequant_matrix.sh` | 原始 OBB PT 权重 | `build-qrcode-pte-dequant-matrix/` |
 
 在项目根目录运行：
 
 ```bash
-bash scripts/build_qrcode_tflite_dequant_matrix.sh \
+bash scripts/qrcode/build_qrcode_tflite_dequant_matrix.sh \
   resources_downloaded/qrcode/merged_onnx2tf/tflite/onnx2tf_outputs/best_gray_full_integer_quant.tflite
 
-bash scripts/build_qrcode_pte_dequant_matrix.sh \
+bash scripts/qrcode/build_qrcode_pte_dequant_matrix.sh \
   resources_downloaded/yolo_QRcode/best-bifpn.pt
 ```
 
@@ -113,7 +113,7 @@ TFLite 先编译全 INT8 模型，检查 NPU 配置和 Vela CSV，然后追加�
 可以复用，无需重编译网络：
 
 ```bash
-bash scripts/build_qrcode_tflite_dequant_matrix.sh \
+bash scripts/qrcode/build_qrcode_tflite_dequant_matrix.sh \
   --npu-model-root build-qrcode-tflite-matrix/models --run-fvp
 ```
 
@@ -121,7 +121,7 @@ PTE 默认只校准一次，再用公共 PT2 生成六种编译配置；只允�
 反量化调用，校验序列化执行计划和输出 FP32 类型。已有原矩阵的公共 PT2 可复用：
 
 ```bash
-bash scripts/build_qrcode_pte_dequant_matrix.sh \
+bash scripts/qrcode/build_qrcode_pte_dequant_matrix.sh \
   resources_downloaded/yolo_QRcode/best-bifpn.pt \
   --quantized-pt2 build-qrcode-pte-matrix/common/quantized.pt2 --run-fvp
 ```
@@ -136,7 +136,7 @@ bash scripts/build_qrcode_pte_dequant_matrix.sh \
 `build-qrcode-pte-dequant-matrix/models/`，可直接复用构建固件：
 
 ```bash
-bash scripts/build_qrcode_pte_dequant_matrix.sh \
+bash scripts/qrcode/build_qrcode_pte_dequant_matrix.sh \
   --npu-model-root build-qrcode-pte-dequant-matrix/models
 ```
 
@@ -191,13 +191,13 @@ ExecuTorch 通过 `EventTracer` 的算子调用事件，结合序列化执行计
 
 | 文件 | 职责 |
 | --- | --- |
-| `scripts/export_qrcode_onnx.py` | `--output-type` 选项 |
-| `scripts/qrcode_output_io.py` | TFLite 输出包装、离线内存元数据扩展、边界执行检查和独立 CLI |
-| `scripts/qrcode_export_backends.py` | PTE 保留输出反量化、整数输入配置及序列化检查 |
-| `scripts/qrcode_onnx_utils.py` | 输入 INT8、输出 INT8/FP32 的形状及类型契约 |
-| `scripts/qrcode_tflite_utils.py`、`scripts/qrcode_onnx2tf.py` | 转换、验证、编译和发布输出类型变体 |
-| `scripts/build_qrcode_{tflite,pte}_dequant_matrix.sh` | 固定 FP32 输出的完整矩阵入口，使用独立默认构建目录 |
-| `scripts/build_qrcode_{tflite,pte}_matrix.sh` | 共享矩阵流程，按输出类型验证，PTE 支持复用公共 PT2 |
+| `scripts/model_export/qrcode/onnx.py` | `--output-type` 选项 |
+| `scripts/model_export/qrcode/output_io.py` | TFLite 输出包装、离线内存元数据扩展、边界执行检查和独立 CLI |
+| `scripts/model_export/qrcode/backends.py` | PTE 保留输出反量化、整数输入配置及序列化检查 |
+| `scripts/model_export/qrcode/onnx_utils.py` | 输入 INT8、输出 INT8/FP32 的形状及类型契约 |
+| `scripts/model_export/qrcode/tflite_utils.py`、`scripts/model_export/qrcode/onnx2tf.py` | 转换、验证、编译和发布输出类型变体 |
+| `scripts/qrcode/build_qrcode_{tflite,pte}_dequant_matrix.sh` | 固定 FP32 输出的完整矩阵入口，使用独立默认构建目录 |
+| `scripts/qrcode/build_qrcode_{tflite,pte}_matrix.sh` | 共享矩阵流程，按输出类型验证，PTE 支持复用公共 PT2 |
 | `source/app/use_case/qrcode/include/OutputDequantizationProfiler.hpp` | 两套框架的算子回调、四段 PMU 区间汇总 |
 | `source/app/use_case/qrcode/src/MainLoop.cc` | 注入框架 profiler/tracer，管理生命周期 |
 | `source/app/use_case/qrcode/src/UseCaseHandler.cc` | 每图复位、记录模型内反量化指标，保留其他阶段 |

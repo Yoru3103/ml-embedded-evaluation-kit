@@ -4,12 +4,13 @@
 
 # Same arguments and complete build matrix as the INT8 entry, with model-side output dequantization.
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
         cat <<'HELP'
-Usage: bash scripts/build_qrcode_tflite_dequant_matrix.sh MODEL.tflite [OPTIONS]
-   or: bash scripts/build_qrcode_tflite_dequant_matrix.sh --npu-model-root DIR [OPTIONS]
+Usage: bash scripts/qrcode/build_qrcode_tflite_dequant_matrix.sh MODEL.tflite [OPTIONS]
+   or: bash scripts/qrcode/build_qrcode_tflite_dequant_matrix.sh --npu-model-root DIR [OPTIONS]
 
 Supply the same uncompiled INT8 TFLite or 6 compiled INT8 variants as the original matrix.
 Appends four output DEQUANTIZE operators, validates the models, then builds 12 firmwares.
@@ -23,4 +24,4 @@ HELP
 done
 export QRCODE_MATRIX_ROOT="${QRCODE_MATRIX_ROOT:-$repo_root/build-qrcode-tflite-dequant-matrix}"
 printf 'TFLite dequantization matrix: INT8 input, four FP32 outputs, CPU profiling ON.\n'
-exec bash "$repo_root/scripts/build_qrcode_tflite_matrix.sh" "$@" --output-type float32
+exec bash "$repo_root/scripts/qrcode/build_qrcode_tflite_matrix.sh" "$@" --output-type float32

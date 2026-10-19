@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Usage: bash scripts/run_qrcode_fastcache_fvp320.sh [all|tflm|pte] [all|64|128|256|384|768]
+# Usage: bash scripts/qrcode/run_qrcode_fastcache_fvp320.sh [all|tflm|pte] [all|64|128|256|384|768]
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 if (( $# > 2 )); then
     printf 'Usage: bash %s [all|tflm|pte] [all|64|128|256|384|768]\n' \
         "${BASH_SOURCE[0]}" >&2
@@ -23,6 +24,6 @@ esac
 for framework in "${frameworks[@]}"; do
     for cache_kib in "${cache_sizes[@]}"; do
         QRCODE_FASTCACHE_KIB="$cache_kib" \
-            bash "$repo_root/scripts/run_qrcode_fvp320.sh" "$framework-dedicated"
+            bash "$repo_root/scripts/qrcode/run_qrcode_fvp320.sh" "$framework-dedicated"
     done
 done

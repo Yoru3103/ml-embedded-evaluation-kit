@@ -8,7 +8,8 @@ import copy
 import unittest
 
 import torch
-from qrcode_export_backends import separate_quantized_relu
+
+from model_export.qrcode.backends import separate_quantized_relu
 
 
 class QuantizedRelu(torch.nn.Module):

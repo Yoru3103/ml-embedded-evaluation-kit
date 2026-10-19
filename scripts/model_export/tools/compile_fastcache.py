@@ -6,6 +6,7 @@
 """Recompile validated QR-code INT8 graphs for five Dedicated SRAM cache capacities."""
 
 import argparse
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -16,12 +17,13 @@ import sys
 
 import torch
 
-from export_qrcode_onnx import make_samples, write_manifest
-from qrcode_export_backends import compile_quantized_pte
-from qrcode_contract import describe_model
-from qrcode_tflite_utils import inspect_tflite
+from model_export.qrcode.onnx import make_samples
+from model_export.common.reporting import write_manifest
+from model_export.qrcode.backends import compile_quantized_pte
+from model_export.qrcode.contract import describe_model
+from model_export.qrcode.tflite_utils import inspect_tflite
 
-ROOT = Path(__file__).resolve().parents[1]
+from model_export.common.paths import ROOT
 CACHE_SIZES = (64, 128, 256, 384, 768)
 
 
@@ -101,7 +103,7 @@ def compile_case(framework: str, cache_kib: int, args: argparse.Namespace,
     print(f"Compile QR-code {framework} / {cache_kib} KiB", flush=True)
     try:
         result = (compile_tflm(source, directory, options) if framework == "tflm"
-                  else compile_quantized_pte(context.quantized, context.samples,
+                  else compile_quantized_pte(deepcopy(context.quantized), context.samples,
                                              context.metadata, options))
         record.update(result)
         record["model_sha256"] = hashlib.sha256(Path(result["path"]).read_bytes()).hexdigest()
@@ -118,7 +120,7 @@ def main():
     args = parse_args()
     report = json.loads((args.model_root / "export_report.json").read_text())
     if report["status"] != "completed":
-        raise ValueError("Complete export_qrcode_onnx.py validation before cache compilation")
+        raise ValueError("Complete export_model.py validation before cache compilation")
     options = argparse.Namespace(**report["configuration"])
     options.model, options.vela_config = Path(options.model), Path(options.vela_config)
     if hashlib.sha256(options.model.read_bytes()).hexdigest() != report["source_sha256"]:

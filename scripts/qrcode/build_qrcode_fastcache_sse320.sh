@@ -2,10 +2,11 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Usage: bash scripts/build_qrcode_fastcache_sse320.sh [all|fvp|fpga] [all|tflm|pte] [all|64|128|256|384|768]
+# Usage: bash scripts/qrcode/build_qrcode_fastcache_sse320.sh [all|fvp|fpga] [all|tflm|pte] [all|64|128|256|384|768]
 # Run compile_qrcode_fastcache.py first. Each model's Vela and firmware cache sizes must match.
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 if (( $# > 3 )); then
     printf 'Usage: bash %s [all|fvp|fpga] [all|tflm|pte] [all|64|128|256|384|768]\n' \
         "${BASH_SOURCE[0]}" >&2
@@ -30,7 +31,7 @@ for deployment in "${deployments[@]}"; do
     for framework in "${frameworks[@]}"; do
         for cache_kib in "${cache_sizes[@]}"; do
             QRCODE_FASTCACHE_KIB="$cache_kib" \
-                bash "$repo_root/scripts/build_qrcode_sse320.sh" \
+                bash "$repo_root/scripts/qrcode/build_qrcode_sse320.sh" \
                 "$deployment" "$framework-dedicated"
         done
     done

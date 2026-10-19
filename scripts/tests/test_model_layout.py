@@ -9,7 +9,8 @@ import unittest
 
 import torch
 
-from model_layout import ChannelLastIO, model_input
+
+from model_export.common.layout import ChannelLastIO, model_input
 
 
 class RawHeads(torch.nn.Module):

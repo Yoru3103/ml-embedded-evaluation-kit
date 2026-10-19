@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    inspection = import_module("qrcode_tflite_utils").inspect_tflite
+    inspection = import_module("model_export.qrcode.tflite_utils").inspect_tflite
     original = inspection(args.model)
     result = dequantize_tflite_outputs(args.model, args.output)
     print(inspection(result, require_npu=bool(original["npu_delegate_count"]),
