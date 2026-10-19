@@ -208,13 +208,15 @@ namespace {
             return false;
         }
 
-        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3)) {
+        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3) ||
+            ((shape[1] == 1 || shape[1] == 3) && shape[2] == shape[3])) {
             imageHeight = static_cast<uint32_t>(shape[2]);
             imageWidth  = static_cast<uint32_t>(shape[3]);
             return true;
         }
 
-        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3)) {
+        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3) ||
+            ((shape[3] == 1 || shape[3] == 3) && shape[1] == shape[2])) {
             imageHeight = static_cast<uint32_t>(shape[1]);
             imageWidth  = static_cast<uint32_t>(shape[2]);
             return true;
@@ -302,6 +304,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
                                    YOLOV8_MAX_DETECTIONS,
                                    YOLOV8_SCORE_THRESHOLD,
                                    YOLOV8_NMS_THRESHOLD,
+                                   true,
                                    YOLOV8_DFL_BINS,
                                    YOLOV8_OBB != 0};
     std::unique_ptr<BasePostProcess> postProcess;
@@ -336,7 +339,11 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         printf_err("Displayed image does not fit the Corstone-320 HDLCD\n");
         return false;
     }
-    const uint32_t textPanelWidth = displayWidth - textStartX;
+    /* HDLCD renders text at the origin of its 9x15 character cell. */
+    constexpr uint32_t textCellWidth  = 9;
+    constexpr uint32_t textCellHeight = 15;
+    const uint32_t textPanelX         = textStartX / textCellWidth * textCellWidth;
+    const uint32_t textPanelY         = textStartY / textCellHeight * textCellHeight;
 
     for (uint32_t index = 0; index < get_sample_n_elements(); ++index) {
 #ifdef INTERACTIVE_MODE
@@ -426,7 +433,8 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
 #if YOLOV8_DUMP_RAW_OUTPUTS
         DumpRawOutputs(model);
 #endif
-        hal_display_show_box(textStartX, textStartY, textPanelWidth, 16, COLOR_BLACK);
+        hal_display_show_box(
+            textPanelX, textPanelY, displayWidth - textPanelX, textCellHeight, COLOR_BLACK);
         PresentResults(results, labels, textStartX, textStartY);
         DrawDetectionBoxes(results, imageStartX, imageStartY, imageWidth, imageHeight, downscale);
 

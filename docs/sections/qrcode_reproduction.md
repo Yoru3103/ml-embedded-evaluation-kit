@@ -3,7 +3,14 @@
 <!-- SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com> -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-## 256 KiB 模型的区别
+## 当前整合后的部署约定
+
+灰度 QOperator 模型保留 DFL8、OBB、阈值筛选与旋转 NMS，应用最多返回五个检测目标。
+已确认灰度输入且模型为单通道、INT8、scale=1/255、zero point=-128 时走直接量化快路径；
+普通 RGB 输入仍执行 RGB 转灰度，其他量化参数使用通用查表路径。
+上游新增的 `qrcode` 用例使用单字节灰度样本，原 `yolov8_detection` 的 Windows 入口继续保留。
+
+## 256 KiB 模型的历史对比
 
 本页比较 2026-10-12 导出的 NHWC PTE 与 `onnx2tf_nhwc_256k` 的 TFLM 模型。
 两者来自相同 `best.onnx`（SHA256：
@@ -17,7 +24,7 @@ FPGA 固件均为 MPS4 SSE-320、U85 Z1024、Dedicated SRAM、Release、BW PMU�
 > objectness 使用，但其 `cv4` 分支结构提示它可能是原始角度 logits；训练／导出契约
 > 和角度映射尚未确认。下面的输出比较和数值检查只验证当前实现规则的一致性，
 > 不代表该规则已符合训练模型的检测语义。另行部署的灰度 QOperator 模型使用
-> DFL8、OBB、Top1 配置，其实板结果不能替代本页 RGB 模型的验收。
+> 当时的 DFL8、OBB、Top1 配置，其实板结果不能替代本页 RGB 模型的验收；当前五目标配置见上文。
 
 | 项目 | PTE 256 KiB | TFLM 256 KiB（onnx2tf） |
 | --- | --- | --- |

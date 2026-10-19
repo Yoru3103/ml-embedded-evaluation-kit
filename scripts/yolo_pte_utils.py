@@ -75,8 +75,17 @@ def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
     return paths[:limit] if limit else paths
 
 
-def load_image(path: Path, image_size: int, preprocessing: str) -> torch.Tensor:
-    """Load RGB / 255 NCHW data using the selected deployment resize policy."""
+def load_image(path: Path, image_size: int, preprocessing: str,
+               channels: int = 3) -> torch.Tensor:
+    """Load RGB or grayscale /255 NCHW data after the deployment resize policy.
+
+    :param path:            Source image.
+    :param image_size:      Square input resolution.
+    :param preprocessing:   Resize and crop policy.
+    :param channels:        Model input channels, one or three.
+    :returns:               Normalized NCHW tensor.
+    :raises ValueError:     Unsupported image policy or channel count.
+    """
     with Image.open(path) as source:
         image = source.convert("RGB")
     if preprocessing == "mlek-crop":
@@ -96,6 +105,10 @@ def load_image(path: Path, image_size: int, preprocessing: str) -> torch.Tensor:
                                 fill=(114, 114, 114))
     else:
         raise ValueError(f"Unknown preprocessing: {preprocessing}")
+    if channels == 1:
+        image = image.convert("L")
+    elif channels != 3:
+        raise ValueError("Model input must have one or three channels")
     return (pil_to_tensor(image).float().unsqueeze(0) / 255.0).contiguous()
 
 

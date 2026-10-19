@@ -1,6 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its affiliates
- * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +40,7 @@ struct EtBackendData {
     std::shared_ptr<MemoryManager> m_memMgrPtr{nullptr};
     std::shared_ptr<Result<Program>> m_program{nullptr};
     std::string m_methodName{};
-    executorch::runtime::EventTracer* m_eventTracer{nullptr}; /**< Optional caller-owned tracer. */
+    executorch::runtime::EventTracer* m_eventTracer{nullptr}; /**< Caller-owned operator tracer. */
 };
 
 /**

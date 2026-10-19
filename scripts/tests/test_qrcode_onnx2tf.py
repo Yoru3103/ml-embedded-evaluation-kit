@@ -39,6 +39,15 @@ class QrcodeNhwcTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_nhwc_contract(contract, source)
 
+    def test_grayscale_crop(self):
+        """Match the shared RGB resize followed by Pillow's grayscale conversion."""
+        pixels = np.arange(6 * 4 * 3, dtype=np.uint8).reshape(4, 6, 3)
+        with patch("qrcode_onnx2tf_backend.Image.open", return_value=Image.fromarray(pixels)):
+            actual = load_image_array(Path("unused.png"), 4, "mlek-crop", 1)
+        expected = np.asarray(Image.fromarray(pixels[:, 1:5]).convert("L"), dtype=np.float32)
+        np.testing.assert_array_equal(actual, expected[None, None] / 255.0)
+        self.assertTrue(actual.flags.c_contiguous)
+
     def test_ordered_outputs_and_quantization(self):
         """Use independent output scales and restore reordered NHWC heads to NCHW."""
         shapes = [[1, 79, size, size] for size in (4, 2, 1)] + [[1, 1, 21]]

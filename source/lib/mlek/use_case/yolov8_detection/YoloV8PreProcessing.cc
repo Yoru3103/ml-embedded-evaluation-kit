@@ -27,7 +27,8 @@ namespace {
         }
 
         /* Infer RGB or grayscale channel placement when no layout annotation is available. */
-        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3)) {
+        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3) ||
+            ((shape[1] == 1 || shape[1] == 3) && shape[2] == shape[3])) {
             description.layout   = fwk::iface::TensorLayout::NCHW;
             description.height   = shape[2];
             description.width    = shape[3];
@@ -35,7 +36,8 @@ namespace {
             return true;
         }
 
-        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3)) {
+        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3) ||
+            ((shape[3] == 1 || shape[3] == 3) && shape[1] == shape[2])) {
             description.layout   = fwk::iface::TensorLayout::NHWC;
             description.height   = shape[1];
             description.width    = shape[2];

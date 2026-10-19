@@ -1,6 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates
- * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -217,11 +218,10 @@ bool EtModel::Init(iface::MemoryRegion& computeBuffer,
 
     size_t methodMemBeforeMark = this->m_backendData.m_methodAllocPtr->UsedSizeCurrent();
 
-    auto* eventTracerPtr = this->m_backendData.m_eventTracer;
     static auto method =
         this->m_backendData.m_program->get().load_method(this->m_backendData.m_methodName.c_str(),
                                                          this->m_backendData.m_memMgrPtr.get(),
-                                                         eventTracerPtr);
+                                                         this->m_backendData.m_eventTracer);
 
     if (!method.ok()) {
         info("Loading of method \"%s\" failed with status 0x%" PRIx32 "\n",

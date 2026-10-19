@@ -1,6 +1,8 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2021, 2026 Arm Limited and/or its affiliates
- * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
+ * <open-source-office@arm.com>
+ *
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,6 +34,9 @@ void platform_reset_counters()
 { /* Nothing to do */
 }
 
+void platform_get_counters(pmu_counters* counters)
+{ platform_get_cpu_counters(counters); }
+
 void platform_get_cpu_counters(pmu_counters* counters)
 {
     struct timespec current_time;
@@ -48,9 +53,6 @@ void platform_get_cpu_counters(pmu_counters* counters)
     ++counters->num_counters;
 #endif /* NUM_PMU_COUNTERS > 0 */
 }
-
-void platform_get_counters(pmu_counters* counters)
-{ platform_get_cpu_counters(counters); }
 
 #ifdef __cplusplus
 }

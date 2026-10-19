@@ -27,10 +27,9 @@ namespace arm::app::fwk::tflm {
  * Backend data for TensorFlow Lite Micro framework.
  */
 struct TflmBackendData {
-    const tflite::Model* m_pModel{nullptr};        /**< Tflite model pointer. */
-    tflite::MicroAllocator* m_pAllocator{nullptr}; /**< Tflite micro allocator. */
-
-    tflite::MicroProfilerInterface* m_pProfiler{nullptr}; /**< Caller-owned profiler. */
+    const tflite::Model* m_pModel{nullptr};               /**< Tflite model pointer. */
+    tflite::MicroAllocator* m_pAllocator{nullptr};        /**< Tflite micro allocator. */
+    tflite::MicroProfilerInterface* m_pProfiler{nullptr}; /**< Optional caller-owned profiler. */
 
     /** Tflite interpreter. */
     std::unique_ptr<tflite::MicroInterpreter> m_pInterpreter{nullptr};

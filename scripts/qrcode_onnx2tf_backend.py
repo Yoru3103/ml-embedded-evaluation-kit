@@ -34,13 +34,15 @@ def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
     return paths[:limit] if limit else paths
 
 
-def load_image_array(path: Path, image_size: int, preprocessing: str) -> np.ndarray:
+def load_image_array(path: Path, image_size: int, preprocessing: str,
+                     channels: int = 3) -> np.ndarray:
     """Prepare RGB data, matching the firmware generator's centered crop exactly.
 
     :param path:            Source RGB image.
     :param image_size:      Square deployment resolution.
     :param preprocessing:  Centered aspect crop or padded letterbox.
-    :returns:               Contiguous float32 NCHW RGB data divided by 255.
+    :param channels:        Model input channels, one or three.
+    :returns:               Contiguous float32 NCHW data divided by 255.
     """
     with Image.open(path) as source:
         image = source.convert("RGB")
@@ -61,7 +63,12 @@ def load_image_array(path: Path, image_size: int, preprocessing: str) -> np.ndar
                                 fill=(114, 114, 114))
     else:
         raise ValueError(f"Unknown preprocessing: {preprocessing}")
-    values = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
+    if channels == 1:
+        values = np.asarray(image.convert("L"), dtype=np.float32)[None, None] / 255.0
+    elif channels == 3:
+        values = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
+    else:
+        raise ValueError("Model input must have one or three channels")
     return np.ascontiguousarray(values)
 
 

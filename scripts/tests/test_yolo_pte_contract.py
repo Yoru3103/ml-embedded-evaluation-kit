@@ -58,6 +58,19 @@ class ExportContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_io_contract(plan, 320, 10)
 
+    def test_nhwc_input_contract(self):
+        """An NHWC PT deployment retains the decoded three-dimensional output."""
+        tensors = [SimpleNamespace(sizes=[1, 320, 320, 3], dim_order=[0, 1, 2, 3],
+                                    scalar_type=ScalarType.FLOAT),
+                   SimpleNamespace(sizes=[1, 14, 2100], dim_order=[0, 1, 2],
+                                    scalar_type=ScalarType.FLOAT)]
+        plan = SimpleNamespace(inputs=[0], outputs=[1],
+                               values=[SimpleNamespace(val=tensor) for tensor in tensors])
+        self.assertEqual(check_io_contract(plan, 320, 10, "nhwc")["inputs"][0]["shape"],
+                         [1, 320, 320, 3])
+        with self.assertRaises(ValueError):
+            check_io_contract(plan, 320, 10, "nchw")
+
 
 if __name__ == "__main__":
     unittest.main()

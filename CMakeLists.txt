@@ -41,7 +41,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include("${CMAKE_CURRENT_SOURCE_DIR}/MlekModule.cmake")
 
 project(arm_ml_embedded_evaluation_kit
-        VERSION         26.06.0
+        VERSION         26.09.0
         DESCRIPTION     "ARM ML Embedded Evaluation Kit"
         LANGUAGES       C CXX ASM)
 
@@ -60,5 +60,11 @@ add_subdirectory(source/lib ${CMAKE_BINARY_DIR}/mlek-lib)
 
 # Add app (and potentially tests)
 add_subdirectory(source/app ${CMAKE_BINARY_DIR}/mlek-app)
+
+if (TARGET_PLATFORM STREQUAL "native")
+    add_subdirectory(tests/hal/timer ${CMAKE_BINARY_DIR}/mps4-timer-tests)
+    add_subdirectory(tests/hal/display ${CMAKE_BINARY_DIR}/mps4-display-tests)
+    add_subdirectory(tests/processing/yolov8_detection ${CMAKE_BINARY_DIR}/yolov8-processing-tests)
+endif()
 
 print_useroptions()

@@ -1,6 +1,8 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or its affiliates
- * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
+ * <open-source-office@arm.com>
+ *
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -52,6 +54,9 @@ add_pmu_counter(uint64_t value, const char* name, const char* unit, pmu_counters
  */
 static uint32_t get_tstamp_milliseconds(mps3_pmu_counters* mps3_counters);
 
+/** Append CPU timing counters to an existing snapshot. */
+static void append_cpu_counters(pmu_counters* counters);
+
 void platform_reset_counters(void)
 {
     MPS3_FPGAIO->CLK1HZ   = 0;
@@ -66,40 +71,6 @@ void platform_reset_counters(void)
 #if defined(ARM_NPU)
     ethosu_pmu_init();
 #endif /* defined (ARM_NPU) */
-}
-
-static void append_cpu_counters(pmu_counters* counters)
-{
-#if defined(CPU_PROFILE_ENABLED)
-    mps3_pmu_counters mps3_counters = {.counter_1Hz     = MPS3_FPGAIO->CLK1HZ,
-                                       .counter_100Hz   = MPS3_FPGAIO->CLK100HZ,
-                                       .counter_fpga    = MPS3_FPGAIO->COUNTER,
-                                       .counter_systick = Get_SysTick_Cycle_Count()};
-
-    add_pmu_counter(mps3_counters.counter_systick, "CPU TOTAL", unit_cycles, counters);
-
-    add_pmu_counter(get_tstamp_milliseconds(&mps3_counters), "DURATION", unit_ms, counters);
-#endif /* defined(CPU_PROFILE_ENABLED) */
-
-#if !defined(CPU_PROFILE_ENABLED)
-    UNUSED(get_tstamp_milliseconds);
-    UNUSED(Get_SysTick_Cycle_Count);
-    UNUSED(unit_ms);
-#    if !defined(ARM_NPU)
-    UNUSED(unit_cycles);
-    UNUSED(add_pmu_counter);
-#    endif /* !defined(ARM_NPU) */
-#endif     /* !defined(CPU_PROFILE_ENABLED) */
-#if !defined(CPU_PROFILE_ENABLED)
-    UNUSED(counters);
-#endif
-}
-
-void platform_get_cpu_counters(pmu_counters* counters)
-{
-    counters->num_counters = 0;
-    counters->initialised  = true;
-    append_cpu_counters(counters);
 }
 
 void platform_get_counters(pmu_counters* counters)
@@ -128,6 +99,38 @@ void platform_get_counters(pmu_counters* counters)
 #endif /* defined (ARM_NPU) */
 
     append_cpu_counters(counters);
+}
+
+void platform_get_cpu_counters(pmu_counters* counters)
+{
+    counters->num_counters = 0;
+    counters->initialised  = true;
+    append_cpu_counters(counters);
+}
+
+static void append_cpu_counters(pmu_counters* counters)
+{
+#if defined(CPU_PROFILE_ENABLED)
+    mps3_pmu_counters mps3_counters = {.counter_1Hz     = MPS3_FPGAIO->CLK1HZ,
+                                       .counter_100Hz   = MPS3_FPGAIO->CLK100HZ,
+                                       .counter_fpga    = MPS3_FPGAIO->COUNTER,
+                                       .counter_systick = Get_SysTick_Cycle_Count()};
+
+    add_pmu_counter(mps3_counters.counter_systick, "CPU TOTAL", unit_cycles, counters);
+
+    add_pmu_counter(get_tstamp_milliseconds(&mps3_counters), "DURATION", unit_ms, counters);
+#endif /* defined(CPU_PROFILE_ENABLED) */
+
+#if !defined(CPU_PROFILE_ENABLED)
+    UNUSED(counters);
+    UNUSED(get_tstamp_milliseconds);
+    UNUSED(Get_SysTick_Cycle_Count);
+    UNUSED(unit_ms);
+#    if !defined(ARM_NPU)
+    UNUSED(unit_cycles);
+    UNUSED(add_pmu_counter);
+#    endif /* !defined(ARM_NPU) */
+#endif     /* !defined(CPU_PROFILE_ENABLED) */
 }
 
 uint32_t get_mps3_core_clock(void)

@@ -68,7 +68,7 @@ TEST_CASE("YOLO raw heads produce the same detections for NCHW and NHWC storage"
     using arm::app::fwk::iface::TensorLayout;
     using arm::app::yolov8_detection::DetectionResult;
     std::vector<DetectionResult> reference;
-    const arm::app::YoloV8PostProcessParams params{32, 32, 1, 20, 0.25F, 0.45F};
+    const arm::app::YoloV8PostProcessParams params{32, 32, 1, 20, 0.25F, 0.45F, true, 16, false};
     for (const auto layout : {TensorLayout::NCHW, TensorLayout::NHWC}) {
         std::vector<std::shared_ptr<TensorIface>> outputs;
         for (const size_t size : {4, 2, 1}) {
@@ -140,7 +140,7 @@ TEST_CASE("YOLO OBB accepts singleton four dimensional angle outputs", "[yolov8]
     using arm::app::fwk::iface::TensorIface;
     using arm::app::fwk::iface::TensorLayout;
     using arm::app::yolov8_detection::DetectionResult;
-    const arm::app::YoloV8PostProcessParams params{32, 32, 1, 1, 0.25F, 0.45F, 8, true};
+    const arm::app::YoloV8PostProcessParams params{32, 32, 1, 1, 0.25F, 0.45F, true, 8, true};
     std::vector<DetectionResult> reference;
     for (const auto& angleShape : {std::vector<size_t>{1, 1, 21},
                                    std::vector<size_t>{1, 1, 21, 1},

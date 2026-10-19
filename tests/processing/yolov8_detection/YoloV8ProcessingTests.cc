@@ -160,7 +160,7 @@ std::vector<std::shared_ptr<TensorIface>> MakeHeads(bool quantized)
 
 void CheckMultipleRotatedDetections()
 {
-    const YoloV8PostProcessParams params{64, 64, 2, 5, 0.25F, 0.45F, 8, true};
+    const YoloV8PostProcessParams params{64, 64, 2, 5, 0.25F, 0.45F, true, 8, true};
     std::vector<yolov8_detection::DetectionResult> reference;
     for (const bool quantized : {false, true}) {
         auto heads = MakeHeads(quantized);
@@ -187,10 +187,11 @@ void CheckMultipleRotatedDetections()
     }
     auto heads = MakeHeads(false);
     std::vector<yolov8_detection::DetectionResult> results;
-    auto invalid          = params;
-    invalid.maxDetections = 6;
-    YoloV8NewPostProcess tooMany(heads, results, invalid);
-    Require(!tooMany.DoPostProcess(), "OBB accepted a result limit greater than five");
+    auto general          = params;
+    general.maxDetections = 6;
+    YoloV8NewPostProcess sixDetections(heads, results, general);
+    Require(sixDetections.DoPostProcess(), "generic decoder rejected a six-result limit");
+    Require(results.size() == 6, "generic decoder did not honor the configured limit");
 }
 
 void CheckLimitAfterSuppression()
@@ -237,7 +238,7 @@ void CheckRotatedSuppressionAndClassTies()
     angles[27]   = 0.0F;
     angles[28]   = -20.0F;
     std::vector<yolov8_detection::DetectionResult> results;
-    YoloV8NewPostProcess process(heads, results, {64, 64, 2, 5, 0.25F, 0.45F, 8, true});
+    YoloV8NewPostProcess process(heads, results, {64, 64, 2, 5, 0.25F, 0.45F, true, 8, true});
     Require(process.DoPostProcess(), "crossing OBB decode failed");
     Require(results.size() == 2, "rotated NMS incorrectly suppressed crossing thin boxes");
     Require(results[0].classId == 0 && results[1].classId == 0,

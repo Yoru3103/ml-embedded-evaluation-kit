@@ -48,8 +48,10 @@ set(EXECUTORCH_ENABLE_LOGGING                   ON)
 set(EXECUTORCH_BUILD_DEVTOOLS                   OFF)
 set(EXECUTORCH_ENABLE_EVENT_TRACER              OFF)
 set(MLEK_ET_OPERATOR_TRACING OFF)
-if (yolov8_detection_PROFILE_STAGES AND
-    (("yolov8_detection" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
+if ((yolov8_detection_PROFILE_STAGES AND
+     (("yolov8_detection" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all")) OR
+    (CPU_PROFILE_ENABLED AND
+     (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all")))
     set(MLEK_ET_OPERATOR_TRACING ON)
     # A caller-owned EventTracer needs runtime callbacks, without ETDump/devtools.
     add_compile_definitions(ET_EVENT_TRACER_ENABLED)
@@ -98,6 +100,22 @@ block(SCOPE_FOR VARIABLES)
         set(FLATC_EXECUTABLE "${PYTHON_VENV}/bin/flatc")
     else()
         message(FATAL_ERROR "flatc executable doesn't exist")
+    endif()
+
+    if (EXECUTORCH_BUILD_ARM_BAREMETAL AND TARGET ethosu_core_driver AND
+        EXISTS "${EXECUTORCH_SRC_PATH}/backends/arm/cmake/ArmEthosUSDK.cmake")
+        # ExecuTorch 1.5 expects the SDK header layout even when the parent
+        # supplies the driver target. HAL already owns platform integration;
+        # expose its matching driver headers without fetching a second SDK.
+        # Update existing build caches too: the backend declares this as a
+        # cache entry and can otherwise restore its old SDK path.
+        set(ETHOS_SDK_PATH "${CMAKE_BINARY_DIR}/mlek-ethosu-sdk"
+            CACHE PATH "Ethos-U header layout supplied by MLEK" FORCE)
+        file(MAKE_DIRECTORY "${ETHOS_SDK_PATH}/core_platform")
+        file(COPY "${ETHOS_U_NPU_DRIVER_SRC_PATH}/include"
+            DESTINATION "${ETHOS_SDK_PATH}/core_software/core_driver")
+        set(FETCH_ETHOS_U_CONTENT OFF
+            CACHE BOOL "Use the Ethos-U driver supplied by MLEK" FORCE)
     endif()
 
     # Add ET main subdirectory

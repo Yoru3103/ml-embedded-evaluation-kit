@@ -1,6 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2021-2026 Arm Limited and/or its affiliates
- * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -108,10 +109,6 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
                      iface::MemoryRegion& nnModel,
                      const void* backendData)
 {
-    if (backendData) {
-        const auto* data          = static_cast<const TflmBackendData*>(backendData);
-        m_backendData.m_pProfiler = data->m_pProfiler;
-    }
     /* Following tf lite micro example:
      * Map the model into a usable data structure. This doesn't involve any
      * copying or parsing, it's a very lightweight operation. */
@@ -149,6 +146,8 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
     if (backendData) {
         this->m_backendData.m_pAllocator =
             reinterpret_cast<const TflmBackendData*>(backendData)->m_pAllocator;
+        this->m_backendData.m_pProfiler =
+            static_cast<const TflmBackendData*>(backendData)->m_pProfiler;
     }
 
     /* Create allocator instance, if it doesn't exist */
@@ -181,7 +180,7 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
                                                    this->GetOpResolver(),
                                                    this->m_backendData.m_pAllocator,
                                                    resourceVariables,
-                                                   m_backendData.m_pProfiler);
+                                                   this->m_backendData.m_pProfiler);
 
     if (!this->m_backendData.m_pInterpreter) {
         printf_err("Failed to allocate interpreter\n");

@@ -24,9 +24,9 @@ struct YoloV8PostProcessParams {
     uint32_t maxDetections{20};
     float scoreThreshold{0.25F};
     float nmsThreshold{0.45F};
-    uint32_t dflBins{16};
-    bool orientedBoxes{false};
     bool angleIsLogits{true}; /**< Raw angles map to (sigmoid(value) - 0.25) * pi. */
+    uint32_t dflBins{0};      /**< Zero derives the bin count from the feature-map channels. */
+    bool orientedBoxes{true}; /**< False interprets the fourth output as objectness. */
 };
 
 class YoloV8PostProcess : public BasePostProcess {
