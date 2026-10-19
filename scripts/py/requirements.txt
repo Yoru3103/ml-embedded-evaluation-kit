@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 -r requirements-common.txt
+# Optional ONNX conversion: install requirements-onnx2tf.txt into env-onnx2tf separately.
 cmake==3.30.5
 flatbuffers==25.2.10
 importlib_metadata==8.5.0

@@ -18,7 +18,7 @@ import torch
 
 from export_qrcode_onnx import make_samples, write_manifest
 from qrcode_export_backends import compile_quantized_pte
-from qrcode_onnx_utils import describe_model
+from qrcode_contract import describe_model
 from qrcode_tflite_utils import inspect_tflite
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2023, 2025 Arm Limited and/or its affiliates
+ * SPDX-FileCopyrightText: Copyright 2021-2023, 2025-2026 Arm Limited and/or its affiliates
  * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,8 +27,9 @@ namespace arm::app::fwk::tflm {
  * Backend data for TensorFlow Lite Micro framework.
  */
 struct TflmBackendData {
-    const tflite::Model* m_pModel{nullptr};        /**< Tflite model pointer. */
-    tflite::MicroAllocator* m_pAllocator{nullptr}; /**< Tflite micro allocator. */
+    const tflite::Model* m_pModel{nullptr};               /**< Tflite model pointer. */
+    tflite::MicroAllocator* m_pAllocator{nullptr};        /**< Tflite micro allocator. */
+    tflite::MicroProfilerInterface* m_pProfiler{nullptr}; /**< Optional caller-owned profiler. */
 
     /** Tflite interpreter. */
     std::unique_ptr<tflite::MicroInterpreter> m_pInterpreter{nullptr};

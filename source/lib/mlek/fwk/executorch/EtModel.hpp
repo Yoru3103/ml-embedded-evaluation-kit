@@ -39,6 +39,7 @@ struct EtBackendData {
     std::shared_ptr<MemoryManager> m_memMgrPtr{nullptr};
     std::shared_ptr<Result<Program>> m_program{nullptr};
     std::string m_methodName{};
+    executorch::runtime::EventTracer* m_eventTracer{nullptr}; /**< Caller-owned operator tracer. */
 };
 
 /**

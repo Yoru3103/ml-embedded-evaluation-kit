@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+# SPDX-License-Identifier: Apache-2.0
+
+# Install into resources_downloaded/env-onnx2tf, independently of the shared ML environment.
+# ONNX2TF's pinned NumPy/LiteRT dependencies conflict with requirements-common.txt.
+onnx2tf[tensorflow]==2.6.9

@@ -37,6 +37,11 @@ endif()
 ##############################################################################
 function(generate_images_code input_dir gen_dir img_size)
 
+    cmake_parse_arguments(IMAGE "" "CHANNELS" "" ${ARGN})
+    if (NOT IMAGE_CHANNELS)
+        set(IMAGE_CHANNELS 3)
+    endif()
+
     # Absolute paths for passing into python script
     get_filename_component(input_dir_abs ${input_dir} ABSOLUTE)
     get_filename_component(gen_out_abs ${gen_dir} ABSOLUTE)
@@ -49,6 +54,7 @@ function(generate_images_code input_dir gen_dir img_size)
             --image_path ${input_dir_abs}
             --package_gen_dir ${gen_out_abs}
             --image_size ${img_size} ${img_size}
+            --channels ${IMAGE_CHANNELS}
         RESULT_VARIABLE return_code
     )
     if (NOT return_code EQUAL "0")

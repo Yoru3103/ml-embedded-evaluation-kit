@@ -1,5 +1,7 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2022, 2024, 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,18 +23,19 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define NUM_PMU_COUNTERS     (12)     /**< Maximum number of available counters. */
+#define NUM_PMU_COUNTERS (12) /**< Maximum number of available counters. */
 
 /**
  * @brief   Container for a single unit for a PMU counter.
  */
 typedef struct _pmu_counter_unit {
-    uint64_t value;     /**< Value of the counter expressed as 64 bits unsigned integer. */
-    const char* name;   /**< Name for the counter. */
-    const char* unit;   /**< Unit that the counter value represents (like cycles, beats, or milliseconds). */
+    uint64_t value;   /**< Value of the counter expressed as 64 bits unsigned integer. */
+    const char* name; /**< Name for the counter. */
+    const char*
+        unit; /**< Unit that the counter value represents (like cycles, beats, or milliseconds). */
 } pmu_counter_unit;
 
 /**
@@ -54,6 +57,9 @@ void platform_reset_counters(void);
  * @param[out]  Pointer to a pmu_counters object.
  **/
 void platform_get_counters(pmu_counters* counters);
+
+/** @brief Read only CPU timing counters, without accessing the NPU PMU. */
+void platform_get_cpu_counters(pmu_counters* counters);
 
 #ifdef __cplusplus
 }

@@ -145,6 +145,8 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
     if (backendData) {
         this->m_backendData.m_pAllocator =
             reinterpret_cast<const TflmBackendData*>(backendData)->m_pAllocator;
+        this->m_backendData.m_pProfiler =
+            static_cast<const TflmBackendData*>(backendData)->m_pProfiler;
     }
 
     /* Create allocator instance, if it doesn't exist */
@@ -176,7 +178,8 @@ bool TflmModel::Init(iface::MemoryRegion& computeBuffer,
         std::make_unique<tflite::MicroInterpreter>(this->m_backendData.m_pModel,
                                                    this->GetOpResolver(),
                                                    this->m_backendData.m_pAllocator,
-                                                   resourceVariables);
+                                                   resourceVariables,
+                                                   this->m_backendData.m_pProfiler);
 
     if (!this->m_backendData.m_pInterpreter) {
         printf_err("Failed to allocate interpreter\n");

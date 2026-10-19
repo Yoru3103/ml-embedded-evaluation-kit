@@ -1,5 +1,7 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2022, 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ * SPDX-FileCopyrightText: Copyright 2022, 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,5 +39,8 @@ void hal_pmu_final(void);
  * @param[out]  Pointer to a pmu_counters object.
  **/
 void hal_pmu_get_counters(pmu_counters* counters);
+
+/** @brief Read CPU timing counters without accessing the NPU PMU. */
+void hal_pmu_get_cpu_counters(pmu_counters* counters);
 
 #endif /* HAL_PMU_H */

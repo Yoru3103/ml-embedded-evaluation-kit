@@ -165,6 +165,25 @@ uint32_t hal_display_get_height(void)
     return 0;
 }
 
+/** Publish CPU writes before the HDLCD reads the framebuffer from DDR. */
+static void publish_frame_buffer(uint32_t pos_x, uint32_t pos_y, uint32_t width, uint32_t height)
+{
+    if (pos_x >= HDLCD_RES_WIDTH || pos_y >= HDLCD_RES_HEIGHT || width == 0 || height == 0) {
+        return;
+    }
+    width  = width < HDLCD_RES_WIDTH - pos_x ? width : HDLCD_RES_WIDTH - pos_x;
+    height = height < HDLCD_RES_HEIGHT - pos_y ? height : HDLCD_RES_HEIGHT - pos_y;
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+    if (SCB->CCR & SCB_CCR_DC_Msk) {
+        uint8_t* first      = (uint8_t*)HDLCD_FRAME_BUFFER_BASE_ADDRESS +
+                              (pos_y * HDLCD_RES_WIDTH + pos_x) * HDLCD_BYTES_PER_PIXEL;
+        const size_t pixels = (height - 1) * HDLCD_RES_WIDTH + width;
+        SCB_CleanDCache_by_Addr(first, (int32_t)(pixels * HDLCD_BYTES_PER_PIXEL));
+    }
+#endif
+    __DSB();
+}
+
 int hal_display_show_image(const uint8_t* data,
                            const uint32_t width,
                            const uint32_t height,
@@ -187,20 +206,35 @@ int hal_display_show_image(const uint8_t* data,
     uint8_t* dst               = (uint8_t*)(HDLCD_FRAME_BUFFER_BASE_ADDRESS);
     uint8_t* src               = (uint8_t*)data;
 
+    if (data == NULL || downsample_factor == 0 || (channels != 1 && channels != 3)) {
+        printf_err("Unsupported image parameters\n");
+        return -1;
+    }
+
     if (channels <= HDLCD_BYTES_PER_PIXEL) {
         for (uint32_t j = 0; j < height / downsample_factor; ++j) {
             uint8_t* dst_row = dst + ((j + pos_y) * line_stride);
             uint8_t* src_row = src + (j * width * channels * downsample_factor);
             for (uint32_t i = 0; i < width / downsample_factor; ++i) {
-                memcpy(dst_row + ((pos_x + i) * HDLCD_BYTES_PER_PIXEL),
-                       src_row + (i * channels * downsample_factor),
-                       channels);
+                uint8_t* dst_pixel       = dst_row + ((pos_x + i) * HDLCD_BYTES_PER_PIXEL);
+                const uint8_t* src_pixel = src_row + (i * channels * downsample_factor);
+                if (channels == 1) {
+                    dst_pixel[0] = src_pixel[0];
+                    dst_pixel[1] = src_pixel[0];
+                    dst_pixel[2] = src_pixel[0];
+                } else {
+                    memcpy(dst_pixel, src_pixel, channels);
+                }
+#if HDLCD_BYTES_PER_PIXEL == 4
+                dst_pixel[3] = 0;
+#endif
             }
         }
     } else {
         printf_err("Unsupported number of channels %" PRIu32 "\n", channels);
         return -1;
     }
+    publish_frame_buffer(pos_x, pos_y, width / downsample_factor, height / downsample_factor);
     return 0;
 }
 
@@ -333,6 +367,13 @@ int hal_display_show_text(const char* str,
             render_char(current_line, current_col++, font_idx, str[i]);
         }
     }
+    publish_frame_buffer(
+        pos_x / x_span * x_span,
+        pos_y / y_span * y_span,
+        allow_multiple_lines
+            ? dev->hor_res
+            : (uint32_t)(str_sz < dev->hor_res / x_span ? str_sz * x_span : dev->hor_res),
+        allow_multiple_lines ? dev->ver_res : y_span);
     return 0;
 }
 
@@ -371,14 +412,7 @@ int hal_display_show_box(const uint32_t pos_x,
         }
     }
 
-    /* HDLCD reads DDR directly; publish CPU cache writes before returning. */
-#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
-    if (SCB->CCR & SCB_CCR_DC_Msk) {
-        const size_t pixels = (clipped_height - 1) * HDLCD_RES_WIDTH + clipped_width;
-        SCB_CleanDCache_by_Addr((void*)first_pixel, (int32_t)(pixels * sizeof(pixel)));
-    }
-#endif
-    __DSB();
+    publish_frame_buffer(pos_x, pos_y, clipped_width, clipped_height);
     return 0;
 }
 
@@ -392,6 +426,7 @@ int hal_display_clear(const uint16_t color)
         *dst++ = c;
     }
 
+    publish_frame_buffer(0, 0, HDLCD_RES_WIDTH, HDLCD_RES_HEIGHT);
     return show_title();
 }
 
