@@ -12,6 +12,9 @@ python="$venv_path/bin/python"
 cmake="$venv_path/bin/cmake"
 sample_path="${QRCODE_SAMPLE_PATH:-$repo_root/resources/qrcode/smaples}"
 labels="${QRCODE_LABELS_FILE:-$repo_root/resources/qrcode/labels.txt}"
+image_width="${QRCODE_IMAGE_WIDTH:-256}"
+image_height="${QRCODE_IMAGE_HEIGHT:-256}"
+preprocessing="${QRCODE_PREPROCESSING:-mlek-crop}"
 output="${QRCODE_MATRIX_ROOT:-$repo_root/build-qrcode-tflite-matrix}"
 jobs="${BUILD_JOBS:-8}"
 fvp_timeout="${FVP_TIMEOUT:-1800}"
@@ -43,6 +46,8 @@ Build and runtime logs: OUTPUT/{fpga,fvp}/VARIANT/{configure,build,fvp}.log
 (fvp.log is generated only for --run-fvp.)
 
 Environment: QRCODE_SAMPLE_PATH, QRCODE_LABELS_FILE, QRCODE_MATRIX_ROOT,
+             QRCODE_IMAGE_WIDTH (256), QRCODE_IMAGE_HEIGHT (256),
+             QRCODE_PREPROCESSING (mlek-crop or letterbox),
              BUILD_JOBS (8), FVP_PATH, FVP_TIMEOUT (1800 seconds per firmware).
 --dry-run prints commands without compiling, building, or executing FVP.
 HELP
@@ -75,6 +80,12 @@ done
 if [[ "$output_type" != int8 && "$output_type" != float32 ]]; then
     printf 'Output type must be int8 or float32.\n' >&2; exit 1
 fi
+if [[ ! "$image_width" =~ ^[1-9][0-9]*$ || ! "$image_height" =~ ^[1-9][0-9]*$ ]] ||
+   (( image_width % 32 != 0 || image_height % 32 != 0 )) ||
+   [[ "$preprocessing" != mlek-crop && "$preprocessing" != letterbox ]]; then
+    printf 'QR-code width/height must be positive multiples of 32; preprocessing must be mlek-crop or letterbox.\n' >&2
+    exit 1
+fi
 if [[ ! -d "$sample_path" || ! -f "$labels" ||
       ! -x "$python" || ! -x "$cmake" ]]; then
     usage >&2
@@ -101,7 +112,7 @@ unset PYTHONHOME
 export PATH="$venv_path/bin:$PATH"
 export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 # Validate the actual source rather than relying on an unrelated export report.
-sample_count="$("$python" - "$model" "$sample_path" <<'PY'
+sample_count="$("$python" - "$model" "$sample_path" "$image_width" "$image_height" <<'PY'
 from pathlib import Path
 import sys
 from PIL import Image
@@ -109,16 +120,19 @@ from ethosu.vela.tflite.Model import Model
 from ethosu.vela.tflite.TensorType import TensorType
 from model_export.qrcode.tflite_utils import inspect_tflite
 
-source, samples = map(Path, sys.argv[1:])
+source, samples = map(Path, sys.argv[1:3])
+width, height = map(int, sys.argv[3:5])
 if source.is_file():
     inspection = inspect_tflite(source)
     if inspection["npu_delegate_count"]:
         raise SystemExit("For compiled NPU models use --npu-model-root with all 6 variants")
     graph = Model.GetRootAsModel(source.read_bytes(), 0).Subgraphs(0)
-    shapes = [[1, 32, 32, 47], [1, 16, 16, 47], [1, 8, 8, 47], [1, 1, 1344]]
+    shapes = [[1, height // stride, width // stride, 47] for stride in (8, 16, 32)]
+    shapes.append([1, 1, sum(height // stride * (width // stride)
+                             for stride in (8, 16, 32))])
     inputs = [graph.Tensors(graph.Inputs(i)) for i in range(graph.InputsLength())]
     outputs = [graph.Tensors(graph.Outputs(i)) for i in range(graph.OutputsLength())]
-    if (len(inputs) != 1 or list(inputs[0].ShapeAsNumpy()) != [1, 256, 256, 1]
+    if (len(inputs) != 1 or list(inputs[0].ShapeAsNumpy()) != [1, height, width, 1]
             or sorted(tuple(t.ShapeAsNumpy()) for t in outputs) != sorted(map(tuple, shapes))
             or any(t.Type() != TensorType.INT8 for t in inputs + outputs)):
         raise SystemExit("Source must have the qrcode NHWC INT8 input/output contract")
@@ -164,6 +178,8 @@ common=(
     -DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON
     "-DTA_CONFIG_FILE=$repo_root/scripts/cmake/timing_adapter/ta_config_u85_sys_dram_mid.cmake"
     "-Dqrcode_FILE_PATH=$sample_path" "-Dqrcode_LABELS_FILE=$labels"
+    "-Dqrcode_IMAGE_WIDTH=$image_width" "-Dqrcode_IMAGE_HEIGHT=$image_height"
+    "-Dqrcode_IMAGE_RESIZE_MODE=${preprocessing#mlek-}"
     -Dqrcode_ACTIVATION_BUF_SZ=0x00400000
 )
 declare -A model_paths
@@ -201,7 +217,7 @@ for variant in shared 64 128 256 384 768; do
         run_logged "$model_dir/compile.log" "${vela[@]}"
     fi
     if (( ! dry_run )) || [[ -n "$npu_model_root" ]]; then
-        "$python" - "$compiled" "$mode" "$cache_bytes" <<'CHECK'
+        "$python" - "$compiled" "$mode" "$cache_bytes" "$image_width" "$image_height" <<'CHECK'
 import csv
 from pathlib import Path
 import sys
@@ -211,13 +227,16 @@ from mlek_tools.validation.npu_validation import NpuValidationArgs
 from mlek_tools.validation.tflite_validator import validate_tflite_model
 
 path, mode, cache = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+width, height = int(sys.argv[4]), int(sys.argv[5])
 inspection = inspect_tflite(path, require_npu=True)
 validate_tflite_model(path, NpuValidationArgs(memory_mode=mode, config="ethos-u85-1024"))
 graph = Model.GetRootAsModel(path.read_bytes(), 0).Subgraphs(0)
 inputs = [graph.Tensors(graph.Inputs(i)) for i in range(graph.InputsLength())]
 outputs = [graph.Tensors(graph.Outputs(i)) for i in range(graph.OutputsLength())]
-expected = [(1, 32, 32, 47), (1, 16, 16, 47), (1, 8, 8, 47), (1, 1, 1344)]
-if (len(inputs) != 1 or list(inputs[0].ShapeAsNumpy()) != [1, 256, 256, 1]
+expected = [(1, height // stride, width // stride, 47) for stride in (8, 16, 32)]
+expected.append((1, 1, sum(height // stride * (width // stride)
+                           for stride in (8, 16, 32))))
+if (len(inputs) != 1 or list(inputs[0].ShapeAsNumpy()) != [1, height, width, 1]
         or sorted(tuple(t.ShapeAsNumpy()) for t in outputs) != sorted(expected)):
     raise SystemExit(f"NPU model has wrong qrcode interface: {path}")
 summary = path.with_name(path.stem.removesuffix("_vela")

@@ -273,7 +273,9 @@ def validate_tflite_models(float_path: Path, int8_path: Path, samples: list[dict
     :returns:           Artifact paths, tensor interfaces and validation metrics.
     """
     validate_outputs = import_module("model_export.qrcode.onnx_utils").validate_outputs
-    result = {"validation_scope": "ONNX versus host LiteRT; compiled NPU execution untested"}
+    source = getattr(args, "reference_source", "ONNX")
+    result = {"validation_scope": f"{source} versus host LiteRT; "
+                                  "compiled NPU execution untested"}
     if getattr(args, "output_type", "int8") == "float32":
         int8_path = dequantize_tflite_outputs(
             int8_path, int8_path.with_name(f"{int8_path.stem}_float_outputs.tflite"))

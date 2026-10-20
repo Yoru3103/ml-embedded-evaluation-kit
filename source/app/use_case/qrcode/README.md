@@ -1,14 +1,16 @@
 # Grayscale QR-code use case
 
-This use case accepts the grayscale 256 × 256 QR-code model only. The board
-input tensor must be NHWC `[1, 256, 256, 1]`. The generated sample array holds
-65,536 bytes from each grayscale BMP; it never expands them to RGB. FP32 input
+This use case accepts grayscale QR-code models with dimensions divisible by 32.
+The board input tensor must be NHWC `[1, height, width, 1]`. The generated sample
+array holds `width × height` bytes from each grayscale BMP after the configured
+crop or letterbox resize; it never expands them to RGB. FP32 input
 receives each byte divided by 255. INT8 or UINT8 input uses the model tensor's
 scale and zero point. For scale `1/255` and zero point `-128`, INT8 preparation
 is exactly `pixel - 128`.
 
-The four outputs must contain detection heads with 47 channels at 32 × 32,
-16 × 16 and 8 × 8, plus 1,344 raw angle logits. The shared YOLOv8 decoder
+The four outputs must contain detection heads with 47 channels at
+`(height/8, width/8)`, `(height/16, width/16)` and `(height/32, width/32)`,
+plus one raw angle logit per feature-map cell. The shared YOLOv8 decoder
 treats 32 head channels as four 8-bin DFL distributions and the remaining 15
 as class logits. Confidence comes from the best class logit. The angle head
 only determines box orientation. The LCD renders the original grayscale
@@ -27,6 +29,10 @@ provided.
 `qrcode_FILE_PATH` selects a BMP or sample directory and defaults to
 `resources/qrcode/smaples`. `qrcode_LABELS_FILE` defaults to the checkpoint's
 13 known names followed by placeholders for class IDs 13 and 14.
+Set `qrcode_IMAGE_WIDTH` and `qrcode_IMAGE_HEIGHT` to match the exported model;
+`qrcode_IMAGE_RESIZE_MODE=letterbox` preserves the entire source image with
+gray-114 padding. The handler checks that the generated sample dimensions match
+the model input tensor and all four output shapes before inference.
 The `InferenceAndPostProcessing` timer starts after input preparation and
 ends after the four outputs have been decoded and NMS has finished.
 The log also reports `PreProcessing`, `Inference`, `Decode`, and `NMS` separately.

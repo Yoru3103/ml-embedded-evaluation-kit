@@ -61,12 +61,17 @@ def parse_args(argv: list[str] | None = None,
     parser.add_argument("--output-type", choices=("int8", "float32"), default="int8",
                         help="Raw QR heads: int8 or model-side dequantized float32; "
                              "input stays int8")
-    parser.add_argument("--data", type=Path, help="Dataset YAML for PT-to-TFLite calibration")
+    parser.add_argument("--data", type=Path,
+                        help="Dataset YAML for generic Detect PT-to-TFLite calibration")
     parser.add_argument("--image-size", type=int, default=320, help="PT input size")
+    parser.add_argument("--image-width", type=int,
+                        help="PT input width; defaults to --image-size")
+    parser.add_argument("--image-height", type=int,
+                        help="PT input height; defaults to --image-size")
     parser.add_argument("--calibration-split", choices=("train", "val"), default="train")
     parser.add_argument("--max-score-drop", type=float, default=0.20, help="PT score-drop limit")
     parser.add_argument("--calibration-limit", type=int, default=128,
-                        help="ONNX/PT-PTE images: 0 uses all; PT-TFLite uses --data")
+                        help="QR/ONNX images: 0 uses all; generic Detect uses --data")
     parser.add_argument("--validation-limit", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0, help="ONNX/PT-PTE image selection seed")
     parser.add_argument("--preprocessing", choices=("mlek-crop", "letterbox"),
@@ -94,6 +99,7 @@ def parse_args(argv: list[str] | None = None,
     parser.add_argument("--memory-alignment", type=int, default=16)
     parser.add_argument("--max-planned-memory", type=int)
     args = parser.parse_args(argv)
+    apply_image_dimensions(args)
     if args.validation_dir is None:
         args.validation_dir = args.calibration_dir
     validate_source_options(args, parser, source_formats, argv)
@@ -104,6 +110,17 @@ def parse_args(argv: list[str] | None = None,
         if value is not None:
             setattr(args, name, value.resolve())
     return args
+
+
+def apply_image_dimensions(args: argparse.Namespace):
+    """Resolve optional rectangular dimensions from the square size fallback.
+
+    :param args:    Parsed export options to update in place.
+    """
+    if args.image_width is None:
+        args.image_width = args.image_size
+    if args.image_height is None:
+        args.image_height = args.image_size
 
 
 def validate_common_options(args: argparse.Namespace, parser: argparse.ArgumentParser):
@@ -157,7 +174,8 @@ def validate_source_options(args: argparse.Namespace, parser: argparse.ArgumentP
             and args.tflite_backend == "onnx2tf"):
         parser.error("ONNX2TF exports NHWC; use --io-layout nhwc or --tflite-backend litert")
     if args.model.suffix.lower() == ".pt":
-        if args.image_size <= 0 or args.image_size % 32 or not 0 <= args.max_score_drop <= 1:
-            parser.error("PT image size must be a positive multiple of 32 and score drop in [0,1]")
-        if args.format != "pte" and (args.data is None or not args.data.is_file()):
-            parser.error("PT-to-TFLite requires --data naming an existing dataset YAML")
+        if (any(size <= 0 or size % 32 for size in
+                (args.image_width, args.image_height)) or not 0 <= args.max_score_drop <= 1):
+            parser.error("PT input width and height must be positive multiples of 32")
+        if args.data is not None and not args.data.is_file():
+            parser.error("--data must name an existing dataset YAML")
