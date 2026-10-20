@@ -1,7 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or its affiliates
  * <open-source-office@arm.com>
- *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,23 +22,6 @@
 
 namespace arm {
 namespace app {
-    namespace {
-        pmu_counters CpuCounters(const pmu_counters& source)
-        {
-            pmu_counters result{};
-            result.initialised = source.initialised && source.num_counters <= NUM_PMU_COUNTERS;
-            if (result.initialised) {
-                for (size_t i = 0; i < source.num_counters; ++i) {
-                    const auto& counter = source.counters[i];
-                    if (counter.name && std::strncmp(counter.name, "NPU ", 4) != 0) {
-                        result.counters[result.num_counters++] = counter;
-                    }
-                }
-            }
-            return result;
-        }
-    } // namespace
-
     Profiler::Profiler() : Profiler("Unknown") {}
 
     Profiler::Profiler(const char* name) : m_name(name) {}
@@ -54,7 +36,7 @@ namespace app {
             this->m_includeNpu = includeNpu;
             hal_pmu_reset();
             this->m_tstampSt.initialised = false;
-            if (this->m_includeNpu) {
+            if (m_includeNpu) {
                 hal_pmu_get_counters(&this->m_tstampSt);
             } else {
                 hal_pmu_get_cpu_counters(&this->m_tstampSt);
@@ -76,7 +58,7 @@ namespace app {
     {
         if (this->m_started) {
             this->m_tstampEnd.initialised = false;
-            if (this->m_includeNpu) {
+            if (m_includeNpu) {
                 hal_pmu_get_counters(&this->m_tstampEnd);
             } else {
                 hal_pmu_get_cpu_counters(&this->m_tstampEnd);
@@ -92,26 +74,6 @@ namespace app {
         return false;
     }
 
-    bool Profiler::RecordProfiling(const pmu_counters& start,
-                                   const pmu_counters& end,
-                                   const char* name,
-                                   bool includeNpu)
-    {
-        if (!includeNpu) {
-            return RecordProfiling(CpuCounters(start), CpuCounters(end), name);
-        }
-        if (name == nullptr || !start.initialised || !end.initialised || start.num_counters == 0 ||
-            start.num_counters != end.num_counters || start.num_counters > NUM_PMU_COUNTERS) {
-            return false;
-        }
-        auto& statistics = m_profStats[name];
-        if (statistics.size() != start.num_counters) {
-            statistics = std::vector<Statistics>(start.num_counters);
-        }
-        UpdateRunningStats(start, end, name);
-        return true;
-    }
-
     bool Profiler::StopProfilingAndReset()
     {
         if (this->StopProfiling()) {
@@ -120,6 +82,50 @@ namespace app {
         }
         printf_err("Failed to stop profiler %s\n", this->m_name.c_str());
         return false;
+    }
+
+    bool Profiler::RecordProfiling(const pmu_counters& start,
+                                   const pmu_counters& end,
+                                   const char* name,
+                                   bool includeNpu)
+    {
+        if (m_started || !name || !start.initialised || !end.initialised ||
+            start.num_counters == 0 || start.num_counters > NUM_PMU_COUNTERS ||
+            end.num_counters == 0 || end.num_counters > NUM_PMU_COUNTERS) {
+            return false;
+        }
+        if (!includeNpu) {
+            const auto cpuOnly = [](const pmu_counters& source) {
+                pmu_counters result{};
+                result.initialised = source.initialised;
+                for (uint32_t index = 0; index < source.num_counters; ++index) {
+                    const auto& counter = source.counters[index];
+                    if (counter.name && std::strncmp(counter.name, "NPU ", 4) != 0) {
+                        result.counters[result.num_counters++] = counter;
+                    }
+                }
+                return result;
+            };
+            return RecordProfiling(cpuOnly(start), cpuOnly(end), name);
+        }
+        if (start.num_counters != end.num_counters) {
+            return false;
+        }
+        for (uint32_t index = 0; index < start.num_counters; ++index) {
+            const auto& first = start.counters[index];
+            const auto& last  = end.counters[index];
+            if (!first.name || !last.name || !first.unit || !last.unit ||
+                std::strcmp(first.name, last.name) != 0 ||
+                std::strcmp(first.unit, last.unit) != 0 || last.value < first.value) {
+                return false;
+            }
+        }
+        m_profStats.try_emplace(name, start.num_counters);
+        if (m_profStats.at(name).size() != start.num_counters) {
+            return false;
+        }
+        UpdateRunningStats(start, end, name);
+        return true;
     }
 
     void Profiler::Reset()
@@ -206,7 +212,7 @@ namespace app {
             return;
         }
 
-        if (end.num_counters == 0) {
+        if (end.num_counters == 0 || end.num_counters > NUM_PMU_COUNTERS) {
             return;
         }
 

@@ -25,6 +25,8 @@ struct YoloV8PostProcessParams {
     float scoreThreshold{0.25F};
     float nmsThreshold{0.45F};
     bool angleIsLogits{true}; /**< Raw angles map to (sigmoid(value) - 0.25) * pi. */
+    uint32_t dflBins{0};      /**< Zero derives the bin count from the feature-map channels. */
+    bool orientedBoxes{true}; /**< False interprets the fourth output as objectness. */
 };
 
 class YoloV8PostProcess : public BasePostProcess {
@@ -52,7 +54,8 @@ class YoloV8NewPostProcess : public BasePostProcess {
 public:
     YoloV8NewPostProcess(const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
                          std::vector<yolov8_detection::DetectionResult>& results,
-                         const YoloV8PostProcessParams& params);
+                         const YoloV8PostProcessParams& params,
+                         bool useTensorLayout = false);
 
     bool DoPostProcess() override;
 
@@ -78,6 +81,7 @@ private:
     YoloV8PostProcessParams m_params;
     std::vector<yolov8_detection::DetectionResult> m_candidates;
     bool m_rotatedNms{false};
+    bool m_useTensorLayout{false};
     std::array<LookupTables, 4> m_lookups;
 };
 

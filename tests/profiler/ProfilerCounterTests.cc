@@ -79,6 +79,19 @@ int main()
     REQUIRE(profiler.StopProfiling());
     REQUIRE(s_npuReads == 4);
 
+    // Reject malformed snapshots without adding a partial statistics series.
+    pmu_counters bad     = inferenceEnd;
+    bad.counters[0].name = "OTHER";
+    REQUIRE(!profiler.RecordProfiling(start, bad, "BadName"));
+    bad                  = inferenceEnd;
+    bad.counters[0].unit = "microseconds";
+    REQUIRE(!profiler.RecordProfiling(start, bad, "BadUnit"));
+    bad                   = inferenceEnd;
+    bad.counters[0].value = 0;
+    REQUIRE(!profiler.RecordProfiling(inferenceEnd, bad, "Backwards"));
+    bad.num_counters = NUM_PMU_COUNTERS + 1;
+    REQUIRE(!profiler.RecordProfiling(bad, bad, "TooMany", false));
+
     // CPU_PROFILE_ENABLED=OFF must not index an empty statistics vector.
     s_emptyCpu = true;
     REQUIRE(profiler.StartProfiling("NoCpuCounters", false));

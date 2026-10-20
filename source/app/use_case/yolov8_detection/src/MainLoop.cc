@@ -3,6 +3,7 @@
  * <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "BenchmarkProfiler.hpp"
 #include "BufAttributes.hpp"
 #include "Labels.hpp"
 #include "UseCaseCommonUtils.hpp"
@@ -45,6 +46,9 @@ namespace yolov8_detection {
 
 void MainLoop()
 {
+#if YOLOV8_PROFILE_STAGES
+    arm::app::BenchmarkOpProfiler opProfiler{arm::app::ReadBenchmarkCpuCycles};
+#endif
     YoloV8Model model;
 
     arm::app::fwk::iface::MemoryRegion modelMem{arm::app::yolov8_detection::GetModelPointer(),
@@ -52,7 +56,18 @@ void MainLoop()
     arm::app::fwk::iface::MemoryRegion computeMem{arm::app::activationBuf,
                                                   sizeof(arm::app::activationBuf)};
 
-    if (!model.Init(computeMem, modelMem)) {
+#if YOLOV8_PROFILE_STAGES && defined(MLEK_FWK_TFLM)
+    arm::app::fwk::tflm::TflmBackendData backendData;
+    backendData.m_pProfiler = &opProfiler;
+    const bool initialized  = model.Init(computeMem, modelMem, &backendData);
+#elif YOLOV8_PROFILE_STAGES && defined(MLEK_FWK_EXECUTORCH)
+    arm::app::fwk::et::EtBackendData backendData;
+    backendData.m_eventTracer = &opProfiler;
+    const bool initialized    = model.Init(computeMem, modelMem, &backendData);
+#else
+    const bool initialized = model.Init(computeMem, modelMem);
+#endif
+    if (!initialized) {
         printf_err("Failed to initialise YOLOv8 model\n");
         return;
     }
@@ -61,6 +76,9 @@ void MainLoop()
     arm::app::Profiler profiler{"yolov8_detection"};
     caseContext.Set<arm::app::Profiler&>("profiler", profiler);
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
+#if YOLOV8_PROFILE_STAGES
+    caseContext.Set<arm::app::BenchmarkOpProfiler&>("benchmark_op_profiler", opProfiler);
+#endif
 
     std::vector<std::string> labels;
     GetLabelsVector(labels);

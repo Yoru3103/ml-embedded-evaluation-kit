@@ -156,6 +156,19 @@ void ethosu_pmu_init(void)
     };
 #undef PMU_SRAM_EVENT
 #undef PMU_SRAM_BEAT_EVENT
+#    elif defined(ETHOSU_PMU_GROUP_BW)
+    /* Aggregate beats and read-request stalls across all ports of each path.
+     * Request stalls do not include read-response latency or write stalls. */
+    static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
+        PMU_EVENT(NPU_ACTIVE, "cycles"),
+        PMU_EVENT(SRAM_RD_DATA_BEAT_RECEIVED, "beats"),
+        PMU_EVENT(SRAM_WR_DATA_BEAT_WRITTEN, "beats"),
+        PMU_EVENT(EXT_RD_DATA_BEAT_RECEIVED, "beats"),
+        PMU_EVENT(EXT_WR_DATA_BEAT_WRITTEN, "beats"),
+        PMU_EVENT(SRAM_RD_TRAN_REQ_STALLED, "cycles"),
+        PMU_EVENT(EXT_RD_TRAN_REQ_STALLED, "cycles"),
+        PMU_EVENT(AO_STALLED_BY_OB, "cycles"),
+    };
 #elif defined(ETHOSU_PMU_GROUP_C)
     static const npu_evt_counter events[ETHOSU_USED_PMU_NCOUNTERS] = {
         PMU_EVENT(NPU_ACTIVE,                "cycles"),

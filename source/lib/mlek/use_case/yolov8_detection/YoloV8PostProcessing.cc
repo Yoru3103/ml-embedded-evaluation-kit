@@ -438,8 +438,10 @@ void YoloV8NewPostProcess::LookupTables::Update(const fwk::iface::QuantParams& p
 YoloV8NewPostProcess::YoloV8NewPostProcess(
     const std::vector<std::shared_ptr<fwk::iface::TensorIface>>& outputTensors,
     std::vector<yolov8_detection::DetectionResult>& results,
-    const YoloV8PostProcessParams& params) :
-    m_outputTensors{outputTensors}, m_results{results}, m_params{params}
+    const YoloV8PostProcessParams& params,
+    bool useTensorLayout) :
+    m_outputTensors{outputTensors}, m_results{results}, m_params{params},
+    m_useTensorLayout{useTensorLayout}
 {}
 
 bool YoloV8NewPostProcess::DoPostProcess()
@@ -462,6 +464,7 @@ bool YoloV8NewPostProcess::DecodeDetections()
         size_t stride{0};
         size_t angleOffset{0};
         bool channelsFirst{false};
+        float minimumClassCode{-std::numeric_limits<float>::infinity()};
     };
 
     m_results.clear();
@@ -479,6 +482,28 @@ bool YoloV8NewPostProcess::DecodeDetections()
         return false;
     }
 
+    // A 1x1 feature map and a four-dimensional angle output can have the same
+    // singleton axes. Use the larger heads' channel count to distinguish them.
+    size_t featureChannels = 0;
+    size_t largestSide     = 1;
+    for (const auto& tensor : m_outputTensors) {
+        if (tensor == nullptr) {
+            continue;
+        }
+        const auto shape = tensor->Shape();
+        if (shape.size() != 4 || shape[0] != 1) {
+            continue;
+        }
+        if (shape[2] == shape[3] && shape[2] > largestSide && shape[1] > m_params.numClasses &&
+            (shape[1] - m_params.numClasses) % 4 == 0) {
+            featureChannels = shape[1];
+            largestSide     = shape[2];
+        } else if (shape[1] == shape[2] && shape[1] > largestSide &&
+                   shape[3] > m_params.numClasses && (shape[3] - m_params.numClasses) % 4 == 0) {
+            featureChannels = shape[3];
+            largestSide     = shape[1];
+        }
+    }
     std::shared_ptr<fwk::iface::TensorIface> angleTensor;
     std::vector<FeatureMap> featureMaps;
     featureMaps.reserve(3);
@@ -491,10 +516,19 @@ bool YoloV8NewPostProcess::DecodeDetections()
             return false;
         }
 
-        const auto shape = tensor->Shape();
+        const auto shape         = tensor->Shape();
+        const auto validChannels = [this, featureChannels](size_t channels) {
+            return channels > m_params.numClasses && (channels - m_params.numClasses) % 4 == 0 &&
+                   (featureChannels == 0 || channels == featureChannels);
+        };
+        const bool isFeatureShape =
+            shape.size() == 4 && ((shape[2] == shape[3] && validChannels(shape[1])) ||
+                                  (shape[1] == shape[2] && validChannels(shape[3])));
         const bool isAngleShape =
             (shape.size() == 1) || (shape.size() == 2 && shape[0] == 1) ||
-            (shape.size() == 3 && shape[0] == 1 && (shape[1] == 1 || shape[2] == 1));
+            (shape.size() == 3 && shape[0] == 1 && (shape[1] == 1 || shape[2] == 1)) ||
+            (!isFeatureShape && m_params.orientedBoxes && shape.size() == 4 && shape[0] == 1 &&
+             shape[3] == 1 && (shape[1] == 1 || shape[2] == 1));
         if (isAngleShape) {
             if (angleTensor != nullptr) {
                 printf_err("New YOLOv8 model has multiple angle outputs\n");
@@ -514,11 +548,11 @@ bool YoloV8NewPostProcess::DecodeDetections()
             printf_err("Invalid new YOLOv8 output storage or quantization\n");
             return false;
         }
-        const auto validChannels = [this](size_t channels) {
-            return channels > m_params.numClasses && (channels - m_params.numClasses) % 4 == 0;
-        };
         if (shape[2] == shape[3] && validChannels(shape[1])) {
-            featureMaps.push_back({reader, nullptr, shape[2], shape[3], shape[1], 0, 0, true});
+            const bool channelsFirst =
+                !m_useTensorLayout || tensor->Layout() != fwk::iface::TensorLayout::NHWC;
+            featureMaps.push_back(
+                {reader, nullptr, shape[2], shape[3], shape[1], 0, 0, channelsFirst});
         } else if (shape[1] == shape[2] && validChannels(shape[3])) {
             featureMaps.push_back({reader, nullptr, shape[1], shape[2], shape[3], 0, 0, false});
         } else {
@@ -574,7 +608,8 @@ bool YoloV8NewPostProcess::DecodeDetections()
             return false;
         }
         const size_t bins = (featureMap.channels - numClasses) / 4;
-        if (bins < 2 || bins > 32 || (dflBins != 0 && dflBins != bins)) {
+        if (bins < 2 || bins > 32 || (m_params.dflBins != 0 && m_params.dflBins != bins) ||
+            (dflBins != 0 && dflBins != bins)) {
             printf_err("New YOLOv8 feature maps have invalid or inconsistent DFL bins\n");
             return false;
         }
@@ -585,6 +620,11 @@ bool YoloV8NewPostProcess::DecodeDetections()
             auto& lookup = m_lookups[featureIndex];
             lookup.Update(featureMap.reader.quant, featureMap.reader.type, true);
             featureMap.lookup = &lookup;
+            const auto first  = std::lower_bound(
+                lookup.probabilities.begin(), lookup.probabilities.end(), m_params.scoreThreshold);
+            const int minimum = featureMap.reader.type == fwk::iface::TensorType::INT8 ? -128 : 0;
+            featureMap.minimumClassCode =
+                static_cast<float>(minimum + (first - lookup.probabilities.begin()));
         }
         ++featureIndex;
         featureMap.angleOffset = angleOffset;
@@ -603,40 +643,49 @@ bool YoloV8NewPostProcess::DecodeDetections()
         for (size_t y = 0; y < featureMap.height; ++y) {
             for (size_t x = 0; x < featureMap.width; ++x) {
                 const size_t cell = y * featureMap.width + x;
-                // Positive per-tensor scale and sigmoid preserve logit ordering.
+                // Positive scale and Sigmoid preserve ordering. Keep upstream probability ties.
                 float bestLogit = -std::numeric_limits<float>::infinity();
-                float bestScore = 0.0F;
                 int bestClass   = -1;
+                float bestScore = 0.0F;
+                const size_t classStride =
+                    featureMap.channelsFirst ? featureMap.height * featureMap.width : 1;
+                const size_t firstClass = featureMap.channelsFirst
+                                              ? dflValues * classStride + cell
+                                              : cell * featureMap.channels + dflValues;
                 for (size_t classIndex = 0; classIndex < numClasses; ++classIndex) {
-                    const size_t channel = dflValues + classIndex;
-                    const size_t index = featureMap.channelsFirst
-                                             ? channel * featureMap.height * featureMap.width + cell
-                                             : cell * featureMap.channels + channel;
-                    float value        = 0.0F;
-                    if (!featureMap.reader.ReadRaw(index, value)) {
+                    float value = 0.0F;
+                    if (!featureMap.reader.ReadRaw(firstClass + classIndex * classStride, value)) {
                         printf_err("New YOLOv8 class output is unsupported\n");
                         return false;
                     }
                     if (value > bestLogit) {
                         bestLogit = value;
-                        const float score =
-                            featureMap.reader.IsQuantized()
-                                ? featureMap.lookup
-                                      ->probabilities[featureMap.reader.LookupIndex(value)]
-                                : Sigmoid(value);
-                        // Preserve the original first-class tie rule, including sigmoid saturation.
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestClass = static_cast<int>(classIndex);
+                        if (value >= featureMap.minimumClassCode) {
+                            const float score =
+                                featureMap.reader.IsQuantized()
+                                    ? featureMap.lookup
+                                          ->probabilities[featureMap.reader.LookupIndex(value)]
+                                    : Sigmoid(value);
+                            if (score > bestScore) {
+                                bestScore = score;
+                                bestClass = static_cast<int>(classIndex);
+                            }
                         }
                     }
                 }
-                if (bestClass < 0 || bestScore < m_params.scoreThreshold) {
+                if (angleTensor != nullptr && !m_params.orientedBoxes) {
+                    float objectness = 0.0F;
+                    if (!angleReader.ReadRaw(featureMap.angleOffset + cell, objectness)) {
+                        return false;
+                    }
+                    bestScore *= Sigmoid(angleReader.ToFloat(objectness));
+                }
+                if (bestClass < 0 || !(bestScore > 0.0F) || bestScore < m_params.scoreThreshold) {
                     continue;
                 }
 
                 float angleRadians = 0.0F;
-                if (angleTensor != nullptr) {
+                if (angleTensor != nullptr && m_params.orientedBoxes) {
                     float angleValue = 0.0F;
                     if (!angleReader.ReadRaw(featureMap.angleOffset + cell, angleValue)) {
                         printf_err("New YOLOv8 angle output is unsupported\n");
@@ -705,7 +754,7 @@ bool YoloV8NewPostProcess::DecodeDetections()
         }
     }
 
-    m_rotatedNms = angleTensor != nullptr;
+    m_rotatedNms = m_params.orientedBoxes && angleTensor != nullptr;
     return true;
 }
 

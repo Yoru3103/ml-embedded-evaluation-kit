@@ -15,9 +15,17 @@ Arm ML Embedded Evaluation Kit 提供面向 Cortex-M CPU 和 Ethos-U NPU 的机�
 
 `scripts/windows/build.ps1` 调用资源准备工具、CMake、Ninja 和交叉编译器。它每次构建前重新配置，以便模型变化时重新生成源代码。脚本结束后恢复临时修改的进程环境变量。
 
+此入口同时支持 `-Framework tflm`（默认）和 `-Framework pte`。
+两侧统一的转换、缓存编译、FPGA build 和打包命令见 [二维码复现指南](qrcode_reproduction.md)。
+
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `-Action` | `Build` | `Setup` 安装工具并准备资源；`Configure` 只配置和生成；`Build` 先配置再编译；`All` 执行全部步骤。首次使用先执行 Setup。 |
+| `-Framework` | `tflm` | `tflm` 或 `pte`；`executorch` 是 `pte` 的别名。PTE 支持 ATFE/GNU，TFLM 支持 AC6/ATFE。 |
+| `-BuildType` | `Debug` | `Debug`、`Release`、`RelWithDebInfo` 或 `MinSizeRel`。 |
+| `-CacheSizeKiB` | 不覆盖 | NPU cache 容量，单位 KiB；须与已编译模型一致。 |
+| `-TimingAdapterConfig` | 不覆盖 | TA 配置名，映射到 `TA_CONFIG_FILE`。 |
+| `-PmuGroup` | 不覆盖 | PMU 组，例如 `BW`。 |
 | `-Toolchain` | `AC6` | `AC6` 或 `ATFE`。两种编译器使用不同构建目录。 |
 | `-Target` | `FPGA` | `FPGA` 为 MPS4 SSE-320 实板；`FVP` 为 SSE-320 虚拟平台。 |
 | `-UseCase` | `img_class` | 应用用例，传给 CMake 的 `USE_CASE_BUILD`；Setup 按此用例准备资源。 |
@@ -28,11 +36,11 @@ Arm ML Embedded Evaluation Kit 提供面向 Cortex-M CPU 和 Ethos-U NPU 的机�
 | `-ImageSize` | 不覆盖 | 图像尺寸，允许 1–4096；映射到 `<UseCase>_IMAGE_SIZE`。 |
 | `-NumClasses` | 不覆盖 | 类别数，允许 1–1000；映射到 `<UseCase>_NUM_CLASSES`。 |
 | `-ActivationBufferSize` | 不覆盖 | 激活区大小，传给 `<UseCase>_ACTIVATION_BUF_SZ`。 |
-| `-BuildDirectory` | `build/windows-<toolchain>-<target>` 对应目录 | 构建目录；相对路径从项目根目录解析。 |
+| `-BuildDirectory` | 按用例/框架/工具链/目标/内存/缓存/构建类型/PMU 分层 | 构建目录；相对路径从项目根目录解析。完成后保存 `build-info.json`。 |
 | `-CMakeArgs` | 空 | 额外 `-DNAME=value` 定义；可配置 TA、FVP 测试及 Pose PMU。框架、平台和工具链由命名参数控制。 |
 | `-Jobs` | `4` | Setup 下载及编译并行数，允许 1–128。 |
 
-脚本选择 `windows-ac6-mps4`、`windows-atfe-mps4`、`windows-ac6-fvp` 或 `windows-atfe-fvp` 预设。预设固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=tflm` 和 `CMAKE_BUILD_TYPE=Debug`。`FPGA` 设置 `FPGA_PLATFORM_SSE_320=ON`，`FVP` 设置为 `OFF`。**Debug 默认开启**，脚本没有单独开关；需要其他构建类型时，使用独立构建目录直接调用 CMake。Debug 构建的性能不代表 Release 性能。
+TFLM 路线选择 `windows-ac6-mps4`、`windows-atfe-mps4`、`windows-ac6-fvp` 或 `windows-atfe-fvp` 预设。预设固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=tflm`，默认 `CMAKE_BUILD_TYPE=Debug`。`FPGA` 设置 `FPGA_PLATFORM_SSE_320=ON`，`FVP` 设置为 `OFF`。使用 `-BuildType Release` 构建 Release；旧的 `-CMakeArgs` 覆盖仍可使用。Debug 构建的性能不代表 Release 性能。
 
 尺寸、类别数及激活区参数仅在相应用例声明了这些 CMake 选项时才有意义。`yolov8_detection` 和 `yolov8_pose` 的 Setup 只安装所需 Python 包，模型、图片和标签由用户提供。CMake 会缓存模型路径及覆盖值；恢复默认模型时建议使用新构建目录。
 
@@ -61,6 +69,105 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps
 ```
 
 替换模型时添加 `-ModelPath "path-to-model"`。用于 Ethos-U 的模型应预先按目标 NPU 配置生成；FVP 默认 U85 Z1024（FVP 模型也须设置为 1024 MACs），MPS4 FPGA 使用 U85 Z1024。AXF 位于 `<BuildDirectory>/bin/mlek_<UseCase>.axf`。FVP 和 FPGA 固件不能互换。
+
+## QR-code TFLite 与可变 cache 构建
+
+### 从 ONNX 导出 NHWC INT8 模型
+
+现有 `scripts/export_qrcode_onnx.py` 可通过 `--tflite-backend onnx2tf` 在原生 Windows
+导出二维码模型。此后端使用 onnx2tf 的 `tf_converter`，无需 PyTorch、ExecuTorch 或
+LiteRT Torch。默认后端仍为 `litert-torch`，原 PTE 路线保持不变。
+
+使用单独的 Python 3.12 环境，避免改变现有固件构建依赖。下面复用已经通过
+`build.ps1 -Action Setup` 创建的 Python 环境来启动 venv：
+
+```powershell
+& .\resources_downloaded\windows\env\Scripts\python.exe -m venv `
+    .\resources_downloaded\windows-onnx2tf\env
+& .\resources_downloaded\windows-onnx2tf\env\Scripts\python.exe -m pip install `
+    -r .\scripts\windows\requirements-qrcode-onnx2tf.txt
+```
+
+从原始 ONNX 转换、校准、验证，并按 384 KiB 预算运行 Vela：
+
+```powershell
+$cacheKiB = 384
+$output = '.\resources_downloaded\yolo_QRcode\onnx2tf_nhwc_384k'
+& .\resources_downloaded\windows-onnx2tf\env\Scripts\python.exe `
+    .\scripts\export_qrcode_onnx.py `
+    --format tflite --tflite-backend onnx2tf `
+    --model .\resources_downloaded\yolo_QRcode\best.onnx `
+    --calibration-dir .\resources\object_detection\samples_QRcode `
+    --calibration-limit 0 --validation-limit 6 `
+    --arena-cache-size ($cacheKiB * 1024) --output-dir $output
+```
+
+此后端直接转换原 ONNX，不应用 PTE 专用的 ReLU/clamp 改写。输入和三个四维检测头
+必须为 NHWC，单通道辅助输出保留原形状。校准采用 RGB/255，`mlek-crop` 按固件图片
+生成工具居中裁剪；旧导出路线的图片处理保持原行为。转换器只操作输出目录内的
+ONNX 副本。FP32 输出需通过原 ONNX 数值一致性检查，INT8 输出需通过检测分数及框
+IoU 检查，Vela 产物需通过全 NPU、INT8 接口检查，才标记导出完成。
+
+输出模型为 `$output/tflite/best_int8.tflite`，上板构建使用
+`$output/tflm_Dedicated_Sram/best_int8_vela.tflite`。`export_report.json` 记录转换、
+接口和数值验证结果；Vela 报告位于 `tflm_Dedicated_Sram/`。修改 cache 时只需对已经
+量化的 `best_int8.tflite` 重跑 Vela，无需重新校准。下述固件构建命令继续适用。
+
+默认样本目录只有六张图片，未指定 `--validation-dir` 时校准与验证集会重叠。
+这里的数值检查用于确认转换行为，不代替独立标注数据集的精度评估或板上性能测量。
+
+### 构建固件
+
+二维码模型继续使用 `scripts/windows/build.ps1`，无需专用构建脚本。
+`-ModelPath` 指定已经过 Vela 编译的 TFLite；`ETHOS_U_NPU_CACHE_SIZE` 的单位为字节，
+通过 `-CMakeArgs` 传入。它设置固件预留的 fast cache，不会重新编译模型。
+选择与模型 Vela 编译预算匹配的容量，并为每个模型、容量及目标使用独立构建目录。
+
+从项目根目录的 PowerShell 构建 384 KiB Dedicated SRAM / U85 Z1024 / TA Mid 固件：
+
+```powershell
+$cacheKiB = 384
+$model = '.\resources_downloaded\yolo_QRcode\build_384k\best_int8_new_vela.tflite'
+$target = 'FPGA'
+$compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
+
+.\scripts\windows\build.ps1 `
+    -Action Build -Toolchain ATFE -Target $target -CompilerBin $compilerBin `
+    -UseCase yolov8_detection -ModelPath $model `
+    -InputPath resources/object_detection/samples_QRcode/1.png `
+    -LabelsPath resources_downloaded/yolo_QRcode/labels.txt `
+    -ImageSize 256 -NumClasses 15 -ActivationBufferSize 0x00400000 `
+    -BuildDirectory "build/qrcode-tflm-$target-${cacheKiB}k-BW" -Jobs 8 `
+    -CMakeArgs @(
+        "-DETHOS_U_NPU_CACHE_SIZE=$($cacheKiB * 1024)",
+        '-DETHOS_U_NPU_ID=U85', '-DETHOS_U_NPU_CONFIG_ID=Z1024',
+        '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON',
+        '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_mid',
+        '-DETHOS_U_NPU_PMU_GROUP=BW', '-DINTERACTIVE_MODE=OFF',
+        '-DUSE_SINGLE_INPUT=ON', '-DCMAKE_BUILD_TYPE=Release'
+    )
+```
+
+`$cacheKiB * 1024` 将 KiB 转为字节，例如 384 KiB 为 393216 字节。
+更换模型时修改 `$model` 和 `$cacheKiB`；构建 FVP 固件时将 `$target` 改为 `FVP`。
+新构建目录中 U85 默认使用 `Dedicated_Sram`，该例用于 Dedicated 模型。
+可以通过 `-MemoryMode Dedicated_Sram`、`-MemoryMode Shared_Sram` 或
+`-MemoryMode Sram_Only` 显式选择与模型匹配的模式。Shared SRAM 模型的
+`-ActivationBufferSize` 会在 SRAM 中预留 tensor arena，而 Dedicated SRAM 模型在 DDR
+中预留 arena；Shared SRAM 不需要独立的 fast-cache buffer。
+标签文件需包含按训练顺序排列的 15 个标签。
+
+构建只产生正常固件文件：`bin/mlek_yolov8_detection.axf`、
+`bin/sectors/yolov8_detection/{boot,bram,ddr}.bin` 和 `bin/sectors/images.txt`。
+4 MiB activation buffer 是 DDR arena 的预留容量；SRAM fast cache 单独配置。
+`BW` 组同时记录 SRAM/EXT 读写 beats、两路径读请求 stall 和 AO 输出缓冲 stall，
+详见 [周期日志与 PMU](windows_executorch.md#pose-的周期日志与-pmu)。
+
+冷构建不需要引用其他 build 目录的依赖缓存，删除当前构建目录后可直接重跑原命令。
+如果 Windows 上 CMake 在解压 FlatBuffers、gemmlowp 或 ruy 后报告 `file RENAME failed`，
+构建入口会尝试移动本次已经校验并解压的源码，然后使用当前构建目录内的
+`FETCHCONTENT_SOURCE_DIR_*` 继续配置。每个依赖最多恢复一次，目录移动最多尝试五次；
+网络、压缩包校验和编译错误仍会中止构建。恢复不会修改依赖子模块或引用其他 build 目录。
 
 ## Arm DS 配置
 

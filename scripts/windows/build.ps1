@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 <#
 .SYNOPSIS
-Prepare resources or build TFLM firmware on native Windows for Arm DS.
+Prepare resources or build TFLM/PTE firmware on native Windows for Arm DS.
 .DESCRIPTION
 Setup requires Python 3.12 via the Windows py launcher. Configure and Build
 reuse that environment. CMake and Ninja are shared with the ExecuTorch script.
-AC6 and ATfE use separate build directories.
+Select -Framework tflm or pte. Both use the same options and build directory scheme.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('AC6', 'ATFE')][string]$Toolchain = 'AC6',
+    [ValidateSet('tflm', 'pte', 'executorch')][string]$Framework = 'tflm',
+    [ValidateSet('AC6', 'ATFE', 'GNU')][string]$Toolchain = 'AC6',
     [ValidateSet('FPGA', 'FVP')][string]$Target = 'FPGA',
     [ValidateSet('Setup', 'Configure', 'Build', 'All')][string]$Action = 'Build',
     [string]$UseCase = 'img_class',
@@ -21,15 +22,33 @@ param(
     [ValidateRange(1, 4096)][int]$ImageSize = 0,
     [ValidateRange(1, 1000)][int]$NumClasses = 0,
     [string]$ActivationBufferSize,
+    [ValidateSet('Dedicated_Sram', 'Shared_Sram', 'Sram_Only')][string]$MemoryMode,
     [string]$BuildDirectory,
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')][string]$BuildType = 'Debug',
+    [ValidateRange(0, 1048576)][int]$CacheSizeKiB = 0,
+    [string]$TimingAdapterConfig,
+    [ValidateSet('', 'A', 'B', 'B_SRAM0', 'B_SRAM1', 'BW', 'C', 'D', 'LATENCY')][string]$PmuGroup = '',
     [ValidateRange(1, 128)][int]$Jobs = 4,
     [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+if ($Framework -in @('pte', 'executorch')) {
+    $forward = @{}
+    foreach ($name in $PSBoundParameters.Keys) {
+        if ($name -ne 'Framework') { $forward[$name] = $PSBoundParameters[$name] }
+    }
+    if (-not $forward.ContainsKey('Toolchain')) { $forward.Toolchain = 'ATFE' }
+    if (-not $forward.ContainsKey('Target')) { $forward.Target = $Target }
+    & (Join-Path $PSScriptRoot 'build-executorch.ps1') @forward
+    return
+}
+if ($Toolchain -eq 'GNU') { throw 'TFLM supports AC6 or ATFE; GNU is available for PTE.' }
+. (Join-Path $PSScriptRoot 'windows-build-options.ps1')
+. (Join-Path $PSScriptRoot 'windows-tflm-configure.ps1')
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
-    if ($argument -notmatch '^-D[A-Za-z0-9_]+(?::[A-Za-z]+)?=') {
+    if ($argument -notmatch '^-D[A-Za-z0-9_][A-Za-z0-9_-]*(?::[A-Za-z]+)?=') {
         throw 'CMakeArgs accepts only -DNAME=value definitions.'
     }
     if ($argument -match '^-D(CMAKE_(TOOLCHAIN_FILE|C_COMPILER|CXX_COMPILER|MAKE_PROGRAM)|ML_FRAMEWORK|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|MLEK_PYTHON_VENV|RESOURCES_PATH|USE_CASE_BUILD|ETHOS_U_NPU_MEMORY_MODE)(:|=)') {
@@ -119,8 +138,9 @@ try {
     $env:PATH = "$CompilerBin;$($buildTools.BinDir);$(Split-Path $venvPython);$originalPath"
     $cmakeExe = $buildTools.CMake
     if (-not $BuildDirectory) {
-        $buildName = if ($UseCase -eq 'img_class') { $preset } else { "$preset-$UseCase" }
-        $BuildDirectory = Join-Path $repoRoot "build/$buildName"
+        $BuildDirectory = Get-WindowsFirmwareBuildDirectory -RepoRoot $repoRoot `
+            -Framework tflm -Toolchain $Toolchain -Target $Target -UseCase $UseCase `
+            -MemoryMode $MemoryMode -CacheSizeKiB $CacheSizeKiB -BuildType $BuildType -PmuGroup $PmuGroup
     } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
         $BuildDirectory = Join-Path $repoRoot $BuildDirectory
     }
@@ -185,16 +205,27 @@ try {
     if ($ActivationBufferSize) {
         $configureArgs += "-D${UseCase}_ACTIVATION_BUF_SZ=$ActivationBufferSize"
     }
+    if ($MemoryMode) {
+        $configureArgs += "-DETHOS_U_NPU_MEMORY_MODE=$MemoryMode"
+    }
     if ($UseCase -eq 'yolov8_pose') {
         $configureArgs += @('-DETHOS_U_NPU_CACHE_SIZE=262144',
             '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
+    $configureArgs += @(Get-WindowsFirmwareCMakeArgs -BuildType $BuildType `
+        -CacheSizeKiB $CacheSizeKiB -TimingAdapterConfig $TimingAdapterConfig -PmuGroup $PmuGroup)
     $configureArgs += $CMakeArgs
+    $infoArgs = @{ BuildDirectory=$BuildDirectory; Framework='tflm'; UseCase=$UseCase;
+        CMakeExecutable=$cmakeExe; ConfigureArgs=$configureArgs; ModelPath=$ModelPath; Jobs=$Jobs }
+    Write-WindowsFirmwareBuildInfo @infoArgs -Status started
     # Always reconfigure: model C arrays are generated during configuration.
-    Invoke-Checked $cmakeExe $configureArgs
+    Invoke-WindowsTflmConfigure -Executable $cmakeExe -Arguments $configureArgs `
+        -BuildDirectory $BuildDirectory
     if ($Action -ne 'Configure') {
         Invoke-Checked $cmakeExe @('--build', $BuildDirectory, '--parallel', "$Jobs")
     }
+    Write-WindowsFirmwareBuildInfo @infoArgs `
+        -Status $(if ($Action -eq 'Configure') { 'configured' } else { 'built' })
 } finally {
     $env:PATH = $originalPath
     $env:MLEK_AC6_BIN = $originalAc6

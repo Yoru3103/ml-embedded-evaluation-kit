@@ -3,27 +3,45 @@
 # <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Recompile validated QR-code INT8 graphs for five Dedicated SRAM cache capacities."""
+"""Recompile validated QR-code INT8 graphs for Dedicated and Shared SRAM."""
+
+from __future__ import annotations
 
 import argparse
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
+from importlib import import_module
 import os
 from pathlib import Path
 import subprocess
 import sys
-
-import torch
+from typing import TYPE_CHECKING
 
 from model_export.qrcode.onnx import make_samples
 from model_export.common.reporting import write_manifest
-from model_export.qrcode.backends import compile_quantized_pte
 from model_export.qrcode.contract import describe_model
 from model_export.qrcode.tflite_utils import inspect_tflite
 
 from model_export.common.paths import ROOT
+
+if TYPE_CHECKING:
+    import torch
+
+
+def compile_quantized_pte(quantized: torch.fx.GraphModule, samples: list[dict],
+                         metadata: dict, options: argparse.Namespace) -> dict:
+    """Load the PTE backend only when compiling a PTE variant.
+
+    :param quantized:   Independent calibrated graph for this variant.
+    :param samples:     Shared validation samples.
+    :param metadata:    Checked source tensor contract.
+    :param options:     Target and memory configuration.
+    :returns:           Compiled artifact and validation record.
+    """
+    backend = import_module("model_export.qrcode.backends")
+    return backend.compile_quantized_pte(quantized, samples, metadata, options)
 CACHE_SIZES = (64, 128, 256, 384, 768)
 
 
@@ -38,7 +56,7 @@ class CompilationContext:
 
 
 def parse_args() -> argparse.Namespace:
-    """Select validated source graphs and Dedicated SRAM cache sizes in KiB.
+    """Select validated graphs, memory modes and Dedicated SRAM cache sizes.
 
     :returns:   Compilation options.
     """
@@ -46,10 +64,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-root", type=Path,
                         default=ROOT / "resources_downloaded/yolo_QRcode")
     parser.add_argument("--output-root", type=Path)
+    parser.add_argument("--target", choices=("ethos-u85-512", "ethos-u85-1024"),
+                        help="Override the exported graph's accelerator configuration")
+    parser.add_argument("--system-config", help="Override the exported graph's Vela system config")
     parser.add_argument("--format", choices=("both", "tflm", "pte"), default="both")
+    parser.add_argument("--memory-mode", choices=("Dedicated_Sram", "Shared_Sram", "all"),
+                        default="Dedicated_Sram")
     parser.add_argument("--cache-kib", type=int, choices=CACHE_SIZES,
-                        nargs="+", default=CACHE_SIZES)
+                        nargs="+", help="Dedicated SRAM cache variants; defaults to all sizes")
     args = parser.parse_args()
+    if args.memory_mode == "Shared_Sram" and args.cache_kib is not None:
+        parser.error("Shared_Sram has no Dedicated SRAM cache-size variants")
+    args.cache_kib = args.cache_kib or CACHE_SIZES
     args.model_root = args.model_root.resolve()
     args.output_root = (args.output_root or args.model_root / "fastcache_dedicated").resolve()
     return args
@@ -65,42 +91,47 @@ def compile_tflm(source: Path, directory: Path, options: argparse.Namespace) -> 
     """
     command = [sys.executable, "-m", "ethosu.vela", str(source),
                "--config", str(options.vela_config), "--accelerator-config", options.target,
-               "--system-config", options.system_config, "--memory-mode", "Dedicated_Sram",
-               "--arena-cache-size", str(options.arena_cache_size),
+               "--system-config", options.system_config, "--memory-mode", options.memory_mode,
                "--optimise", "Performance", "--cop-format", "COP1", "--verbose-performance",
                "--output-dir", str(directory)]
+    if options.arena_cache_size is not None:
+        command.extend(["--arena-cache-size", str(options.arena_cache_size)])
     with (directory / "compile.log").open("w", encoding="utf-8") as stream:
         subprocess.run(command, check=True, stdout=stream, stderr=subprocess.STDOUT)
     model = directory / f"{source.stem}_vela.tflite"
     return {"path": str(model), "command": command, **inspect_tflite(model, require_npu=True)}
 
 
-def compile_case(framework: str, cache_kib: int, args: argparse.Namespace,
-                 context: CompilationContext):
+def compile_case(framework: str, cache_kib: int | None, args: argparse.Namespace,
+                 context: CompilationContext, memory_mode: str = "Dedicated_Sram"):
     """Write an invalidated completion record before each NPU-only compilation.
 
     :param framework:   PTE or TFLM.
-    :param cache_kib:   Dedicated SRAM cache capacity.
+    :param cache_kib:   Dedicated SRAM cache capacity, or None for Shared SRAM.
     :param args:        Source and matrix output directories.
     :param context:     Compiler settings, validated graph and host samples.
+    :param memory_mode: SRAM allocation mode for this compiled variant.
     """
-    directory = args.output_root / framework / f"{cache_kib}k"
+    label = f"{cache_kib}k" if cache_kib is not None else "shared"
+    directory = args.output_root / framework / label
     directory.mkdir(parents=True, exist_ok=True)
-    options = context.options
-    options.arena_cache_size = cache_kib * 1024
+    options = argparse.Namespace(**vars(context.options))
+    options.memory_mode = memory_mode
+    options.arena_cache_size = cache_kib * 1024 if cache_kib is not None else None
     options.output = directory / "best.pte"
     options.extra_flag = ["--optimise=Performance", "--cop-format=COP1", "--verbose-performance"]
     source = (args.model_root / "tflite/best_int8.tflite" if framework == "tflm"
               else args.model_root / "pte_Dedicated_Sram/best_graphs/quantized.pt2")
-    record = {"status": "started", "framework": framework, "cache_bytes": cache_kib * 1024,
+    record = {"status": "started", "framework": framework,
+              "cache_bytes": options.arena_cache_size,
               "target": options.target, "system_config": options.system_config,
-              "memory_mode": "Dedicated_Sram", "image_size": context.metadata["image_size"],
+              "memory_mode": memory_mode, "image_size": context.metadata["image_size"],
               "num_classes": context.metadata["num_classes"], "source_path": str(source),
               "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
               "vela_config_sha256": hashlib.sha256(options.vela_config.read_bytes()).hexdigest()}
     completion = directory / "compilation.json"
     write_manifest(completion, record)
-    print(f"Compile QR-code {framework} / {cache_kib} KiB", flush=True)
+    print(f"Compile QR-code {framework} / {memory_mode} / {label}", flush=True)
     try:
         result = (compile_tflm(source, directory, options) if framework == "tflm"
                   else compile_quantized_pte(deepcopy(context.quantized), context.samples,
@@ -116,31 +147,40 @@ def compile_case(framework: str, cache_kib: int, args: argparse.Namespace,
 
 
 def main():
-    """Keep calibration fixed while varying only the Dedicated SRAM compilation budget."""
+    """Keep calibration fixed while varying SRAM modes and compilation budgets."""
     args = parse_args()
     report = json.loads((args.model_root / "export_report.json").read_text())
     if report["status"] != "completed":
         raise ValueError("Complete export_model.py validation before cache compilation")
     options = argparse.Namespace(**report["configuration"])
+    if args.target is not None:
+        options.target = args.target
+    if args.system_config is not None:
+        options.system_config = args.system_config
     options.model, options.vela_config = Path(options.model), Path(options.vela_config)
     if hashlib.sha256(options.model.read_bytes()).hexdigest() != report["source_sha256"]:
         raise ValueError("ONNX source changed since the validated export")
     options.image_size = report["contract"]["image_size"]
-    options.memory_mode = "Dedicated_Sram"
     os.environ["PATH"] = os.pathsep.join(
         (str(Path(sys.executable).absolute().parent), os.environ["PATH"]))
-    torch.set_num_threads(options.threads)
     _, metadata = describe_model(options.model)
     samples = make_samples([Path(path) for path in report["validation_images"]], metadata, options)
     quantized = None
     if args.format in ("both", "pte"):
-        quantized = torch.export.load(
+        torch_api = import_module("torch")
+        torch_api.set_num_threads(options.threads)
+        # Register decomposed quantization operators before reading the PT2 archive.
+        import_module("torchao.quantization.pt2e.quantize_pt2e")
+        quantized = torch_api.export.load(
             args.model_root / "pte_Dedicated_Sram/best_graphs/quantized.pt2"
         ).module(check_guards=False)
     context = CompilationContext(options, samples, metadata, quantized)
+    modes = (["Dedicated_Sram", "Shared_Sram"] if args.memory_mode == "all"
+             else [args.memory_mode])
     for framework in (("tflm", "pte") if args.format == "both" else (args.format,)):
-        for cache_kib in args.cache_kib:
-            compile_case(framework, cache_kib, args, context)
+        for mode in modes:
+            for cache_kib in (args.cache_kib if mode == "Dedicated_Sram" else [None]):
+                compile_case(framework, cache_kib, args, context, mode)
 
 
 if __name__ == "__main__":

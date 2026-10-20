@@ -26,9 +26,9 @@ namespace {
             return false;
         }
 
-        /* Generated samples are RGB; models can consume RGB or grayscale. */
-        if ((shape[1] == 1 || shape[1] == 3) &&
-            ((shape[3] != 1 && shape[3] != 3) || shape[2] == shape[3])) {
+        /* Infer RGB or grayscale channel placement when no layout annotation is available. */
+        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3) ||
+            ((shape[1] == 1 || shape[1] == 3) && shape[2] == shape[3])) {
             description.layout   = fwk::iface::TensorLayout::NCHW;
             description.height   = shape[2];
             description.width    = shape[3];
@@ -36,8 +36,8 @@ namespace {
             return true;
         }
 
-        if ((shape[3] == 1 || shape[3] == 3) &&
-            ((shape[1] != 1 && shape[1] != 3) || shape[1] == shape[2])) {
+        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3) ||
+            ((shape[3] == 1 || shape[3] == 3) && shape[1] == shape[2])) {
             description.layout   = fwk::iface::TensorLayout::NHWC;
             description.height   = shape[1];
             description.width    = shape[2];
@@ -56,8 +56,11 @@ namespace {
 
 } /* anonymous namespace */
 
-YoloV8PreProcess::YoloV8PreProcess(const std::shared_ptr<fwk::iface::TensorIface>& inputTensor) :
-    m_inputTensor{inputTensor}
+YoloV8PreProcess::YoloV8PreProcess(const std::shared_ptr<fwk::iface::TensorIface>& inputTensor,
+                                   bool useTensorLayout,
+                                   bool inputIsGrayscale) :
+    m_inputTensor{inputTensor}, m_useTensorLayout{useTensorLayout},
+    m_inputIsGrayscale{inputIsGrayscale}
 {}
 
 bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
@@ -69,8 +72,14 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
 
     InputDescription description;
     if (!GetInputDescription(m_inputTensor->Shape(), description)) {
-        printf_err("Expected RGB or grayscale NCHW/NHWC input\n");
+        printf_err("Expected YOLOv8 RGB or grayscale NCHW/NHWC input\n");
         return false;
+    }
+
+    /* ExecuTorch keeps NCHW logical sizes for channels-last tensors. */
+    const auto tensorLayout = m_inputTensor->Layout();
+    if (m_useTensorLayout && tensorLayout != fwk::iface::TensorLayout::INVALID) {
+        description.layout = tensorLayout;
     }
 
     const size_t planeSize     = description.height * description.width;
@@ -96,11 +105,43 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
         return false;
     }
 
+    const bool directInt8 = tensorType == fwk::iface::TensorType::INT8 &&
+                            quantParams.scale == 1.0F / 255.0F && quantParams.offset == -128;
+    if (m_inputIsGrayscale && description.channels == 1 && directInt8) {
+        auto* destination = m_inputTensor->GetData<int8_t>();
+        if (destination == nullptr) {
+            return false;
+        }
+        // A single channel has identical physical indexing in NCHW and NHWC.
+        // The caller declares R == G == B; retain RGB storage for the LCD.
+        for (size_t pixel = 0; pixel < planeSize; ++pixel) {
+            destination[pixel] = static_cast<int8_t>(static_cast<int>(source[pixel * 3]) - 128);
+        }
+        return true;
+    }
+    if (isQuantized && !directInt8 &&
+        (!m_lookupReady || m_type != tensorType || m_quant.scale != quantParams.scale ||
+         m_quant.offset != quantParams.offset)) {
+        const long minimum = tensorType == fwk::iface::TensorType::INT8 ? -128 : 0;
+        const long maximum = tensorType == fwk::iface::TensorType::INT8 ? 127 : 255;
+        for (size_t value = 0; value < m_lookup.size(); ++value) {
+            m_lookup[value] = static_cast<uint8_t>(
+                std::clamp(
+                    QuantizeInput(static_cast<uint8_t>(value), quantParams), minimum, maximum) -
+                minimum);
+        }
+        m_quant       = quantParams;
+        m_type        = tensorType;
+        m_lookupReady = true;
+    }
+    auto* int8Input =
+        tensorType == fwk::iface::TensorType::INT8 ? m_inputTensor->GetData<int8_t>() : nullptr;
+
     for (size_t pixel = 0; pixel < planeSize; ++pixel) {
+        /* Keep RGB storage for the LCD; match Pillow RGB-to-L rounding for grayscale. */
         for (size_t channel = 0; channel < description.channels; ++channel) {
-            /* Match Pillow RGB-to-L rounding after the common resize/crop step. */
             const uint8_t sourceValue =
-                description.channels == 1
+                description.channels == 1 && !m_inputIsGrayscale
                     ? static_cast<uint8_t>((19595U * source[pixel * 3] +
                                             38470U * source[pixel * 3 + 1] +
                                             7471U * source[pixel * 3 + 2] + 32768U) >>
@@ -114,13 +155,11 @@ bool YoloV8PreProcess::DoPreProcess(const void* input, size_t inputSize)
                 m_inputTensor->GetData<float>()[destinationIndex] =
                     static_cast<float>(sourceValue) / 255.0F;
             } else if (tensorType == fwk::iface::TensorType::INT8) {
-                const long quantizedValue = QuantizeInput(sourceValue, quantParams);
-                m_inputTensor->GetData<int8_t>()[destinationIndex] = static_cast<int8_t>(
-                    std::clamp(quantizedValue, static_cast<long>(-128), static_cast<long>(127)));
+                int8Input[destinationIndex] =
+                    static_cast<int8_t>(directInt8 ? static_cast<int>(sourceValue) - 128
+                                                   : static_cast<int>(m_lookup[sourceValue]) - 128);
             } else {
-                const long quantizedValue = QuantizeInput(sourceValue, quantParams);
-                m_inputTensor->GetData<uint8_t>()[destinationIndex] = static_cast<uint8_t>(
-                    std::clamp(quantizedValue, static_cast<long>(0), static_cast<long>(255)));
+                m_inputTensor->GetData<uint8_t>()[destinationIndex] = m_lookup[sourceValue];
             }
         }
     }

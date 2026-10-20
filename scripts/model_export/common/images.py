@@ -4,12 +4,18 @@
 
 """Prepare shared calibration and validation images."""
 
+from __future__ import annotations
+
+from importlib import import_module
 from pathlib import Path
+from typing import TYPE_CHECKING
 import random
 
-import torch
+import numpy as np
 from PIL import Image, ImageOps
-from torchvision.transforms.functional import pil_to_tensor
+
+if TYPE_CHECKING:
+    import torch
 
 def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
     """Select a reproducible shuffled sample instead of a class-sorted prefix."""
@@ -23,15 +29,15 @@ def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
     return paths[:limit] if limit else paths
 
 
-def load_image(path: Path, image_size: int, preprocessing: str,
-               channels: int = 3) -> torch.Tensor:
+def load_image_array(path: Path, image_size: int, preprocessing: str,
+                     channels: int = 3) -> np.ndarray:
     """Load RGB or grayscale /255 NCHW data after the deployment resize policy.
 
     :param path:            Source image.
     :param image_size:      Square input resolution.
     :param preprocessing:   Resize and crop policy.
     :param channels:        Model input channels, one or three.
-    :returns:               Normalized NCHW tensor.
+    :returns:               Contiguous normalized float32 NCHW array.
     :raises ValueError:     Unsupported image policy or channel count.
     """
     with Image.open(path) as source:
@@ -57,4 +63,20 @@ def load_image(path: Path, image_size: int, preprocessing: str,
         image = image.convert("L")
     elif channels != 3:
         raise ValueError("Model input must have one or three channels")
-    return (pil_to_tensor(image).float().unsqueeze(0) / 255.0).contiguous()
+    values = np.asarray(image, dtype=np.float32)
+    values = values[None, None] if channels == 1 else values.transpose(2, 0, 1)[None]
+    return np.ascontiguousarray(values / 255.0)
+
+
+def load_image(path: Path, image_size: int, preprocessing: str,
+               channels: int = 3) -> torch.Tensor:
+    """Wrap shared image preparation as a PyTorch tensor when requested.
+
+    :param path:            Source image.
+    :param image_size:      Square input resolution.
+    :param preprocessing:  Resize and crop policy.
+    :param channels:        Model input channels, one or three.
+    :returns:               Contiguous normalized NCHW tensor.
+    """
+    return import_module("torch").from_numpy(
+        load_image_array(path, image_size, preprocessing, channels))

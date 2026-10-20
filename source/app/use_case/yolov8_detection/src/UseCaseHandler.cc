@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "UseCaseHandler.hpp"
-
+#include "BenchmarkProfiler.hpp"
 #include "DetectionDrawing.hpp"
+
 #include "UseCaseCommonUtils.hpp"
 #include "hal.h"
 #include "mlek/common/ImageUtils.hpp"
@@ -15,8 +16,10 @@
 #include "sample_files.h"
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +27,102 @@
 namespace arm::app {
 
 namespace {
+
+#if YOLOV8_DUMP_RAW_OUTPUTS
+    void DumpRawOutputs(fwk::iface::Model& model)
+    {
+        for (size_t index = 0; index < model.GetNumOutputs(); ++index) {
+            const auto tensor      = model.GetOutputTensor(index);
+            const auto quantParams = tensor->GetQuantParams();
+            const auto* data       = static_cast<const uint8_t*>(tensor->GetData());
+            const size_t bytes     = tensor->Bytes();
+            printf("RAW_OUTPUT_BEGIN index=%zu type=%d bytes=%zu scale=%.9g zero=%d shape=",
+                   index,
+                   static_cast<int>(tensor->Type()),
+                   bytes,
+                   static_cast<double>(quantParams.scale),
+                   static_cast<int>(quantParams.offset));
+            for (const size_t dimension : tensor->Shape()) {
+                printf("%zu,", dimension);
+            }
+            printf("\n");
+            for (size_t offset = 0; offset < bytes; ++offset) {
+                if (offset % 32 == 0) {
+                    printf("RAW_OUTPUT_DATA ");
+                }
+                printf("%02x", static_cast<unsigned int>(data[offset]));
+                if (offset % 32 == 31 || offset + 1 == bytes) {
+                    printf("\n");
+                }
+            }
+            printf("RAW_OUTPUT_END index=%zu\n", index);
+        }
+    }
+#endif
+
+#if YOLOV8_PROFILE_STAGES
+    bool ReadCpuCycles(const pmu_counters& counters, uint64_t& cycles)
+    {
+        if (!counters.initialised) {
+            return false;
+        }
+        for (uint32_t index = 0; index < counters.num_counters; ++index) {
+            if (std::strcmp(counters.counters[index].name, "CPU TOTAL") == 0) {
+                cycles = counters.counters[index].value;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool RecordCpuCycles(Profiler& profiler, const char* name, uint64_t start, uint64_t finish)
+    {
+        pmu_counters first{};
+        first.initialised      = true;
+        first.num_counters     = 1;
+        first.counters[0]      = {start, "CPU TOTAL", "cycles"};
+        pmu_counters last      = first;
+        last.counters[0].value = finish;
+        return profiler.RecordProfiling(first, last, name);
+    }
+
+    bool RecordStages(Profiler& profiler, const std::array<pmu_counters, 4>& timestamps)
+    {
+        std::array<uint64_t, 4> cycles{};
+        for (size_t index = 0; index < timestamps.size(); ++index) {
+            if (!ReadCpuCycles(timestamps[index], cycles[index])) {
+                return false;
+            }
+        }
+        return RecordCpuCycles(profiler, "Preprocess + Invoke", cycles[0], cycles[2]) &&
+               profiler.RecordProfiling(timestamps[0], timestamps[2], "Preprocess + Inference") &&
+               RecordCpuCycles(
+                   profiler, "Preprocess + Inference + Postprocess", cycles[0], cycles[3]) &&
+               RecordCpuCycles(profiler, "Preprocess", cycles[0], cycles[1]) &&
+               RecordCpuCycles(profiler, "Inference", cycles[1], cycles[2]) &&
+               RecordCpuCycles(profiler, "Postprocess", cycles[2], cycles[3]) &&
+               RecordCpuCycles(profiler, "Inference + Postprocess", cycles[1], cycles[3]);
+    }
+
+    bool RecordOperators(Profiler& profiler, const BenchmarkOpProfiler& opProfiler)
+    {
+        using Operation        = BenchmarkOpProfiler::Operation;
+        const auto& quantize   = opProfiler.Get(Operation::QUANTIZE);
+        const auto& ethosU     = opProfiler.Get(Operation::ETHOS_U);
+        const auto& dequantize = opProfiler.Get(Operation::DEQUANTIZE);
+        info("Model operator calls: QUANTIZE=%" PRIu32 " ethos-u=%" PRIu32 " DEQUANTIZE=%" PRIu32
+             "\n",
+             quantize.calls,
+             ethosU.calls,
+             dequantize.calls);
+        return (quantize.calls == 0 ||
+                RecordCpuCycles(profiler, "Model QUANTIZE", 0, quantize.cycles)) &&
+               (ethosU.calls == 0 ||
+                RecordCpuCycles(profiler, "Model ethos-u (CPU elapsed)", 0, ethosU.cycles)) &&
+               (dequantize.calls == 0 ||
+                RecordCpuCycles(profiler, "Model DEQUANTIZE total", 0, dequantize.cycles));
+    }
+#endif
 
     const char* GetLabel(const std::vector<std::string>& labels, int classId)
     {
@@ -42,7 +141,7 @@ namespace {
         for (size_t index = 0; index < results.size(); index++) {
             const auto& result = results[index];
 
-            info("%zu: class=%d label=%s score=%f cx=%f cy=%f w=%f h=%f angle=%f\n",
+            info("%zu: class=%d label=%s score=%f cx=%f cy=%f w=%f h=%f\n",
                  index,
                  result.classId,
                  GetLabel(labels, result.classId),
@@ -50,8 +149,15 @@ namespace {
                  result.centerX,
                  result.centerY,
                  result.width,
-                 result.height,
-                 result.angleRadians);
+                 result.height);
+            if (YOLOV8_OBB) {
+                info("   obb: cx=%f cy=%f w=%f h=%f angle_rad=%f\n",
+                     result.centerX,
+                     result.centerY,
+                     result.width,
+                     result.height,
+                     result.angleRadians);
+            }
         }
     }
 
@@ -102,15 +208,15 @@ namespace {
             return false;
         }
 
-        if ((shape[1] == 1 || shape[1] == 3) &&
-            ((shape[3] != 1 && shape[3] != 3) || shape[2] == shape[3])) {
+        if ((shape[1] == 3 && shape[3] != 3) || (shape[1] == 1 && shape[3] != 1 && shape[3] != 3) ||
+            ((shape[1] == 1 || shape[1] == 3) && shape[2] == shape[3])) {
             imageHeight = static_cast<uint32_t>(shape[2]);
             imageWidth  = static_cast<uint32_t>(shape[3]);
             return true;
         }
 
-        if ((shape[3] == 1 || shape[3] == 3) &&
-            ((shape[1] != 1 && shape[1] != 3) || shape[1] == shape[2])) {
+        if ((shape[3] == 3 && shape[1] != 3) || (shape[3] == 1 && shape[1] != 1 && shape[1] != 3) ||
+            ((shape[3] == 1 || shape[3] == 3) && shape[1] == shape[2])) {
             imageHeight = static_cast<uint32_t>(shape[1]);
             imageWidth  = static_cast<uint32_t>(shape[2]);
             return true;
@@ -120,6 +226,17 @@ namespace {
     }
 
 } /* anonymous namespace */
+
+#if YOLOV8_PROFILE_STAGES
+uint64_t ReadBenchmarkCpuCycles()
+{
+    pmu_counters counters{};
+    hal_pmu_get_cpu_counters(&counters);
+    uint64_t cycles = 0;
+    ReadCpuCycles(counters, cycles);
+    return cycles;
+}
+#endif
 
 bool YoloV8DetectionHandler(ApplicationContext& ctx)
 {
@@ -153,7 +270,7 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
     uint32_t imageHeight  = 0;
 
     if (!GetInputImageDimensions(inputShape, imageWidth, imageHeight)) {
-        printf_err("Expected square RGB or grayscale NCHW/NHWC input\n");
+        printf_err("Expected RGB or grayscale NCHW/NHWC input\n");
         return false;
     }
     if (imageWidth == 0 || imageHeight == 0) {
@@ -166,7 +283,14 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         return false;
     }
 
-    YoloV8PreProcess preProcess{inputTensor};
+    /* Native NHWC logical axes can explicitly use shape inference. ExecuTorch's
+     * dim_order otherwise describes physical storage of NCHW logical axes. */
+#if defined(MLEK_FWK_EXECUTORCH) && !YOLOV8_INFER_LAYOUT_FROM_SHAPE
+    constexpr bool useTensorLayout = true;
+#else
+    constexpr bool useTensorLayout = false;
+#endif
+    YoloV8PreProcess preProcess{inputTensor, useTensorLayout, YOLOV8_INPUT_IS_GRAYSCALE != 0};
 
     if (labels.size() != YOLOV8_NUM_CLASSES) {
         printf_err("YOLOv8 label count does not match the configured class count\n");
@@ -179,7 +303,10 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
                                    YOLOV8_NUM_CLASSES,
                                    YOLOV8_MAX_DETECTIONS,
                                    YOLOV8_SCORE_THRESHOLD,
-                                   YOLOV8_NMS_THRESHOLD};
+                                   YOLOV8_NMS_THRESHOLD,
+                                   true,
+                                   YOLOV8_DFL_BINS,
+                                   YOLOV8_OBB != 0};
     std::unique_ptr<BasePostProcess> postProcess;
     if (model.GetNumOutputs() == 1) {
         postProcess =
@@ -190,7 +317,8 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         for (size_t outputIndex = 0; outputIndex < model.GetNumOutputs(); ++outputIndex) {
             outputTensors.push_back(model.GetOutputTensor(outputIndex));
         }
-        postProcess = std::make_unique<YoloV8NewPostProcess>(outputTensors, results, params);
+        postProcess =
+            std::make_unique<YoloV8NewPostProcess>(outputTensors, results, params, useTensorLayout);
     }
 
     constexpr uint32_t imageStartX   = 10;
@@ -237,26 +365,74 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         hal_display_show_image(
             image, imageWidth, imageHeight, 3, imageStartX, imageStartY, downscale);
 
+#if YOLOV8_PROFILE_STAGES
+        std::array<pmu_counters, 4> stageTimestamps{};
+        auto& opProfiler = ctx.Get<BenchmarkOpProfiler&>("benchmark_op_profiler");
+        opProfiler.Reset();
+        hal_pmu_reset();
+        const uint64_t probeStart = ReadBenchmarkCpuCycles();
+        const uint64_t probeEnd   = ReadBenchmarkCpuCycles();
+        hal_pmu_get_counters(&stageTimestamps[0]);
+#endif
         if (!preProcess.DoPreProcess(image, get_sample_img_total_bytes())) {
+#if YOLOV8_PROFILE_STAGES
+            hal_pmu_final();
+            opProfiler.Stop();
+#endif
             printf_err("Pre-processing failed\n");
             return false;
         }
 
-        profiler.StartProfiling("InferenceAndPostProcessing");
-        if (!model.RunInference()) {
-            profiler.StopProfiling();
+#if YOLOV8_PROFILE_STAGES
+        hal_pmu_get_cpu_counters(&stageTimestamps[1]);
+        const bool inferenceSuccessful = model.RunInference();
+        hal_pmu_get_counters(&stageTimestamps[2]);
+        const bool postProcessSuccessful = inferenceSuccessful && postProcess->DoPostProcess();
+        hal_pmu_get_cpu_counters(&stageTimestamps[3]);
+        hal_pmu_final();
+        opProfiler.Stop();
+        info("Timer read interval: %" PRIu64 " cycles\n", probeEnd - probeStart);
+        if (model.ContainsEthosUOperator() &&
+            opProfiler.Get(BenchmarkOpProfiler::Operation::ETHOS_U).calls == 0) {
+            printf_err("Model operator profiler did not observe the Ethos-U call\n");
+            return false;
+        }
+        if (!RecordStages(profiler, stageTimestamps)) {
+            printf_err("Failed to record benchmark stages\n");
+            return false;
+        }
+        if (!RecordOperators(profiler, opProfiler)) {
+            printf_err("Failed to record operator timings\n");
+            return false;
+        }
+#elif YOLOV8_PROFILE_POSTPROCESS
+        if (!profiler.StartProfiling("Inference + Postprocess")) {
+            return false;
+        }
+        const bool inferenceSuccessful   = model.RunInference();
+        const bool postProcessSuccessful = inferenceSuccessful && postProcess->DoPostProcess();
+        if (!profiler.StopProfiling()) {
+            return false;
+        }
+#else
+        const bool inferenceSuccessful   = RunInference(model, profiler);
+        const bool postProcessSuccessful = inferenceSuccessful && postProcess->DoPostProcess();
+#endif
+
+        if (!inferenceSuccessful) {
             printf_err("Inference failed\n");
             return false;
         }
 
-        if (!postProcess->DoPostProcess()) {
-            profiler.StopProfiling();
+        if (!postProcessSuccessful) {
             printf_err("Post-processing failed\n");
             return false;
         }
-        profiler.StopProfiling();
 
         PrintResults(results, labels);
+#if YOLOV8_DUMP_RAW_OUTPUTS
+        DumpRawOutputs(model);
+#endif
         hal_display_show_box(
             textPanelX, textPanelY, displayWidth - textPanelX, textCellHeight, COLOR_BLACK);
         PresentResults(results, labels, textStartX, textStartY);

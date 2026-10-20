@@ -47,9 +47,13 @@ set(EXECUTORCH_BUILD_EXTENSION_RUNNER_UTIL      ON)
 set(EXECUTORCH_ENABLE_LOGGING                   ON)
 set(EXECUTORCH_BUILD_DEVTOOLS                   OFF)
 set(EXECUTORCH_ENABLE_EVENT_TRACER              OFF)
-if (CPU_PROFILE_ENABLED AND (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
-    # The application supplies its own EventTracer. Enable runtime callbacks
-    # without the ETDump/devtools dependency required by the upstream option.
+set(MLEK_ET_OPERATOR_TRACING OFF)
+if ((yolov8_detection_PROFILE_STAGES AND
+     (("yolov8_detection" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all")) OR
+    (CPU_PROFILE_ENABLED AND
+     (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all")))
+    set(MLEK_ET_OPERATOR_TRACING ON)
+    # A caller-owned EventTracer needs runtime callbacks, without ETDump/devtools.
     add_compile_definitions(ET_EVENT_TRACER_ENABLED)
 endif()
 set(GFLAGS_INTTYPES_FORMAT                      C99)
@@ -98,6 +102,35 @@ block(SCOPE_FOR VARIABLES)
         message(FATAL_ERROR "flatc executable doesn't exist")
     endif()
 
+    if (EXECUTORCH_BUILD_ARM_BAREMETAL AND TARGET ethosu_core_driver AND
+        EXISTS "${EXECUTORCH_SRC_PATH}/backends/arm/cmake/ArmEthosUSDK.cmake")
+        # ExecuTorch 1.5 expects the SDK header layout even when the parent
+        # supplies the driver target. HAL already owns platform integration;
+        # expose its matching driver headers without fetching a second SDK.
+        # Update existing build caches too: the backend declares this as a
+        # cache entry and can otherwise restore its old SDK path.
+        set(ETHOS_SDK_PATH "${CMAKE_BINARY_DIR}/mlek-ethosu-sdk"
+            CACHE PATH "Ethos-U header layout supplied by MLEK" FORCE)
+        file(MAKE_DIRECTORY "${ETHOS_SDK_PATH}/core_platform")
+        file(COPY "${ETHOS_U_NPU_DRIVER_SRC_PATH}/include"
+            DESTINATION "${ETHOS_SDK_PATH}/core_software/core_driver")
+        set(FETCH_ETHOS_U_CONTENT OFF
+            CACHE BOOL "Use the Ethos-U driver supplied by MLEK" FORCE)
+    endif()
+
+    if (EXECUTORCH_BUILD_CORTEX_M)
+        # Reuse the pinned main-repository dependency on clean builds too.
+        # Otherwise ExecuTorch downloads a second CMSIS-NN into the build tree.
+        assert_defined(CMSIS_NN_SRC_PATH)
+        if (NOT EXISTS "${CMSIS_NN_SRC_PATH}/CMakeLists.txt" OR
+            NOT EXISTS "${CMSIS_NN_SRC_PATH}/Include/arm_nnfunctions.h")
+            message(FATAL_ERROR "CMSIS-NN submodule is missing at ${CMSIS_NN_SRC_PATH}. "
+                                "Run git submodule update --init --recursive.")
+        endif()
+        set(CMSIS_NN_LOCAL_PATH "${CMSIS_NN_SRC_PATH}"
+            CACHE PATH "CMSIS-NN source supplied by MLEK" FORCE)
+    endif()
+
     # Add ET main subdirectory
     add_subdirectory(${EXECUTORCH_SRC_PATH}
         ${CMAKE_BINARY_DIR}/executorch EXCLUDE_FROM_ALL)
@@ -111,7 +144,7 @@ endblock()
 
 # Collate the targets for easily linking against.
 add_library(mlek_executorch INTERFACE)
-if (CPU_PROFILE_ENABLED AND (("qrcode" IN_LIST USE_CASE_BUILD) OR USE_CASE_BUILD STREQUAL "all"))
+if (MLEK_ET_OPERATOR_TRACING)
     target_compile_definitions(mlek_executorch INTERFACE ET_EVENT_TRACER_ENABLED)
 endif()
 

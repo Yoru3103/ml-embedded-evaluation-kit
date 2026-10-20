@@ -1,7 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2022-2023, 2026 Arm Limited and/or its affiliates
  * <open-source-office@arm.com>
- *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,22 +72,21 @@ namespace app {
         /** Default destructor. */
         ~Profiler() = default;
 
-        /** Start profiling. Set includeNpu=false to sample only CPU timing counters.
-         *  PMU reset/finalisation still spans the session, allowing nested NPU snapshots. */
+        /** @brief  Start profiling => get starting time-stamp. */
         bool StartProfiling(const char* name = nullptr, bool includeNpu = true);
 
         /** @brief  Stop profiling => get the ending time-stamp. */
         bool StopProfiling();
 
-        /** Record two snapshots from the same counter period, without resetting PMU. */
+        /** @brief  Stops the profiling and internally resets the
+         *          platform timers. */
+        bool StopProfilingAndReset();
+
+        /** @brief Record completed timestamps without resetting or reading the hardware. */
         bool RecordProfiling(const pmu_counters& start,
                              const pmu_counters& end,
                              const char* name,
                              bool includeNpu = true);
-
-        /** @brief  Stops the profiling and internally resets the
-         *          platform timers. */
-        bool StopProfilingAndReset();
 
         /** @brief  Reset the platform timers. */
         void Reset();
@@ -110,9 +108,9 @@ namespace app {
         ProfilingStats m_profStats; /* Profiling stats map. */
         pmu_counters m_tstampSt{};  /* Container for a current starting timestamp. */
         pmu_counters m_tstampEnd{}; /* Container for a current ending timestamp. */
-        bool m_started    = false;  /* Indicates profiler has been started. */
-        bool m_includeNpu = true;   /* Selects counters sampled at session boundaries. */
-        std::string m_name;         /* Name given to this profiler. */
+        bool m_started = false;     /* Indicates profiler has been started. */
+        bool m_includeNpu{true};
+        std::string m_name; /* Name given to this profiler. */
 
         /**
          * @brief       Updates the running average stats with those computed

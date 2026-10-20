@@ -18,9 +18,51 @@ set(${use_case}_supports_${ML_FRAMEWORK} ON)
 list(APPEND ${use_case}_API_LIST "yolov8_detection")
 
 USER_OPTION(
+    ${use_case}_PROFILE_POSTPROCESS
+    "Include CPU post-processing in the inference profiling window."
+    OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_PROFILE_STAGES
+    "Record preprocessing, Invoke, postprocessing and framework operator timings."
+    OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_DUMP_RAW_OUTPUTS
+    "Dump output tensor metadata and bytes to UART after inference and postprocessing."
+    OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_INFER_LAYOUT_FROM_SHAPE
+    "Infer native NCHW/NHWC axis order from shapes instead of ExecuTorch dim_order."
+    OFF
+    BOOL)
+
+USER_OPTION(
     ${use_case}_MODEL_IN_EXT_FLASH
     "Run model from external flash."
     OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_INPUT_IS_GRAYSCALE
+    "Input RGB sample bytes have identical R/G/B components; enable grayscale fast conversion."
+    OFF
+    BOOL)
+
+USER_OPTION(
+    ${use_case}_DFL_BINS
+    "Bins per DFL distribution (0 infers the count from output channels)."
+    0
+    STRING)
+
+USER_OPTION(
+    ${use_case}_OBB
+    "Decode the fourth output as raw OBB angle logits with rotated NMS."
+    ON
     BOOL)
 
 USER_OPTION(
@@ -200,6 +242,13 @@ generate_model_code(
     NAMESPACE "arm" "app" "yolov8_detection")
 
 set(${use_case}_COMPILE_DEFS
+    "YOLOV8_INPUT_IS_GRAYSCALE=$<BOOL:${${use_case}_INPUT_IS_GRAYSCALE}>"
+    "YOLOV8_INFER_LAYOUT_FROM_SHAPE=$<BOOL:${${use_case}_INFER_LAYOUT_FROM_SHAPE}>"
+    "YOLOV8_DFL_BINS=${${use_case}_DFL_BINS}"
+    "YOLOV8_OBB=$<BOOL:${${use_case}_OBB}>"
+    "YOLOV8_PROFILE_POSTPROCESS=$<BOOL:${${use_case}_PROFILE_POSTPROCESS}>"
+    "YOLOV8_PROFILE_STAGES=$<BOOL:${${use_case}_PROFILE_STAGES}>"
+    "YOLOV8_DUMP_RAW_OUTPUTS=$<BOOL:${${use_case}_DUMP_RAW_OUTPUTS}>"
     "YOLOV8_ET_METHOD_MEMORY_IN_DDR=$<BOOL:${${use_case}_ET_METHOD_MEMORY_IN_DDR}>"
     "YOLOV8_NUM_CLASSES=${${use_case}_NUM_CLASSES}"
     "YOLOV8_MAX_DETECTIONS=${${use_case}_MAX_DETECTIONS}"

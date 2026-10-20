@@ -472,3 +472,5 @@ PYTHONPATH=scripts python -m unittest discover \
 PYTHONPATH=scripts python -m unittest discover \
     -s scripts/tests -p test_qrcode_onnx_export.py -v
 ```
+
+Windows 构建和已验证的灰度模型上板流程见 [二维码复现指南](qrcode_reproduction.md)、[Windows TFLM](windows_armds.md) 和 [Windows ExecuTorch](windows_executorch.md)。

@@ -58,12 +58,16 @@ class CacheCompilationTests(unittest.TestCase):
 
             with patch("model_export.tools.compile_fastcache.compile_quantized_pte",
                        side_effect=mutate):
-                for capacity in (64, 128):
-                    compile_case("pte", capacity, args, context)
-                    record = json.loads((args.output_root / "pte" / f"{capacity}k"
+                for capacity, mode in ((64, "Dedicated_Sram"), (128, "Dedicated_Sram"),
+                                       (None, "Shared_Sram")):
+                    compile_case("pte", capacity, args, context, mode)
+                    label = f"{capacity}k" if capacity is not None else "shared"
+                    record = json.loads((args.output_root / "pte" / label
                                          / "compilation.json").read_text())
                     self.assertEqual(record["status"], "completed")
-                    self.assertEqual(record["cache_bytes"], capacity * 1024)
+                    self.assertEqual(record["memory_mode"], mode)
+                    self.assertEqual(record["cache_bytes"],
+                                     capacity * 1024 if capacity is not None else None)
             self.assertEqual(graph.meta, {})
             self.assertIsNot(observed[0], observed[1])
 

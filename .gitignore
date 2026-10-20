@@ -35,3 +35,13 @@ scripts/py/env*
 scripts/py/venv*
 env
 venv
+
+# Local QR-code experiments and assessment attachments
+/docs/reports/
+/docs/media/qrcode_gray_obb_20261014/
+/docs/media/qrcode_gray_obb_20261015/
+/docs/media/qrcode_usr_quant_fpga_20261015/
+# Historical single-artifact export and Top1 acceptance experiments
+/scripts/export_qrcode_pte_payload.py
+/scripts/validate_qrcode_pte_run.py
+/scripts/tests/test_qrcode_pte_validation.py

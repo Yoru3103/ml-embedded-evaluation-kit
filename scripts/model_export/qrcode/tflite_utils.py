@@ -10,7 +10,7 @@ from importlib import import_module
 from pathlib import Path
 import subprocess
 import sys
-from typing import Callable
+from typing import Any, Callable
 
 from ethosu.vela.tflite.BuiltinOperator import BuiltinOperator
 from ethosu.vela.tflite.Model import Model
@@ -18,6 +18,9 @@ from ethosu.vela.tflite.TensorType import TensorType
 import numpy as np
 
 from model_export.qrcode.output_io import check_tflite_output_execution, dequantize_tflite_outputs
+
+_OPERATOR_NAMES = {value: name for name, value in vars(BuiltinOperator).items()
+                   if isinstance(value, int)}
 
 
 def export_litert_models(model: object, calibration: list[np.ndarray], directory: Path,
@@ -53,38 +56,59 @@ def export_litert_models(model: object, calibration: list[np.ndarray], directory
     return float_path, int8_path
 
 
-def inspect_tflite(path: Path, require_npu: bool = False, output_type: str = "int8") -> dict:
+def validate_compiled_boundaries(model: Any, counts: dict, allow_float_boundaries: bool):
+    """Require NPU execution with only the explicitly requested CPU boundaries.
+
+    :param model:                   Parsed FlatBuffer model.
+    :param counts:                  Operator counts.
+    :param allow_float_boundaries:  Require one Q and four DQ operators with float I/O.
+    """
+    cpu = {name: count for name, count in counts.items() if name != "ethos-u"}
+    expected_cpu = {"QUANTIZE": 1, "DEQUANTIZE": 4} if allow_float_boundaries else {}
+    if cpu != expected_cpu or not counts.get("ethos-u", 0):
+        raise ValueError(f"Compiled TFLite violates the requested NPU boundary policy: {counts}")
+    graph = model.Subgraphs(0)
+    indices = [graph.Inputs(index) for index in range(graph.InputsLength())]
+    indices += [graph.Outputs(index) for index in range(graph.OutputsLength())]
+    expected_type = TensorType.FLOAT32 if allow_float_boundaries else TensorType.INT8
+    if not indices or any(graph.Tensors(index).Type() != expected_type for index in indices):
+        raise ValueError("Compiled TFLite does not match the requested boundary tensor type")
+
+
+def inspect_tflite(path: Path, require_npu: bool = False, output_type: str = "int8",
+                   allow_float_boundaries: bool = False) -> dict:
     """Count executed FlatBuffer operators, ignoring unused opcode-table entries.
 
-    :param path:        TFLite file to inspect.
-    :param require_npu: Reject every operator except the Ethos-U custom operator.
-    :param output_type: Permit terminal DEQUANTIZE only for FP32 output mode.
-    :returns:           Actual operator counts and NPU/CPU partition summary.
+    :param path:                    TFLite file to inspect.
+    :param require_npu:             Validate the requested NPU boundary policy.
+    :param output_type:             Permit terminal DEQUANTIZE for FP32 outputs.
+    :param allow_float_boundaries:  Permit one Q and four DQ nodes with float I/O.
+    :returns:                       Actual operator counts and partition summary.
     """
     if not Model.ModelBufferHasIdentifier(path.read_bytes(), 0):
         raise ValueError("Invalid TFLite FlatBuffer identifier")
     model = Model.GetRootAsModel(path.read_bytes(), 0)
-    names = {value: name for name, value in vars(BuiltinOperator).items()
-             if isinstance(value, int)}
     counts = Counter()
     for index in range(model.SubgraphsLength()):
         graph = model.Subgraphs(index)
         for operation in range(graph.OperatorsLength()):
             code = model.OperatorCodes(graph.Operators(operation).OpcodeIndex())
             name = (code.CustomCode().decode() if code.CustomCode()
-                    else names.get(max(code.BuiltinCode(), code.DeprecatedBuiltinCode()),
+                    else _OPERATOR_NAMES.get(max(code.BuiltinCode(), code.DeprecatedBuiltinCode()),
                                    str(code.BuiltinCode())))
             counts[name] += 1
     cpu = {name: count for name, count in counts.items() if name != "ethos-u"}
     npu = counts.get("ethos-u", 0)
-    if require_npu and (not npu or (cpu and output_type == "int8")):
+    if require_npu and allow_float_boundaries:
+        validate_compiled_boundaries(model, counts, True)
+    if require_npu and not allow_float_boundaries and (not npu or (cpu and output_type == "int8")):
         raise ValueError(f"TFLite must contain only Ethos-U operators: {dict(counts)}")
     boundary = {}
-    if require_npu and output_type == "float32":
+    if require_npu and not allow_float_boundaries and output_type == "float32":
         if cpu != {"DEQUANTIZE": 4} or model.SubgraphsLength() != 1:
             raise ValueError("FP32 output mode requires exactly four terminal DEQUANTIZE nodes")
         boundary = check_tflite_output_execution(model)
-    elif require_npu:
+    elif require_npu and not allow_float_boundaries:
         graph = model.Subgraphs(0)
         indices = [graph.Inputs(index) for index in range(graph.InputsLength())]
         indices += [graph.Outputs(index) for index in range(graph.OutputsLength())]
@@ -129,8 +153,7 @@ def lite_runner(path: Path, metadata: dict, require_int8: bool) -> tuple[Callabl
     :param require_int8:    Reject float interfaces when integer execution is required.
     :returns:               Prediction callable and checked tensor interface.
     """
-    interpreter = import_module("ai_edge_litert.interpreter").Interpreter(
-        model_path=str(path), num_threads=4)
+    interpreter = create_interpreter(path)
     interpreter.allocate_tensors()
     inputs, outputs = interpreter.get_input_details(), interpreter.get_output_details()
     if len(inputs) != 1 or len(outputs) != 4:
@@ -177,14 +200,16 @@ def lite_runner(path: Path, metadata: dict, require_int8: bool) -> tuple[Callabl
 
 
 def compile_tflite(args: argparse.Namespace, source: Path | None = None,
-                   label: str = "tflm", require_npu: bool = True) -> dict:
+                   label: str = "tflm", require_npu: bool = True,
+                   allow_float_boundaries: bool = False) -> dict:
     """Run Vela with the same target and memory settings used by the PTE backend.
 
-    :param args:        Export and Vela options for this variant.
-    :param source:      Optional external reference TFLite model.
-    :param label:       Output-directory prefix for this compilation.
-    :param require_npu: Require an all-NPU graph with INT8 boundaries.
-    :returns:           Compiled file, operator checks and exact compiler command.
+    :param args:                    Export and Vela options for this variant.
+    :param source:                  Optional external reference TFLite model.
+    :param label:                   Output-directory prefix for this compilation.
+    :param require_npu:             Validate the requested NPU boundary policy.
+    :param allow_float_boundaries:  Permit one Q and four DQ nodes with float I/O.
+    :returns:                       Compiled file, checks and compiler command.
     """
     source = source or args.output_dir / "tflite/best_int8.tflite"
     directory = args.output_dir / f"{label}_{args.memory_mode}"
@@ -202,13 +227,14 @@ def compile_tflite(args: argparse.Namespace, source: Path | None = None,
     path = directory / f"{source.stem}_vela.tflite"
     if not path.is_file():
         raise RuntimeError("Vela did not produce the expected TFLite model")
-    if getattr(args, "output_type", "int8") == "float32":
+    if not allow_float_boundaries and getattr(args, "output_type", "int8") == "float32":
         # Preserve Vela's integer command stream and add runtime output boundaries afterwards.
         inspect_tflite(path, require_npu=True)
         path = dequantize_tflite_outputs(
             path, directory / f"{source.stem}_float_outputs_vela.tflite")
     operators = inspect_tflite(path, require_npu=require_npu,
-                               output_type=getattr(args, "output_type", "int8"))
+                               output_type=getattr(args, "output_type", "int8"),
+                               allow_float_boundaries=allow_float_boundaries)
     print(f"TFLite {args.memory_mode}: {operators}; log={log}", flush=True)
     return {"path": str(path), "bytes": path.stat().st_size, "command": command,
             "log": str(log), **operators,
@@ -264,3 +290,16 @@ def validate_tflite_models(float_path: Path, int8_path: Path, samples: list[dict
                          "validation": validate_outputs(predict, samples, not integer,
                                                         args.max_score_error, args.min_box_iou)}
     return result
+
+
+def create_interpreter(path: Path) -> Any:
+    """Load an available LiteRT or TensorFlow interpreter only when needed.
+
+    :param path:    TFLite model to execute on the host.
+    :returns:       Interpreter with four host worker threads.
+    """
+    try:
+        interpreter_type = import_module("ai_edge_litert.interpreter").Interpreter
+    except ModuleNotFoundError:
+        interpreter_type = import_module("tensorflow").lite.Interpreter
+    return interpreter_type(model_path=str(path), num_threads=4)

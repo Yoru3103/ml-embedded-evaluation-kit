@@ -36,7 +36,7 @@ def make_samples(paths: list[Path], metadata: dict,
     :returns:           Inputs and all ONNX reference outputs in graph order.
     """
     ort = import_module("onnxruntime")
-    load_image = import_module("model_export.common.images").load_image
+    load_image = import_module("model_export.common.images").load_image_array
     options = ort.SessionOptions()
     options.intra_op_num_threads = args.threads
     graph = import_module("model_export.qrcode.contract").load_model(args.model)
@@ -45,7 +45,7 @@ def make_samples(paths: list[Path], metadata: dict,
     samples = []
     for path in paths:
         inputs = load_image(path, metadata["image_size"], args.preprocessing,
-                            metadata["input_channels"]).numpy()
+                            metadata["input_channels"])
         outputs = session.run([item["name"] for item in metadata["outputs"]],
                               {metadata["input"]["name"]: inputs})
         samples.append({"image": str(path), "input": inputs, "reference": outputs,
@@ -118,8 +118,8 @@ def run_exports(args: argparse.Namespace, report: dict):
     if args.reference_tflite is not None:
         report["reference_tflite"] = compare_reference(args, samples, metadata, modes)
     if args.format in ("both", "tflite"):
-        calibration = [images.load_image(path, args.image_size, args.preprocessing,
-                                   args.input_channels).numpy()
+        calibration = [images.load_image_array(path, args.image_size, args.preprocessing,
+                                             args.input_channels)
                        for path in paths]
         if args.tflite_backend == "onnx2tf":
             report["tflite"] = import_module("model_export.qrcode.onnx2tf").export_tflite(
@@ -149,7 +149,8 @@ def run_export(args: argparse.Namespace) -> dict:
     """
     os.environ["PATH"] = os.pathsep.join(
         (str(Path(sys.executable).absolute().parent), os.environ.get("PATH", "")))
-    import_module("torch").set_num_threads(args.threads)
+    if args.format in ("both", "pte") or args.tflite_backend == "litert":
+        import_module("torch").set_num_threads(args.threads)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = {"status": "started",
               "source_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),

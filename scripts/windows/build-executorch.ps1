@@ -22,15 +22,20 @@ param(
     [ValidateRange(1, 1000)][int]$NumClasses = 0,
     [string]$ActivationBufferSize,
     [string]$BuildDirectory,
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')][string]$BuildType = 'Debug',
+    [ValidateRange(0, 1048576)][int]$CacheSizeKiB = 0,
+    [string]$TimingAdapterConfig,
+    [ValidateSet('', 'A', 'B', 'B_SRAM0', 'B_SRAM1', 'BW', 'C', 'D', 'LATENCY')][string]$PmuGroup = '',
     [ValidateSet('Dedicated_Sram', 'Shared_Sram')][string]$MemoryMode = 'Dedicated_Sram',
     [ValidateRange(1, 128)][int]$Jobs = 4,
     [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+. (Join-Path $PSScriptRoot 'windows-build-options.ps1')
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
-    if ($argument -notmatch '^-D[A-Za-z0-9_]+(?::[A-Za-z]+)?=') {
+    if ($argument -notmatch '^-D[A-Za-z0-9_][A-Za-z0-9_-]*(?::[A-Za-z]+)?=') {
         throw 'CMakeArgs accepts only -DNAME=value definitions.'
     }
     if ($argument -match '^-D(CMAKE_(TOOLCHAIN_FILE|C_COMPILER|CXX_COMPILER|MAKE_PROGRAM)|ML_FRAMEWORK|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|MLEK_PYTHON_VENV|RESOURCES_PATH|USE_CASE_BUILD|ETHOS_U_NPU_MEMORY_MODE)(:|=)') {
@@ -45,7 +50,9 @@ $toolsVenvDir = Join-Path $repoRoot 'resources_downloaded/windows-tools/env'
 $venvHelper = Join-Path $PSScriptRoot 'windows-venv.ps1'
 . $venvHelper
 if (-not $BuildDirectory) {
-    $BuildDirectory = Join-Path $repoRoot "build/windows-$Toolchain-et-$Target-$UseCase-$MemoryMode"
+    $BuildDirectory = Get-WindowsFirmwareBuildDirectory -RepoRoot $repoRoot `
+        -Framework pte -Toolchain $Toolchain -Target $Target -UseCase $UseCase `
+        -MemoryMode $MemoryMode -CacheSizeKiB $CacheSizeKiB -BuildType $BuildType -PmuGroup $PmuGroup
 } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot $BuildDirectory
 }
@@ -81,8 +88,10 @@ try {
         throw 'Initialize dependencies first: git submodule update --init --recursive'
     }
     $version = (Get-Content -LiteralPath $versionFile -Raw).Trim()
-    if ($version -ne '1.3.1') {
-        throw "This Windows setup is pinned to ExecuTorch 1.3.1; source reports $version."
+    $runtimePackages = switch ($version) {
+        '1.3.1' { @{ Torch='2.12.0'; TorchAo='0.17.0' } }
+        '1.5.1' { @{ Torch='2.14.0'; TorchAo='0.18.0' } }
+        default { throw "Unsupported ExecuTorch source version $version; update the package mapping." }
     }
     if ($Action -in @('Setup', 'All')) {
         $buildTools = Ensure-WindowsBuildTools -ToolsVenvDir $toolsVenvDir
@@ -90,8 +99,8 @@ try {
         # This is the independent Torch/ExecuTorch environment.
         Ensure-WindowsVenv -VenvDir $venvDir | Out-Null
         Invoke-Checked $python @('-m', 'pip', 'install',
-            'executorch==1.3.1',
-            'torch==2.12.0', 'torchao==0.17.0', '-e', (Join-Path $repoRoot 'scripts/py'))
+            "executorch==$version",
+            "torch==$($runtimePackages.Torch)", "torchao==$($runtimePackages.TorchAo)", '-e', (Join-Path $repoRoot 'scripts/py'))
         # CMake and Ninja live only in the shared Windows tools environment.
         Invoke-Checked $python @('-m', 'pip', 'uninstall', '-y', 'cmake', 'ninja')
         Invoke-Checked $python @('-m', 'pip', 'check')
@@ -101,7 +110,7 @@ try {
     $env:PATH = "$($buildTools.BinDir);$binDir;$env:PATH"
     if (-not (Test-WindowsVenv -Python $python)) { throw 'Run -Action Setup first.' }
     Invoke-Checked $python @('-c',
-        "import importlib.metadata as m; assert m.version('executorch') == '1.3.1'; assert m.version('torch').split('+')[0] == '2.12.0'; from executorch.exir._serialize import _deserialize_pte_binary; import torchgen")
+        "import importlib.metadata as m; assert m.version('executorch') == '$version'; assert m.version('torch').split('+')[0] == '$($runtimePackages.Torch)'; assert m.version('torchao').split('+')[0] == '$($runtimePackages.TorchAo)'; from executorch.exir._serialize import _deserialize_pte_binary; import torchgen")
     Invoke-Checked (Join-Path $binDir 'flatc.exe') @('--version')
     if ($Action -eq 'Setup') { return }
     foreach ($dependency in @('third-party/flatbuffers', 'third-party/flatcc',
@@ -110,15 +119,22 @@ try {
             throw "Missing ExecuTorch submodule $dependency. Run git submodule update --init --recursive."
         }
     }
-    # ExecuTorch 1.3.1 uses the target's WIN32 when creating host flatc.
-    # Carry a small reversible patch to reuse the Windows wheel executable.
+    # Newer sources accept FLATC_EXECUTABLE directly. Keep the tracked patch
+    # only for the current 1.3.1 source; never apply it to a newer dependency.
     $hostPatch = Join-Path $PSScriptRoot 'patches/executorch-host-flatc.patch'
     $thirdPartyCmake = Join-Path $etSource 'third-party/CMakeLists.txt'
-    if (Select-String -LiteralPath $thirdPartyCmake -Pattern 'MLEK_HOST_FLATC' -Quiet) {
-        Invoke-Checked 'git' @('-C', $etSource, 'apply', '--reverse', '--check', $hostPatch)
-    } else {
-        Invoke-Checked 'git' @('-C', $etSource, 'apply', '--check', $hostPatch)
-        Invoke-Checked 'git' @('-C', $etSource, 'apply', $hostPatch)
+    $nativeHostFlatc = Select-String -LiteralPath $thirdPartyCmake `
+        -Pattern 'if\(FLATC_EXECUTABLE\)' -Quiet
+    if (-not $nativeHostFlatc) {
+        if ($version -ne '1.3.1') {
+            throw "ExecuTorch $version must provide native FLATC_EXECUTABLE support."
+        }
+        if (Select-String -LiteralPath $thirdPartyCmake -Pattern 'MLEK_HOST_FLATC' -Quiet) {
+            Invoke-Checked 'git' @('-C', $etSource, 'apply', '--reverse', '--check', $hostPatch)
+        } else {
+            Invoke-Checked 'git' @('-C', $etSource, 'apply', '--check', $hostPatch)
+            Invoke-Checked 'git' @('-C', $etSource, 'apply', $hostPatch)
+        }
     }
     if (-not $ModelPath -and $UseCase -eq 'yolov8_pose' -and $MemoryMode -eq 'Dedicated_Sram') {
         $ModelPath = Join-Path $repoRoot `
@@ -204,11 +220,18 @@ try {
         $argsList += @('-DETHOS_U_NPU_CACHE_SIZE=262144',
             '-DTA_CONFIG_FILE=ta_config_u85_sys_dram_1024')
     }
+    $argsList += @(Get-WindowsFirmwareCMakeArgs -BuildType $BuildType `
+        -CacheSizeKiB $CacheSizeKiB -TimingAdapterConfig $TimingAdapterConfig -PmuGroup $PmuGroup)
     $argsList += $CMakeArgs
+    $infoArgs = @{ BuildDirectory=$BuildDirectory; Framework='pte'; UseCase=$UseCase;
+        CMakeExecutable=$cmake; ConfigureArgs=$argsList; ModelPath=$ModelPath; Jobs=$Jobs }
+    Write-WindowsFirmwareBuildInfo @infoArgs -Status started
     Invoke-Checked $cmake $argsList
     if ($Action -ne 'Configure') {
         Invoke-Checked $cmake @('--build', $BuildDirectory, '--parallel', "$Jobs")
     }
+    Write-WindowsFirmwareBuildInfo @infoArgs `
+        -Status $(if ($Action -eq 'Configure') { 'configured' } else { 'built' })
 } finally {
     foreach ($name in $savedEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process')
