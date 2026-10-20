@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 import random
 
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image
+
+from mlek_tools.gen.gen_rgb_cpp import resize_letterbox_image
 
 if TYPE_CHECKING:
     import torch
@@ -29,51 +31,55 @@ def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
     return paths[:limit] if limit else paths
 
 
-def load_image_array(path: Path, image_size: int, preprocessing: str,
+def load_image_array(path: Path, image_size: int | tuple[int, int], preprocessing: str,
                      channels: int = 3) -> np.ndarray:
-    """Load RGB or grayscale /255 NCHW data after the deployment resize policy.
+    """Load an image as normalized NCHW data at the requested model input size.
 
     :param path:            Source image.
-    :param image_size:      Square input resolution.
-    :param preprocessing:   Resize and crop policy.
+    :param image_size:      Target width and height, or a square side length.
+    :param preprocessing:   Center crop or the CMake image generator's letterbox.
     :param channels:        Model input channels, one or three.
     :returns:               Contiguous normalized float32 NCHW array.
     :raises ValueError:     Unsupported image policy or channel count.
     """
+    if channels not in (1, 3):
+        raise ValueError("Model input must have one or three channels")
+    target_size = (image_size, image_size) if isinstance(image_size, int) else image_size
+    target_width, target_height = target_size
+    if target_width <= 0 or target_height <= 0:
+        raise ValueError("Model input width and height must be positive")
     with Image.open(path) as source:
-        image = source.convert("RGB")
+        image = source.convert("RGB" if preprocessing == "mlek-crop" or channels == 3
+                               else "L")
     if preprocessing == "mlek-crop":
-        ratio = image_size / min(image.size)
+        ratio = max(target_width / image.width, target_height / image.height)
         image = image.resize((int(image.width * ratio), int(image.height * ratio)),
                              Image.Resampling.BILINEAR)
-        left = (image.width - image_size) / 2
-        top = (image.height - image_size) / 2
-        image = image.crop((left, top, left + image_size, top + image_size))
+        left = (image.width - target_width) / 2
+        top = (image.height - target_height) / 2
+        image = image.crop((left, top, left + target_width, top + target_height))
+        if channels == 1:
+            image = image.convert("L")
+        values = np.asarray(image, dtype=np.float32)
     elif preprocessing == "letterbox":
-        ratio = image_size / max(image.size)
-        image = image.resize((round(image.width * ratio), round(image.height * ratio)),
-                             Image.Resampling.BILINEAR)
-        width, height = image_size - image.width, image_size - image.height
-        image = ImageOps.expand(image, (width // 2, height // 2,
-                                      width - width // 2, height - height // 2),
-                                fill=(114, 114, 114))
+        values = resize_letterbox_image(image, target_size).reshape(
+            (target_height, target_width) if channels == 1
+            else (target_height, target_width, channels)).astype(np.float32)
     else:
         raise ValueError(f"Unknown preprocessing: {preprocessing}")
     if channels == 1:
-        image = image.convert("L")
-    elif channels != 3:
-        raise ValueError("Model input must have one or three channels")
-    values = np.asarray(image, dtype=np.float32)
-    values = values[None, None] if channels == 1 else values.transpose(2, 0, 1)[None]
+        values = values[None, None]
+    else:
+        values = values.transpose(2, 0, 1)[None]
     return np.ascontiguousarray(values / 255.0)
 
 
-def load_image(path: Path, image_size: int, preprocessing: str,
+def load_image(path: Path, image_size: int | tuple[int, int], preprocessing: str,
                channels: int = 3) -> torch.Tensor:
     """Wrap shared image preparation as a PyTorch tensor when requested.
 
     :param path:            Source image.
-    :param image_size:      Square input resolution.
+    :param image_size:      Target width and height, or a square side length.
     :param preprocessing:  Resize and crop policy.
     :param channels:        Model input channels, one or three.
     :returns:               Contiguous normalized NCHW tensor.

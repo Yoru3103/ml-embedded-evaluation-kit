@@ -482,28 +482,12 @@ bool YoloV8NewPostProcess::DecodeDetections()
         return false;
     }
 
-    // A 1x1 feature map and a four-dimensional angle output can have the same
-    // singleton axes. Use the larger heads' channel count to distinguish them.
-    size_t featureChannels = 0;
-    size_t largestSide     = 1;
-    for (const auto& tensor : m_outputTensors) {
-        if (tensor == nullptr) {
-            continue;
-        }
-        const auto shape = tensor->Shape();
-        if (shape.size() != 4 || shape[0] != 1) {
-            continue;
-        }
-        if (shape[2] == shape[3] && shape[2] > largestSide && shape[1] > m_params.numClasses &&
-            (shape[1] - m_params.numClasses) % 4 == 0) {
-            featureChannels = shape[1];
-            largestSide     = shape[2];
-        } else if (shape[1] == shape[2] && shape[1] > largestSide &&
-                   shape[3] > m_params.numClasses && (shape[3] - m_params.numClasses) % 4 == 0) {
-            featureChannels = shape[3];
-            largestSide     = shape[1];
-        }
-    }
+    const auto validFeature = [this](size_t height, size_t width, size_t channels) {
+        return height > 0 && width > 0 && channels > m_params.numClasses &&
+               (channels - m_params.numClasses) % 4 == 0 && m_params.imageWidth % width == 0 &&
+               m_params.imageHeight % height == 0 &&
+               m_params.imageWidth / width == m_params.imageHeight / height;
+    };
     std::shared_ptr<fwk::iface::TensorIface> angleTensor;
     std::vector<FeatureMap> featureMaps;
     featureMaps.reserve(3);
@@ -516,14 +500,12 @@ bool YoloV8NewPostProcess::DecodeDetections()
             return false;
         }
 
-        const auto shape         = tensor->Shape();
-        const auto validChannels = [this, featureChannels](size_t channels) {
-            return channels > m_params.numClasses && (channels - m_params.numClasses) % 4 == 0 &&
-                   (featureChannels == 0 || channels == featureChannels);
-        };
-        const bool isFeatureShape =
-            shape.size() == 4 && ((shape[2] == shape[3] && validChannels(shape[1])) ||
-                                  (shape[1] == shape[2] && validChannels(shape[3])));
+        const auto shape = tensor->Shape();
+        const bool channelsFirstShape =
+            shape.size() == 4 && shape[0] == 1 && validFeature(shape[2], shape[3], shape[1]);
+        const bool channelsLastShape =
+            shape.size() == 4 && shape[0] == 1 && validFeature(shape[1], shape[2], shape[3]);
+        const bool isFeatureShape = channelsFirstShape || channelsLastShape;
         const bool isAngleShape =
             (shape.size() == 1) || (shape.size() == 2 && shape[0] == 1) ||
             (shape.size() == 3 && shape[0] == 1 && (shape[1] == 1 || shape[2] == 1)) ||
@@ -548,12 +530,12 @@ bool YoloV8NewPostProcess::DecodeDetections()
             printf_err("Invalid new YOLOv8 output storage or quantization\n");
             return false;
         }
-        if (shape[2] == shape[3] && validChannels(shape[1])) {
+        if (channelsFirstShape) {
             const bool channelsFirst =
                 !m_useTensorLayout || tensor->Layout() != fwk::iface::TensorLayout::NHWC;
             featureMaps.push_back(
                 {reader, nullptr, shape[2], shape[3], shape[1], 0, 0, channelsFirst});
-        } else if (shape[1] == shape[2] && validChannels(shape[3])) {
+        } else if (channelsLastShape) {
             featureMaps.push_back({reader, nullptr, shape[1], shape[2], shape[3], 0, 0, false});
         } else {
             printf_err("New YOLOv8 feature map has no DFL/class channel dimension\n");

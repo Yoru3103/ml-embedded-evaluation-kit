@@ -12,6 +12,9 @@ python="$venv_path/bin/python"
 cmake="$venv_path/bin/cmake"
 sample_path="${QRCODE_SAMPLE_PATH:-$repo_root/resources/qrcode/smaples}"
 labels="${QRCODE_LABELS_FILE:-$repo_root/resources/qrcode/labels.txt}"
+image_width="${QRCODE_IMAGE_WIDTH:-256}"
+image_height="${QRCODE_IMAGE_HEIGHT:-256}"
+preprocessing="${QRCODE_PREPROCESSING:-mlek-crop}"
 output="${QRCODE_MATRIX_ROOT:-$repo_root/build-qrcode-pte-matrix}"
 jobs="${BUILD_JOBS:-8}"
 fvp_timeout="${FVP_TIMEOUT:-1800}"
@@ -53,6 +56,8 @@ Build and runtime logs: OUTPUT/{fpga,fvp}/VARIANT/{configure,build,fvp}.log
 (fvp.log is generated only for --run-fvp.)
 
 Environment: QRCODE_SAMPLE_PATH, QRCODE_LABELS_FILE, QRCODE_MATRIX_ROOT,
+             QRCODE_IMAGE_WIDTH (256), QRCODE_IMAGE_HEIGHT (256),
+             QRCODE_PREPROCESSING (mlek-crop or letterbox),
              BUILD_JOBS (8), FVP_PATH, FVP_TIMEOUT (1800 seconds per firmware),
              QRCODE_CALIBRATION_DIR, QRCODE_VALIDATION_DIR, QRCODE_THREADS (4),
              QRCODE_VALIDATION_LIMIT (543), QRCODE_MAX_SCORE_ERROR (0.9),
@@ -91,6 +96,12 @@ while (( $# )); do
 done
 if [[ "$output_type" != int8 && "$output_type" != float32 ]]; then
     printf 'Output type must be int8 or float32.\n' >&2; exit 1
+fi
+if [[ ! "$image_width" =~ ^[1-9][0-9]*$ || ! "$image_height" =~ ^[1-9][0-9]*$ ]] ||
+   (( image_width % 32 != 0 || image_height % 32 != 0 )) ||
+   [[ "$preprocessing" != mlek-crop && "$preprocessing" != letterbox ]]; then
+    printf 'QR-code width/height must be positive multiples of 32; preprocessing must be mlek-crop or letterbox.\n' >&2
+    exit 1
 fi
 if [[ -n "$quantized_pt2" && ( ! -f "$quantized_pt2" || -n "$npu_model_root" ) ]]; then
     printf -- '--quantized-pt2 requires an existing cache and a PT source, not --npu-model-root.\n' >&2
@@ -174,12 +185,16 @@ common=(
     -DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=ON
     "-DTA_CONFIG_FILE=$repo_root/scripts/cmake/timing_adapter/ta_config_u85_sys_dram_mid.cmake"
     "-Dqrcode_FILE_PATH=$sample_path" "-Dqrcode_LABELS_FILE=$labels"
+    "-Dqrcode_IMAGE_WIDTH=$image_width" "-Dqrcode_IMAGE_HEIGHT=$image_height"
+    "-Dqrcode_IMAGE_RESIZE_MODE=${preprocessing#mlek-}"
     -Dqrcode_ACTIVATION_BUF_SZ=0x00400000
 )
 if [[ -z "$npu_model_root" && -z "$quantized_pt2" ]]; then
         run_logged "$output/common/calibration.log" "$python" "$repo_root/scripts/export_model.py" \
-        --model "$model" --to pte --io-layout nhwc --image-size 256 --output-type "$output_type" \
-        --preprocessing mlek-crop --calibration-dir "$calibration" --calibration-limit 0 \
+        --model "$model" --to pte --io-layout nhwc \
+        --image-width "$image_width" --image-height "$image_height" \
+        --output-type "$output_type" \
+        --preprocessing "$preprocessing" --calibration-dir "$calibration" --calibration-limit 0 \
         --validation-dir "$validation" --validation-limit "$validation_limit" \
         --seed 0 --threads "$threads" --per-channel \
         --max-score-error "$max_score_error" --min-box-iou "$min_box_iou" \
@@ -206,8 +221,10 @@ for variant in shared 64 128 256 384 768; do
     if [[ "$mode" == Shared_Sram ]]; then export_cache=393216; fi
     if [[ -z "$npu_model_root" ]]; then
         run_logged "$model_dir/export.log" "$python" "$repo_root/scripts/export_model.py" \
-        --model "$model" --to pte --io-layout nhwc --image-size 256 --output-type "$output_type" \
-        --preprocessing mlek-crop --calibration-dir "$calibration" --calibration-limit 0 \
+        --model "$model" --to pte --io-layout nhwc \
+        --image-width "$image_width" --image-height "$image_height" \
+        --output-type "$output_type" \
+        --preprocessing "$preprocessing" --calibration-dir "$calibration" --calibration-limit 0 \
         --validation-dir "$validation" --validation-limit "$validation_limit" \
         --seed 0 --threads "$threads" --per-channel \
         --max-score-error "$max_score_error" --min-box-iou "$min_box_iou" \
@@ -220,7 +237,8 @@ for variant in shared 64 128 256 384 768; do
     fi
     model_paths[$variant]="$compiled"
     if (( ! dry_run )) || [[ -n "$npu_model_root" ]]; then
-        "$python" - "$model_dir/export_report.json" "$mode" "$compiled" "$cache_bytes" "$output_type" <<'CHECK'
+        "$python" - "$model_dir/export_report.json" "$mode" "$compiled" "$cache_bytes" \
+            "$output_type" "$image_width" "$image_height" <<'CHECK'
 import json
 from pathlib import Path
 import sys
@@ -230,9 +248,10 @@ from model_export.qrcode.onnx_utils import check_pte_contract
 from model_export.qrcode.output_io import check_pte_execution
 
 report = json.loads(Path(sys.argv[1]).read_text())
+width, height = int(sys.argv[6]), int(sys.argv[7])
 if (report["status"] != "completed"
         or report.get("source_route") != "PT -> native grayscale raw OBB -> PT2E -> Ethos-U PTE"
-        or report["contract"]["input"]["shape"] != [1, 1, 256, 256]):
+        or report["contract"]["input"]["shape"] != [1, 1, height, width]):
     raise SystemExit("Native grayscale PT export did not complete")
 record = report["pte"][sys.argv[2]]
 output_type = sys.argv[5]

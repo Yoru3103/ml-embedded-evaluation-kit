@@ -18,7 +18,7 @@ import torch
 from export_model import run_export
 
 from model_export.common.cli import parse_args
-from model_export.qrcode.pt import ROOT
+from model_export.qrcode.pt import ROOT, expected_head_shapes
 from model_export.qrcode.backends import quantize
 
 
@@ -139,16 +139,12 @@ class NativeObbExportTests(unittest.TestCase):
             self.assertEqual(json.loads((args.output_dir / "export_report.json").read_text())
                              ["status"], "completed")
 
-    def test_invalid_size_records_failure(self):
-        """Reject the generic 320 default rather than producing an incompatible qrcode PTE."""
-        with TemporaryDirectory() as temporary:
-            args = fixture_args(Path(temporary), image_size=320)
-            with patch("ultralytics.YOLO", return_value=make_checkpoint()):
-                with self.assertRaisesRegex(ValueError, "--image-size 256"):
-                    run_export(args)
-            self.assertEqual(json.loads((args.output_dir / "export_report.json").read_text())
-                             ["status"], "failed")
-            self.assertFalse(list(args.output_dir.rglob("*.pte")))
+    def test_rectangular_head_shapes(self):
+        """Keep each raw OBB output aligned with a rectangular deployment input."""
+        self.assertEqual(expected_head_shapes(320, 192),
+                         [[1, 47, 24, 40], [1, 47, 12, 20], [1, 47, 6, 10], [1, 1, 1260]])
+        self.assertEqual(expected_head_shapes(416, 256),
+                         [[1, 47, 32, 52], [1, 47, 16, 26], [1, 47, 8, 13], [1, 1, 2184]])
 
     def test_native_float_outputs_keep_integer_input(self):
         """Compile four model-side dequantizers while rejecting network CPU fallback."""

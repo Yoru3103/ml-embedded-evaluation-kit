@@ -133,6 +133,49 @@ PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.com
 bash scripts/qrcode/build_qrcode_pte_matrix.sh --help
 ```
 
+The existing `resources_downloaded/qrcode/zint_samples_batch1/images/calibration`
+can be shared across input sizes. To create a new shared source dataset instead:
+
+```sh
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.generate_samples \
+    --zint /home/xx/zint/build/frontend/zint \
+    --image-size 256 --seed 20261015 \
+    --output-dir resources_downloaded/qrcode/size/calibration_shared
+```
+
+Use the same files from `images/calibration` for every model. The shared image
+loader accepts a target `(width, height)` and applies the QR-code CMake
+generator's bilinear, centered, gray-114 letterbox at calibration time. The
+native QR-code PT to PTE route accepts rectangular inputs with `--image-width`
+and `--image-height`. For example:
+
+```sh
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/qrcode/size/trained_320x192.pt --to pte \
+    --image-width 320 --image-height 192 --preprocessing letterbox \
+    --calibration-dir resources_downloaded/qrcode/zint_samples_batch1/images/calibration \
+    --validation-dir resources_downloaded/qrcode/zint_samples_batch1/images/validation \
+    --output-dir resources_downloaded/qrcode/size/exported_320x192
+```
+
+For a four-output INT8 LiteRT model from the same rectangular QR checkpoint:
+
+```sh
+resources_downloaded/env/bin/python scripts/export_model.py \
+    --model resources_downloaded/qrcode/size/trained_320x192.pt \
+    --to tflite --tflite-backend litert --io-layout nhwc \
+    --image-width 320 --image-height 192 --preprocessing letterbox \
+    --calibration-dir resources_downloaded/qrcode/zint_samples_batch1/images/calibration \
+    --calibration-limit 0 \
+    --validation-dir resources_downloaded/qrcode/zint_samples_batch1/images/validation \
+    --output-dir resources_downloaded/qrcode/size/litert_320x192
+```
+
+The uncompiled INT8 source for the Vela matrix is
+`litert_320x192/tflite/best_int8.tflite`. The command also compiles one Vela
+variant for validation. Each input size needs its own quantization and
+compilation, but all three can use this same source image set.
+
 Run regression tests with:
 
 ```sh

@@ -16,7 +16,7 @@
 
 namespace arm::app {
 
-/** Map grayscale BMP bytes to the model's NHWC 256x256 input tensor. */
+/** Map generated grayscale image bytes to the model's NHWC input tensor. */
 class QrCodePreProcess {
 public:
     explicit QrCodePreProcess(const std::shared_ptr<fwk::iface::TensorIface>& tensor) :
@@ -25,9 +25,12 @@ public:
 
     bool DoPreProcess(const uint8_t* image, size_t imageBytes)
     {
-        if (m_tensor == nullptr || image == nullptr || imageBytes != 256 * 256 ||
-            m_tensor->Shape() != std::vector<size_t>{1, 256, 256, 1} ||
-            m_tensor->GetData() == nullptr) {
+        if (m_tensor == nullptr || image == nullptr || m_tensor->GetData() == nullptr) {
+            return false;
+        }
+        const auto shape = m_tensor->Shape();
+        if (shape.size() != 4 || shape[0] != 1 || shape[1] == 0 || shape[2] == 0 || shape[3] != 1 ||
+            imageBytes != shape[1] * shape[2] || m_tensor->GetNumElements() != imageBytes) {
             return false;
         }
         const auto type = m_tensor->Type();

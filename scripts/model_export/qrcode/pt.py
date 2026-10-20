@@ -20,7 +20,7 @@ import numpy as np
 from model_export.common.paths import ROOT
 from model_export.common.reporting import export_manifest
 from model_export.qrcode.contract import describe_model
-from model_export.common.images import find_images, load_image
+from model_export.common.images import find_images, load_image, load_image_array
 
 torch = import_module("torch")
 OUTPUT_NAMES = ("p3_det", "p4_det", "p5_det", "angle")
@@ -95,14 +95,15 @@ def prepare_models(weights: Path,
     return RawObb(model).eval(), grayscale, channels, model.names
 
 
-def reference_samples(reference: RawObb, grayscale: RawObb, paths: list[Path], image_size: int,
+def reference_samples(reference: RawObb, grayscale: RawObb, paths: list[Path],
+                      image_size: int | tuple[int, int],
                       preprocessing: str = "mlek-crop") -> list[dict]:
     """Verify grayscale weight folding against repeated grayscale RGB images.
 
     :param reference:       Original model with raw output heads.
     :param grayscale:       Model with a one-channel first convolution.
     :param paths:           Images used to check both models.
-    :param image_size:      Fixed square input resolution.
+    :param image_size:      Model input width and height, or a square side length.
     :param preprocessing:   Image resize policy shared with calibration.
     :returns:               Cached grayscale inputs and checked floating outputs.
     """
@@ -131,21 +132,23 @@ def prepare_pte_source(args: argparse.Namespace, checkpoint: object) -> tuple:
     :returns:           Native grayscale model, validation samples and source report.
     :raises ValueError: The model or output contract is incompatible with qrcode.
     """
-    if args.image_size != 256:
-        raise ValueError("Direct QR-code PT export requires --image-size 256")
     reference, grayscale, channels, names = prepare_models(args.model, checkpoint)
     paths = find_images(args.calibration_dir, args.calibration_limit, args.seed)
     checks = find_images(args.validation_dir, args.validation_limit, args.seed + 1)
     verified = reference_samples(reference, grayscale, checks,
-                                 args.image_size, args.preprocessing)
-    expected = [[1, 47, side, side] for side in (32, 16, 8)] + [[1, 1, 1344]]
+                                 (args.image_width, args.image_height), args.preprocessing)
+    expected = expected_head_shapes(args.image_width, args.image_height)
     for sample in verified:
         if [list(value.shape) for value in sample["outputs"]] != expected:
             raise ValueError("Direct PT export requires three 47-channel heads and angle logits")
-    metadata = {"input": {"name": "images", "shape": [1, 1, 256, 256]},
+    metadata = {"input": {"name": "images",
+                          "shape": [1, 1, args.image_height, args.image_width]},
                 "outputs": [{"name": name, "shape": shape}
                             for name, shape in zip(OUTPUT_NAMES, expected)],
-                "image_size": 256, "input_channels": 1, "num_classes": 15,
+                "image_size": (args.image_width if args.image_width == args.image_height
+                               else [args.image_width, args.image_height]),
+                "image_width": args.image_width, "image_height": args.image_height,
+                "input_channels": 1, "num_classes": 15,
                 "dfl_bins": 8, "auxiliary_kind": "angle_logits"}
     samples = [{"image": sample["path"], "input": sample["input"],
                 "reference": sample["outputs"], "num_classes": 15} for sample in verified]
@@ -162,6 +165,18 @@ def prepare_pte_source(args: argparse.Namespace, checkpoint: object) -> tuple:
                                for sample in verified],
         "float_validation": import_module("model_export.qrcode.backends").validate_native_capture(
             grayscale, samples)}
+
+
+def expected_head_shapes(width: int, height: int) -> list[list[int]]:
+    """Describe the three raw detection maps and flattened angle output.
+
+    :param width:   Model input width.
+    :param height:  Model input height.
+    :returns:       Ordered NCHW output shapes.
+    """
+    features = [(height // stride, width // stride) for stride in (8, 16, 32)]
+    return ([[1, 47, rows, columns] for rows, columns in features]
+            + [[1, 1, sum(rows * columns for rows, columns in features)]])
 
 
 def run_pte_export(args: argparse.Namespace, checkpoint: object) -> dict:
@@ -212,6 +227,66 @@ def try_export_pte(args: argparse.Namespace) -> dict | None:
     if checkpoint.task != "obb":
         return None
     return run_pte_export(args, checkpoint)
+
+
+def run_tflite_export(args: argparse.Namespace, checkpoint: object) -> dict:
+    """Convert a native QR OBB checkpoint to four-output INT8 LiteRT and Vela models.
+
+    :param args:        Unified PT-to-TFLite arguments.
+    :param checkpoint:  Already loaded OBB checkpoint.
+    :returns:           Source parity, LiteRT validation and Vela reports.
+    """
+    if args.output_type != "int8":
+        raise ValueError("QR PT-to-LiteRT produces INT8 outputs for Vela matrix compilation")
+    os.environ["PATH"] = os.pathsep.join(
+        (str(Path(sys.executable).absolute().parent), os.environ.get("PATH", "")))
+    torch.set_num_threads(args.threads)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    manifest = args.output_dir / "export_report.json"
+    report = {"status": "started", "source": str(args.model),
+              "source_sha256": hashlib.sha256(args.model.read_bytes()).hexdigest(),
+              "source_route": "PT -> native grayscale raw OBB -> LiteRT -> INT8 TFLite",
+              "configuration": {key: str(value) if isinstance(value, Path) else value
+                                for key, value in vars(args).items()},
+              "validation_scope": "Original PT versus host LiteRT; compiled NPU execution untested"}
+    with export_manifest(manifest, report):
+        model, samples, source = prepare_pte_source(args, checkpoint)
+        report.update(source)
+        args.reference_source = "Original PT raw OBB heads"
+        labels = args.output_dir / "labels.txt"
+        labels.write_text("\n".join(source["labels"]) + "\n", encoding="utf-8")
+        report["labels_file"] = str(labels)
+        image_size = (args.image_width, args.image_height)
+        calibration = [load_image_array(Path(path), image_size, args.preprocessing, channels=1)
+                       for path in source["calibration_images"]]
+        backends = import_module("model_export.qrcode.backends")
+        report["tflite"] = backends.export_tflite(
+            model, calibration, samples, source["contract"], args)
+        compiler = import_module("model_export.qrcode.tflite_utils").compile_tflite
+        modes = (["Dedicated_Sram", "Shared_Sram"] if args.memory_mode == "all"
+                 else [args.memory_mode])
+        report["tflm"] = {}
+        for mode in modes:
+            options = argparse.Namespace(**vars(args))
+            options.memory_mode = mode
+            report["tflm"][mode] = compiler(
+                options, Path(report["tflite"]["int8"]["path"]))
+    print(json.dumps({"report": str(manifest), "status": report["status"]}), flush=True)
+    return report
+
+
+def try_export_tflite(args: argparse.Namespace) -> dict | None:
+    """Use the native QR raw-head route for LiteRT, leaving Detect unchanged.
+
+    :param args:    Unified PT-to-TFLite arguments.
+    :returns:       QR-code LiteRT report, or no result for a Detect checkpoint.
+    """
+    checkpoint = import_module("ultralytics").YOLO(str(args.model))
+    if checkpoint.task != "obb":
+        return None
+    if args.format != "tflite":
+        raise ValueError("QR OBB PT export requires separate --to pte and --to tflite runs")
+    return run_tflite_export(args, checkpoint)
 
 
 def normalize_source(path: Path):

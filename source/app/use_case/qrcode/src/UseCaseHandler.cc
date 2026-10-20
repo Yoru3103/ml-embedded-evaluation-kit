@@ -27,18 +27,19 @@
 namespace arm::app {
 namespace {
 
-    constexpr uint32_t imageSize  = 256;
     constexpr uint32_t classCount = 15;
-    constexpr uint32_t angleCount = 32 * 32 + 16 * 16 + 8 * 8;
 
-    bool CheckOutputShapes(fwk::iface::Model& model)
+    bool CheckOutputShapes(fwk::iface::Model& model, size_t imageWidth, size_t imageHeight)
     {
-        if (model.GetNumOutputs() != 4) {
+        if (model.GetNumOutputs() != 4 || imageWidth % 32 != 0 || imageHeight % 32 != 0) {
             return false;
         }
         bool featureMaps[3]{};
-        bool hasAngle               = false;
-        constexpr size_t mapSizes[] = {32, 16, 8};
+        bool hasAngle     = false;
+        size_t angleCount = 0;
+        for (const size_t stride : {size_t{8}, size_t{16}, size_t{32}}) {
+            angleCount += imageWidth / stride * (imageHeight / stride);
+        }
         for (size_t index = 0; index < 4; ++index) {
             const auto tensor = model.GetOutputTensor(index);
             if (tensor == nullptr) {
@@ -59,10 +60,12 @@ namespace {
             }
             bool found = false;
             for (size_t map = 0; map < 3; ++map) {
-                const size_t side = mapSizes[map];
+                const size_t stride = size_t{8} << map;
+                const size_t rows   = imageHeight / stride;
+                const size_t cols   = imageWidth / stride;
                 if (!featureMaps[map] &&
-                    ((shape[1] == 47 && shape[2] == side && shape[3] == side) ||
-                     (shape[1] == side && shape[2] == side && shape[3] == 47))) {
+                    ((shape[1] == 47 && shape[2] == rows && shape[3] == cols) ||
+                     (shape[1] == rows && shape[2] == cols && shape[3] == 47))) {
                     featureMaps[map] = true;
                     found            = true;
                     break;
@@ -141,18 +144,22 @@ bool QrCodeHandler(ApplicationContext& ctx)
     auto& profiler       = ctx.Get<Profiler&>("profiler");
     auto& outputProfiler = ctx.Get<OutputDequantizationProfiler&>("outputProfiler");
     const auto& labels   = ctx.Get<const std::vector<std::string>&>("labels");
-    if (!model.IsInited() || model.GetNumInputs() != 1 || !CheckOutputShapes(model) ||
-        labels.size() != classCount || get_sample_img_width() != imageSize ||
-        get_sample_img_height() != imageSize ||
-        get_sample_img_total_bytes() != imageSize * imageSize) {
-        printf_err(
-            "QR-code model/sample must be grayscale NHWC 256x256 with 47/47/47/angle outputs\n");
+    if (!model.IsInited() || model.GetNumInputs() != 1 || labels.size() != classCount) {
+        printf_err("QR-code model requires one input and 15 labels\n");
         return false;
     }
 
-    const auto input = model.GetInputTensor(0);
-    if (input == nullptr || input->Shape() != std::vector<size_t>{1, imageSize, imageSize, 1}) {
-        printf_err("QR-code input must have NHWC shape [1, 256, 256, 1]\n");
+    const auto input           = model.GetInputTensor(0);
+    const uint32_t imageWidth  = get_sample_img_width();
+    const uint32_t imageHeight = get_sample_img_height();
+    if (input == nullptr || imageWidth == 0 || imageHeight == 0 ||
+        input->Shape() != std::vector<size_t>{1, imageHeight, imageWidth, 1} ||
+        get_sample_img_total_bytes() != static_cast<size_t>(imageWidth) * imageHeight) {
+        printf_err("QR-code sample dimensions must match the grayscale NHWC model input\n");
+        return false;
+    }
+    if (!CheckOutputShapes(model, imageWidth, imageHeight)) {
+        printf_err("QR-code model requires three 47-channel heads and matching angle logits\n");
         return false;
     }
 
@@ -161,8 +168,8 @@ bool QrCodeHandler(ApplicationContext& ctx)
         outputs.push_back(model.GetOutputTensor(index));
     }
     std::vector<yolov8_detection::DetectionResult> results;
-    const YoloV8PostProcessParams params{imageSize,
-                                         imageSize,
+    const YoloV8PostProcessParams params{imageWidth,
+                                         imageHeight,
                                          classCount,
                                          QRCODE_MAX_DETECTIONS,
                                          QRCODE_SCORE_THRESHOLD,
@@ -177,13 +184,13 @@ bool QrCodeHandler(ApplicationContext& ctx)
     constexpr uint32_t screenWidth  = 320;
     constexpr uint32_t screenHeight = 240;
     constexpr uint32_t downscale    = QRCODE_DISPLAY_DOWNSCALE;
-    if (downscale == 0 || imageSize / downscale == 0 ||
-        imageX + imageSize / downscale + 10 >= screenWidth ||
-        imageY + imageSize / downscale > screenHeight) {
+    if (downscale == 0 || imageWidth / downscale == 0 || imageHeight / downscale == 0 ||
+        imageX + imageWidth / downscale + 10 >= screenWidth ||
+        imageY + imageHeight / downscale > screenHeight) {
         printf_err("QR-code display layout does not fit the LCD\n");
         return false;
     }
-    const uint32_t textX     = imageX + imageSize / downscale + 10;
+    const uint32_t textX     = imageX + imageWidth / downscale + 10;
     const uint32_t textCellX = textX / 9 * 9;
     const uint32_t textCellY = 40 / 15 * 15;
 
@@ -199,7 +206,7 @@ bool QrCodeHandler(ApplicationContext& ctx)
         hal_display_clear(COLOR_BLACK);
         const std::string message{"Running inference"};
         hal_display_show_text(message.c_str(), message.size(), textX, 40, false);
-        hal_display_show_image(image, imageSize, imageSize, 1, imageX, imageY, downscale);
+        hal_display_show_image(image, imageWidth, imageHeight, 1, imageX, imageY, downscale);
 
         profiler.StartProfiling("PreProcessing", false);
         if (!preProcess.DoPreProcess(image, get_sample_img_total_bytes())) {
@@ -240,7 +247,7 @@ bool QrCodeHandler(ApplicationContext& ctx)
         PrintResults(results, labels);
         hal_display_show_box(textCellX, textCellY, screenWidth - textCellX, 15, COLOR_BLACK);
         PresentResults(results, labels, textX, 40);
-        DrawDetectionBoxes(results, imageX, imageY, imageSize, imageSize, downscale);
+        DrawDetectionBoxes(results, imageX, imageY, imageWidth, imageHeight, downscale);
         profiler.PrintProfilingResult();
     }
     return true;
