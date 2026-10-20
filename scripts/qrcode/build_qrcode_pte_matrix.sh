@@ -226,8 +226,8 @@ from pathlib import Path
 import sys
 import re
 from executorch.exir._serialize import _deserialize_pte_binary
-from qrcode_onnx_utils import check_pte_contract
-from qrcode_output_io import check_pte_execution
+from model_export.qrcode.onnx_utils import check_pte_contract
+from model_export.qrcode.output_io import check_pte_execution
 
 report = json.loads(Path(sys.argv[1]).read_text())
 if (report["status"] != "completed"

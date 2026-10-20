@@ -107,7 +107,7 @@ import sys
 from PIL import Image
 from ethosu.vela.tflite.Model import Model
 from ethosu.vela.tflite.TensorType import TensorType
-from qrcode_tflite_utils import inspect_tflite
+from model_export.qrcode.tflite_utils import inspect_tflite
 
 source, samples = map(Path, sys.argv[1:])
 if source.is_file():
@@ -206,7 +206,7 @@ import csv
 from pathlib import Path
 import sys
 from ethosu.vela.tflite.Model import Model
-from qrcode_tflite_utils import inspect_tflite
+from model_export.qrcode.tflite_utils import inspect_tflite
 from mlek_tools.validation.npu_validation import NpuValidationArgs
 from mlek_tools.validation.tflite_validator import validate_tflite_model
 
