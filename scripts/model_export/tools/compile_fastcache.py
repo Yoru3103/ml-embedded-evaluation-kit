@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
 import json
@@ -18,14 +19,29 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from export_qrcode_onnx import make_samples, write_manifest
-from qrcode_contract import describe_model
-from qrcode_tflite_utils import inspect_tflite
+from model_export.qrcode.onnx import make_samples
+from model_export.common.reporting import write_manifest
+from model_export.qrcode.contract import describe_model
+from model_export.qrcode.tflite_utils import inspect_tflite
+
+from model_export.common.paths import ROOT
 
 if TYPE_CHECKING:
     import torch
 
-ROOT = Path(__file__).resolve().parents[1]
+
+def compile_quantized_pte(quantized: torch.fx.GraphModule, samples: list[dict],
+                         metadata: dict, options: argparse.Namespace) -> dict:
+    """Load the PTE backend only when compiling a PTE variant.
+
+    :param quantized:   Independent calibrated graph for this variant.
+    :param samples:     Shared validation samples.
+    :param metadata:    Checked source tensor contract.
+    :param options:     Target and memory configuration.
+    :returns:           Compiled artifact and validation record.
+    """
+    backend = import_module("model_export.qrcode.backends")
+    return backend.compile_quantized_pte(quantized, samples, metadata, options)
 CACHE_SIZES = (64, 128, 256, 384, 768)
 
 
@@ -118,8 +134,8 @@ def compile_case(framework: str, cache_kib: int | None, args: argparse.Namespace
     print(f"Compile QR-code {framework} / {memory_mode} / {label}", flush=True)
     try:
         result = (compile_tflm(source, directory, options) if framework == "tflm"
-                  else import_module("qrcode_export_backends").compile_quantized_pte(
-                      context.quantized, context.samples, context.metadata, options))
+                  else compile_quantized_pte(deepcopy(context.quantized), context.samples,
+                                             context.metadata, options))
         record.update(result)
         record["model_sha256"] = hashlib.sha256(Path(result["path"]).read_bytes()).hexdigest()
         record["status"] = "completed"
@@ -135,7 +151,7 @@ def main():
     args = parse_args()
     report = json.loads((args.model_root / "export_report.json").read_text())
     if report["status"] != "completed":
-        raise ValueError("Complete export_qrcode_onnx.py validation before cache compilation")
+        raise ValueError("Complete export_model.py validation before cache compilation")
     options = argparse.Namespace(**report["configuration"])
     if args.target is not None:
         options.target = args.target

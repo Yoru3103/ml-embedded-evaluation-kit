@@ -10,10 +10,11 @@ from importlib import import_module
 import json
 from pathlib import Path
 
-from export_qrcode_onnx import make_samples, write_manifest
-from qrcode_contract import describe_model
-from qrcode_onnx_utils import validate_outputs
-from qrcode_tflite_utils import check_tflite_layout, lite_runner
+from model_export.qrcode.onnx import make_samples
+from model_export.common.reporting import write_manifest
+from model_export.qrcode.contract import describe_model
+from model_export.qrcode.onnx_utils import validate_outputs
+from model_export.qrcode.tflite_utils import check_tflite_layout, lite_runner
 
 
 def saved_export(directory: Path) -> tuple[argparse.Namespace, list[Path]]:

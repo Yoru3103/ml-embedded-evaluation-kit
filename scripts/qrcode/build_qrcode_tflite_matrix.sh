@@ -5,7 +5,8 @@
 # Build 2 platforms x (Shared SRAM + 5 Dedicated SRAM fast-cache sizes).
 # Supply an uncompiled, fully integer TFLite model with the qrcode tensor contract.
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 venv_path="$repo_root/resources_downloaded/env"
 python="$venv_path/bin/python"
 cmake="$venv_path/bin/cmake"
@@ -23,8 +24,8 @@ model=""
 output_type=int8
 usage() {
     cat <<'HELP'
-Usage: bash scripts/build_qrcode_tflite_matrix.sh MODEL.tflite [--run-fvp] [--dry-run]
-   or: bash scripts/build_qrcode_tflite_matrix.sh --npu-model-root DIR [--run-fvp]
+Usage: bash scripts/qrcode/build_qrcode_tflite_matrix.sh MODEL.tflite [--run-fvp] [--dry-run]
+   or: bash scripts/qrcode/build_qrcode_tflite_matrix.sh --npu-model-root DIR [--run-fvp]
 
 MODEL must be an INT8 TFLite BEFORE Vela compilation (not *_vela.tflite).
 Builds FPGA and FVP firmware for Shared_Sram and Dedicated_Sram 64/128/256/384/768 KiB.
@@ -234,7 +235,7 @@ CHECK
     if [[ "$output_type" == float32 ]]; then
         float_model="$output/models/$variant/$(basename -- "${compiled%_vela.tflite}")_float_outputs_vela.tflite"
         run_logged "$output/models/$variant/dequantize.log" \
-            "$python" "$repo_root/scripts/qrcode_output_io.py" \
+            "$python" -m model_export.qrcode.output_io \
             --model "$compiled" --output "$float_model"
         compiled="$float_model"
     fi

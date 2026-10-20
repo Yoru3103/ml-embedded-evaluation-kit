@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 
 from qrcode_onnx2tf_backend import check_nhwc_contract, load_image_array
-from qrcode_tflite_utils import lite_runner
+from model_export.qrcode.tflite_utils import lite_runner
 
 
 class QrcodeNhwcTests(unittest.TestCase):
@@ -21,7 +21,7 @@ class QrcodeNhwcTests(unittest.TestCase):
     def test_centered_crop(self):
         """Reject the old right-biased crop by checking a non-square RGB gradient."""
         pixels = np.arange(6 * 4 * 3, dtype=np.uint8).reshape(4, 6, 3)
-        with patch("qrcode_onnx2tf_backend.Image.open", return_value=Image.fromarray(pixels)):
+        with patch("model_export.common.images.Image.open", return_value=Image.fromarray(pixels)):
             actual = load_image_array(Path("unused.png"), 4, "mlek-crop")
         expected = pixels[:, 1:5].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
         np.testing.assert_array_equal(actual, expected)
@@ -42,7 +42,7 @@ class QrcodeNhwcTests(unittest.TestCase):
     def test_grayscale_crop(self):
         """Match the shared RGB resize followed by Pillow's grayscale conversion."""
         pixels = np.arange(6 * 4 * 3, dtype=np.uint8).reshape(4, 6, 3)
-        with patch("qrcode_onnx2tf_backend.Image.open", return_value=Image.fromarray(pixels)):
+        with patch("model_export.common.images.Image.open", return_value=Image.fromarray(pixels)):
             actual = load_image_array(Path("unused.png"), 4, "mlek-crop", 1)
         expected = np.asarray(Image.fromarray(pixels[:, 1:5]).convert("L"), dtype=np.float32)
         np.testing.assert_array_equal(actual, expected[None, None] / 255.0)

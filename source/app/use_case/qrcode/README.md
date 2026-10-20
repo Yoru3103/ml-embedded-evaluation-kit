@@ -69,7 +69,7 @@ enabled; an export failing those checks does not publish a new PTE. Direct PT
 export removes an intermediate graph conversion; it does not establish detection
 accuracy or remove the source model's existing classification errors.
 
-Before Ethos-U partitioning, `scripts/qrcode_pte_passes.py` makes the calibrated
+Before Ethos-U partitioning, `scripts/model_export/qrcode/pte_passes.py` makes the calibrated
 Conv/ReLU quantization boundaries explicit when the output zero point differs
 from the integer minimum. This handles the C3Ghost branches whose output scales
 are shared with signed concatenation inputs. It reuses their calibrated scales
@@ -136,7 +136,7 @@ Override `qrcode_LABELS_FILE` when using a different checkpoint's labels.
 Generate the checkpoint's 13 named classes with the Zint CLI:
 
 ```bash
-resources_downloaded/env/bin/python scripts/generate_qrcode_samples.py \
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.generate_samples \
     --zint /home/xx/zint/build/frontend/zint \
     --per-class 30 --validation-per-class 20 --background-fraction 0.05 \
     --output-dir resources_downloaded/qrcode/zint_samples_batch1
@@ -228,7 +228,7 @@ After fixing a validation issue, recheck saved converter models without
 repeating calibration or invoking Vela:
 
 ```bash
-resources_downloaded/env/bin/python scripts/validate_qrcode_tflite.py \
+PYTHONPATH=scripts resources_downloaded/env/bin/python -m model_export.tools.validate_tflite \
     --export-dir resources_downloaded/qrcode/merged_onnx2tf
 ```
 

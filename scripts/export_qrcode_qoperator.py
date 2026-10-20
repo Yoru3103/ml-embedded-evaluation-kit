@@ -16,7 +16,7 @@ from PIL import Image
 
 from qrcode_obb_utils import decode_top1, rotated_iou
 from qrcode_qoperator_tflite import QOperatorTflite
-from qrcode_tflite_utils import compile_tflite, inspect_tflite, lite_runner
+from model_export.qrcode.tflite_utils import compile_tflite, inspect_tflite, lite_runner
 
 ROOT = Path(__file__).resolve().parents[1]
 

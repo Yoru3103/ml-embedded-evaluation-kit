@@ -83,22 +83,23 @@ build/board-test-packages/yolov8_detection/
 ### TFLM：Windows PowerShell
 
 ```powershell
+$env:PYTHONPATH = (Join-Path (Get-Location) 'scripts')
 $py = '.\resources_downloaded\windows-onnx2tf\env\Scripts\python.exe'
 # 新机器首次准备；现有环境可以跳过。
 py -3.12 -m venv .\resources_downloaded\windows-onnx2tf\env
 & $py -m pip install -r .\scripts\windows\requirements-qrcode-onnx2tf.txt
 
 & $py .\scripts\export_qrcode_onnx.py `
-    --format tflm --tflite-backend onnx2tf `
+    --format tflite --tflite-backend onnx2tf `
     --model .\resources_downloaded\yolo_QRcode\best.onnx `
     --calibration-dir .\resources\object_detection\samples_QRcode `
     --calibration-limit 0 --validation-limit 6 --seed 0 `
     --preprocessing mlek-crop --per-channel `
     --target ethos-u85-1024 --system-config Ethos_U85_SYS_DRAM_Mid_1024 `
-    --memory-mode Dedicated_Sram --cache-kib 384 `
+    --memory-mode Dedicated_Sram --arena-cache-size 393216 `
     --output-dir .\resources_downloaded\yolo_QRcode\exports\tflm
 
-& $py .\scripts\compile_qrcode_fastcache.py `
+& $py -m model_export.tools.compile_fastcache `
     --format tflm --cache-kib 256 384 `
     --model-root .\resources_downloaded\yolo_QRcode\exports\tflm `
     --output-root .\resources_downloaded\yolo_QRcode\compiled
@@ -119,18 +120,18 @@ PYTHONPATH=scripts "$PY" scripts/export_qrcode_onnx.py \
     --calibration-limit 0 --validation-limit 6 --seed 0 \
     --preprocessing mlek-crop --per-channel \
     --target ethos-u85-1024 --system-config Ethos_U85_SYS_DRAM_Mid_1024 \
-    --memory-mode Dedicated_Sram --cache-kib 384 \
+    --memory-mode Dedicated_Sram --arena-cache-size 393216 \
     --extra-flag=--optimise=Performance --extra-flag=--cop-format=COP1 \
     --extra-flag=--verbose-performance \
     --output-dir resources_downloaded/yolo_QRcode/exports/pte
 
-PYTHONPATH=scripts "$PY" scripts/compile_qrcode_fastcache.py \
+PYTHONPATH=scripts "$PY" -m model_export.tools.compile_fastcache \
     --format pte --cache-kib 256 384 \
     --model-root resources_downloaded/yolo_QRcode/exports/pte \
     --output-root resources_downloaded/yolo_QRcode/compiled
 ```
 
-`compile_qrcode_fastcache.py` 支持从 `pte_Dedicated_Sram` 导出中读取量化 PT2，
+`model_export.tools.compile_fastcache` 支持从 `pte_Dedicated_Sram` 导出中读取量化 PT2，
 与最初导出时的缓存大小无关。TFLM 路线不会加载 PyTorch/ExecuTorch。
 `--cache-kib` 与旧的字节参数 `--arena-cache-size` 互斥。
 
@@ -199,7 +200,7 @@ foreach ($cache in @(256, 384)) {
 
 ```bash
 PYTHONPATH=scripts resources_downloaded/linux-batch/env/bin/python \
-    scripts/compile_qrcode_fastcache.py \
+    -m model_export.tools.compile_fastcache \
     --format pte --memory-mode all --cache-kib 64 128 768 \
     --model-root resources_downloaded/yolo_QRcode/pte_nhwc_256k \
     --output-root resources_downloaded/yolo_QRcode/compiled

@@ -16,8 +16,10 @@ from PIL import Image
 import torch
 
 from export_model import run_export
-from export_qrcode_onnx import parse_args
-from export_qrcode_pt import ROOT
+
+from model_export.common.cli import parse_args
+from model_export.qrcode.pt import ROOT
+from model_export.qrcode.backends import quantize
 
 
 class ConvLayer(torch.nn.Module):
@@ -99,6 +101,22 @@ def fixture_args(directory: Path, image_size: int = 256) -> object:
 class NativeObbExportTests(unittest.TestCase):
     """Keep the direct PT path independent of ONNX graph conversion."""
 
+    def test_memory_variants_share_one_calibration(self):
+        """Compile both memory modes from one calibration without cross-mode mutations."""
+        with TemporaryDirectory() as temporary:
+            args = fixture_args(Path(temporary))
+            args.memory_mode = "all"
+            with patch("ultralytics.YOLO", return_value=make_checkpoint()), \
+                 patch("model_export.qrcode.backends.quantize", wraps=quantize) as calibrate:
+                report = run_export(args)
+            self.assertEqual(calibrate.call_count, 1)
+            dedicated = report["pte"]["Dedicated_Sram"]
+            shared = report["pte"]["Shared_Sram"]
+            self.assertEqual(dedicated["io_quantization"], shared["io_quantization"])
+            for variant in (dedicated, shared):
+                self.assertEqual(variant["execution"]["network_cpu_operator_count"], 0)
+                self.assertTrue(Path(variant["path"]).is_file())
+
     def test_native_pt_pte_end_to_end(self):
         """Capture and quantize a native OBB graph, then check its actual serialized PTE."""
         with TemporaryDirectory() as temporary:
@@ -152,7 +170,8 @@ class NativeObbExportTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             args = fixture_args(Path(temporary))
             with patch("ultralytics.YOLO", return_value=SimpleNamespace(task="detect")), \
-                 patch("export_yolo_pte.run_export", return_value={"fixture": True}) as exporter:
+                 patch("model_export.yolo.pte.run_export",
+                       return_value={"fixture": True}) as exporter:
                 report = run_export(args)
             exporter.assert_called_once()
             self.assertEqual(report["pte"]["Dedicated_Sram"], {"fixture": True})

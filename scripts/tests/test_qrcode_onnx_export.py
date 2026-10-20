@@ -20,10 +20,11 @@ import torch
 from PIL import Image
 from executorch.exir.schema import ScalarType
 
-from qrcode_onnx_utils import (
+
+from model_export.qrcode.onnx_utils import (
     adapt_model, check_pte_contract, compare_tensors, detection_metrics, validate_outputs)
-from qrcode_tflite_utils import inspect_tflite
-from yolo_pte_utils import load_image
+from model_export.qrcode.tflite_utils import inspect_tflite
+from model_export.common.images import load_image
 
 
 def make_graph() -> onnx.ModelProto:
@@ -95,7 +96,7 @@ class QrcodeExportTests(unittest.TestCase):
     def test_firmware_crop(self):
         """Prepare the same centered RGB crop as the firmware image generator."""
         pixels = np.arange(6 * 4 * 3, dtype=np.uint8).reshape(4, 6, 3)
-        with patch("yolo_pte_utils.Image.open", return_value=Image.fromarray(pixels)):
+        with patch("model_export.common.images.Image.open", return_value=Image.fromarray(pixels)):
             actual = load_image(Path("unused.png"), 4, "mlek-crop").numpy()
         expected = pixels[:, 1:5].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
         np.testing.assert_array_equal(actual, expected)

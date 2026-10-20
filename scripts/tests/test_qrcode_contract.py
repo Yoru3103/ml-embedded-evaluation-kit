@@ -13,10 +13,11 @@ import onnx
 from onnx import helper, numpy_helper
 from PIL import Image
 
-from qrcode_contract import describe_model
-import qrcode_contract
 import onnxruntime as ort
-from yolo_pte_utils import load_image
+
+from model_export.qrcode.contract import describe_model
+from model_export.qrcode import contract as qrcode_contract
+from model_export.common.images import load_image
 
 
 def make_obb_graph(channels: int, bins: int, classes: int) -> onnx.ModelProto:
@@ -100,7 +101,8 @@ class QrcodeContractTests(unittest.TestCase):
         pixels = np.array([[[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]]] * 2,
                           dtype=np.uint8)
         for channels in (3, 1):
-            with patch("yolo_pte_utils.Image.open", return_value=Image.fromarray(pixels)):
+            with patch("model_export.common.images.Image.open",
+                       return_value=Image.fromarray(pixels)):
                 prepared = load_image(Path("in-memory.png"), 2, "mlek-crop", channels).numpy()
             expected = Image.fromarray(pixels[:, 1:3])
             if channels == 1:

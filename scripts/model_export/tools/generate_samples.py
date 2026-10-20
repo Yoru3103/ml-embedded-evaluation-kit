@@ -16,9 +16,9 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from PIL import Image, ImageDraw, ImageOps
 
-from qrcode_sample_images import render_background, render_symbol
+from model_export.tools.sample_images import render_background, render_symbol
 
-ROOT = Path(__file__).resolve().parents[1]
+from model_export.common.paths import ROOT
 # These mappings follow the supplied checkpoint's names; IDs 13 and 14 remain unknown.
 CLASSES = (
     ("BARCODE", ("CODE128", "CODE39", "EAN13")),

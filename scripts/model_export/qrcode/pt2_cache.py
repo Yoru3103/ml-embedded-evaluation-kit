@@ -15,13 +15,12 @@ import sys
 import numpy as np
 import torch
 
-from export_qrcode_onnx import export_manifest, write_manifest
-from export_qrcode_pt import prepare_pte_source
-from export_yolo_pte import make_compile_spec, quantize
-from model_layout import ChannelLastIO, model_input
-from qrcode_export_backends import compile_quantized_pte, torch_predict
-from qrcode_onnx_utils import validate_outputs
-from yolo_pte_utils import find_images
+from model_export.common.reporting import export_manifest
+from model_export.qrcode.pt import prepare_pte_source
+from model_export.common.layout import model_input
+from model_export.qrcode.backends import compile_pte_variants, quantize_pte, torch_predict
+from model_export.qrcode.onnx_utils import validate_outputs
+from model_export.common.images import find_images
 
 
 def file_hash(path: Path) -> str:
@@ -94,13 +93,11 @@ def prepare_cache(args: argparse.Namespace) -> dict:
     with export_manifest(directory / "pt2_report.json", report):
         model, samples, source = prepare_pte_source(args, None)
         report.update(source)
-        if args.io_layout == "nhwc":
-            model = ChannelLastIO(model).eval()
         options = argparse.Namespace(**vars(args))
-        options.input_channels, options.save_intermediate = 1, False
+        options.save_intermediate = False
         options.output = directory / "best.pte"
-        graph = quantize(model, [Path(item) for item in source["calibration_images"]],
-                         options, make_compile_spec(options))
+        graph = quantize_pte(model, [Path(item) for item in source["calibration_images"]],
+                             source["contract"], options)
         report["quantization_validation"] = validate_outputs(
             lambda inputs: torch_predict(graph, inputs, args.io_layout), samples, False,
             args.max_score_error, args.min_box_iou)
@@ -142,15 +139,8 @@ def run_export(args: argparse.Namespace) -> dict:
                                 for key, value in vars(args).items()}}
     with export_manifest(args.output_dir / "export_report.json", report):
         (args.output_dir / "labels.txt").write_text("\n".join(cached["labels"]) + "\n")
-        modes = (["Dedicated_Sram", "Shared_Sram"] if args.memory_mode == "all"
-                 else [args.memory_mode])
-        for mode in modes:
-            options = argparse.Namespace(**vars(args))
-            options.memory_mode = mode
-            options.reference_source = "Original PT raw OBB heads (cached)"
-            options.output = args.output_dir / f"pte_{mode}/best.pte"
-            graph = torch.export.load(path).module(check_guards=False)
-            report["pte"][mode] = compile_quantized_pte(
-                graph, samples, cached["contract"], options)
-    write_manifest(args.output_dir / "export_report.json", report)
+        options = argparse.Namespace(**vars(args))
+        options.reference_source = "Original PT raw OBB heads (cached)"
+        graph = torch.export.load(path).module(check_guards=False)
+        compile_pte_variants(graph, samples, cached["contract"], options, report["pte"])
     return report

@@ -4,12 +4,13 @@
 
 # Reuse the complete PT calibration/export/build matrix with four terminal output dequantizers.
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 for argument in "$@"; do
     if [[ "$argument" == --help || "$argument" == -h ]]; then
         cat <<'HELP'
-Usage: bash scripts/build_qrcode_pte_dequant_matrix.sh MODEL.pt [OPTIONS]
-   or: bash scripts/build_qrcode_pte_dequant_matrix.sh --npu-model-root DIR [OPTIONS]
+Usage: bash scripts/qrcode/build_qrcode_pte_dequant_matrix.sh MODEL.pt [OPTIONS]
+   or: bash scripts/qrcode/build_qrcode_pte_dequant_matrix.sh --npu-model-root DIR [OPTIONS]
 
 Calibrates the native OBB PT checkpoint once, exports 6 PTEs, then builds 12 firmwares.
 Input stays INT8; four terminal dequantizers produce FP32 outputs; the network stays on NPU.
@@ -25,4 +26,4 @@ HELP
 done
 export QRCODE_MATRIX_ROOT="${QRCODE_MATRIX_ROOT:-$repo_root/build-qrcode-pte-dequant-matrix}"
 printf 'ExecuTorch dequantization matrix: INT8 input, four FP32 outputs, CPU profiling ON.\n'
-exec bash "$repo_root/scripts/build_qrcode_pte_matrix.sh" "$@" --output-type float32
+exec bash "$repo_root/scripts/qrcode/build_qrcode_pte_matrix.sh" "$@" --output-type float32

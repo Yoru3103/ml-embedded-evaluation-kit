@@ -5,7 +5,8 @@
 # Build 2 platforms x (Shared SRAM + 5 Dedicated SRAM fast-cache sizes).
 # Export a native PT grayscale OBB checkpoint to PTE for each memory configuration.
 set -euo pipefail
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONPATH="$repo_root/scripts${PYTHONPATH:+:$PYTHONPATH}"
 venv_path="$repo_root/resources_downloaded/env"
 python="$venv_path/bin/python"
 cmake="$venv_path/bin/cmake"
@@ -30,8 +31,8 @@ output_type=int8
 quantized_pt2=""
 usage() {
     cat <<'HELP'
-Usage: bash scripts/build_qrcode_pte_matrix.sh MODEL.pt [--run-fvp] [--dry-run]
-   or: bash scripts/build_qrcode_pte_matrix.sh --npu-model-root DIR [--run-fvp]
+Usage: bash scripts/qrcode/build_qrcode_pte_matrix.sh MODEL.pt [--run-fvp] [--dry-run]
+   or: bash scripts/qrcode/build_qrcode_pte_matrix.sh --npu-model-root DIR [--run-fvp]
 
 MODEL must be the 15-class, 8-bin DFL QR-code OBB PT checkpoint.
 Calibrates PT once into OUTPUT/common/quantized.pt2, then compiles 6 PTEs.

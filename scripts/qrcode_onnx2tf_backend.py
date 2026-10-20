@@ -7,69 +7,18 @@
 import argparse
 from importlib import import_module
 from pathlib import Path
-import random
 import shutil
 
 import numpy as np
-from PIL import Image, ImageOps
 import onnx
 
-from qrcode_onnx_utils import validate_outputs
-from qrcode_tflite_utils import inspect_tflite, lite_runner
+from model_export.common import images
+from model_export.qrcode.onnx_utils import validate_outputs
+from model_export.qrcode.tflite_utils import inspect_tflite, lite_runner
 
+find_images = images.find_images
+load_image_array = images.load_image_array
 
-def find_images(directory: Path, limit: int, seed: int) -> list[Path]:
-    """Select reproducible calibration images without loading a training framework.
-
-    :param directory:   Directory containing RGB samples.
-    :param limit:       Maximum images, or zero to use all images.
-    :param seed:        Deterministic shuffle seed.
-    :returns:           Selected image paths.
-    """
-    paths = sorted(path for path in directory.rglob("*")
-                   if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"})
-    if not paths:
-        raise ValueError(f"No calibration images found in {directory}")
-    random.Random(seed).shuffle(paths)
-    return paths[:limit] if limit else paths
-
-
-def load_image_array(path: Path, image_size: int, preprocessing: str,
-                     channels: int = 3) -> np.ndarray:
-    """Prepare RGB data, matching the firmware generator's centered crop exactly.
-
-    :param path:            Source RGB image.
-    :param image_size:      Square deployment resolution.
-    :param preprocessing:  Centered aspect crop or padded letterbox.
-    :param channels:        Model input channels, one or three.
-    :returns:               Contiguous float32 NCHW data divided by 255.
-    """
-    with Image.open(path) as source:
-        image = source.convert("RGB")
-    if preprocessing == "mlek-crop":
-        ratio = image_size / min(image.size)
-        image = image.resize((int(image.width * ratio), int(image.height * ratio)),
-                             Image.Resampling.BILINEAR)
-        left = (image.width - image_size) / 2
-        top = (image.height - image_size) / 2
-        image = image.crop((left, top, left + image_size, top + image_size))
-    elif preprocessing == "letterbox":
-        ratio = image_size / max(image.size)
-        image = image.resize((round(image.width * ratio), round(image.height * ratio)),
-                             Image.Resampling.BILINEAR)
-        width, height = image_size - image.width, image_size - image.height
-        image = ImageOps.expand(image, (width // 2, height // 2,
-                                      width - width // 2, height - height // 2),
-                                fill=(114, 114, 114))
-    else:
-        raise ValueError(f"Unknown preprocessing: {preprocessing}")
-    if channels == 1:
-        values = np.asarray(image.convert("L"), dtype=np.float32)[None, None] / 255.0
-    elif channels == 3:
-        values = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)[None] / 255.0
-    else:
-        raise ValueError("Model input must have one or three channels")
-    return np.ascontiguousarray(values)
 
 
 def check_nhwc_contract(contract: dict, metadata: dict):

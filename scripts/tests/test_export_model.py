@@ -20,10 +20,12 @@ import onnx
 from PIL import Image
 
 from export_model import run_export, select_tflite_backend
-from export_qrcode_onnx import parse_args, run_exports
 from test_qrcode_contract import make_obb_graph
-from qrcode_tflite_utils import validate_tflite_models
-import qrcode_onnx2tf
+
+from model_export.common.cli import parse_args
+from model_export.qrcode.onnx import run_exports
+from model_export.qrcode.tflite_utils import validate_tflite_models
+from model_export.qrcode import onnx2tf as qrcode_onnx2tf
 
 
 def make_tflite(integer: bool) -> bytes:
@@ -108,7 +110,7 @@ class ExportModelTests(unittest.TestCase):
             options = {"input_onnx_file_path": "model with spaces.onnx",
                        "output_folder_path": str(directory),
                        "output_integer_quantized_tflite": True}
-            with patch("qrcode_onnx2tf.CONVERTER_PYTHON", Path(sys.executable)), \
+            with patch("model_export.qrcode.onnx2tf.CONVERTER_PYTHON", Path(sys.executable)), \
                  patch.dict(os.environ, {"PYTHONPATH": str(directory)}):
                 environment = qrcode_onnx2tf.convert_onnx(options)
             self.assertEqual(json.loads((directory / "options.json").read_text()), options)
@@ -131,11 +133,12 @@ class ExportModelTests(unittest.TestCase):
                                "--output-dir", str(directory / "export")])
             args.output_dir.mkdir()
             report = {}
-            with patch("qrcode_onnx_utils.adapt_model", side_effect=AssertionError("PT used")), \
-                 patch("qrcode_onnx2tf.CONVERTER_PYTHON", directory / "missing-python"), \
-                 patch("qrcode_onnx2tf.import_module",
+            with patch("model_export.qrcode.onnx_utils.adapt_model",
+                       side_effect=AssertionError("PT used")), \
+                 patch.object(qrcode_onnx2tf, "CONVERTER_PYTHON", directory / "missing-python"), \
+                 patch("model_export.qrcode.onnx2tf.import_module",
                        return_value=SimpleNamespace(convert=convert_fixture)), \
-                 patch("qrcode_tflite_utils.compile_tflite", return_value={}):
+                 patch("model_export.qrcode.tflite_utils.compile_tflite", return_value={}):
                 run_exports(args, report)
             self.assertEqual(report["tflite"]["backend"], "onnx2tf")
             self.assertEqual(report["tflite"]["int8"]["tensor_contract"]["input_layout"], "NHWC")
@@ -156,8 +159,8 @@ class ExportModelTests(unittest.TestCase):
                                "--calibration-dir", str(directory), "--vela-config", str(config),
                                "--output-dir", str(directory / "export")])
             converter = SimpleNamespace(convert=Mock(side_effect=SystemExit(1)))
-            with patch("qrcode_onnx2tf.import_module", return_value=converter), \
-                 patch("qrcode_onnx2tf.CONVERTER_PYTHON", directory / "missing-python"):
+            with patch.object(qrcode_onnx2tf, "import_module", return_value=converter), \
+                 patch.object(qrcode_onnx2tf, "CONVERTER_PYTHON", directory / "missing-python"):
                 with self.assertRaises(RuntimeError):
                     run_export(args)
             report = json.loads((args.output_dir / "export_report.json").read_text())
@@ -174,7 +177,7 @@ class ExportModelTests(unittest.TestCase):
             onnx.save(graph, model)
             original = model.read_bytes()
             args = SimpleNamespace(output_dir=directory / "export")
-            with patch("qrcode_onnx2tf.convert_onnx") as converter:
+            with patch("model_export.qrcode.onnx2tf.convert_onnx") as converter:
                 with self.assertRaisesRegex(ValueError, "boardcal"):
                     qrcode_onnx2tf.export_tflite(model, [], [], {}, args)
             converter.assert_not_called()
@@ -195,12 +198,12 @@ class ExportModelTests(unittest.TestCase):
             previous = args.output_dir / "tflite/best_int8.tflite"
             previous.parent.mkdir(parents=True)
             previous.write_bytes(b"last validated model")
-            with patch("qrcode_onnx2tf.CONVERTER_PYTHON", directory / "missing-python"), \
-                 patch("qrcode_onnx2tf.import_module",
+            with patch.object(qrcode_onnx2tf, "CONVERTER_PYTHON", directory / "missing-python"), \
+                 patch("model_export.qrcode.onnx2tf.import_module",
                        return_value=SimpleNamespace(convert=convert_fixture)), \
-                 patch("qrcode_onnx2tf.validate_tflite_models",
+                 patch("model_export.qrcode.onnx2tf.validate_tflite_models",
                        side_effect=ValueError("quantization limit")), \
-                 patch("qrcode_tflite_utils.compile_tflite") as compile_model:
+                 patch("model_export.qrcode.tflite_utils.compile_tflite") as compile_model:
                 with self.assertRaisesRegex(ValueError, "quantization limit"):
                     run_export(args)
             compile_model.assert_not_called()
