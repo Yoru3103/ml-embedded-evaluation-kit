@@ -163,9 +163,11 @@ $compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1
 `BW` 组同时记录 SRAM/EXT 读写 beats、两路径读请求 stall 和 AO 输出缓冲 stall，
 详见 [周期日志与 PMU](windows_executorch.md#pose-的周期日志与-pmu)。
 
-如果本机已有完整的 CMake FetchContent 依赖缓存，可在 `-CMakeArgs` 中追加
-`"-DFETCHCONTENT_BASE_DIR=$PWD/build/windows-atfe-fvp/_deps"` 复用它。
-这个路径是本机可选缓存，不是模型目录；没有缓存时保留默认下载流程。
+冷构建不需要引用其他 build 目录的依赖缓存，删除当前构建目录后可直接重跑原命令。
+如果 Windows 上 CMake 在解压 FlatBuffers、gemmlowp 或 ruy 后报告 `file RENAME failed`，
+构建入口会尝试移动本次已经校验并解压的源码，然后使用当前构建目录内的
+`FETCHCONTENT_SOURCE_DIR_*` 继续配置。每个依赖最多恢复一次，目录移动最多尝试五次；
+网络、压缩包校验和编译错误仍会中止构建。恢复不会修改依赖子模块或引用其他 build 目录。
 
 ## Arm DS 配置
 

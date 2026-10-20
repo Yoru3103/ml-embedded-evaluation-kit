@@ -45,6 +45,7 @@ if ($Framework -in @('pte', 'executorch')) {
 }
 if ($Toolchain -eq 'GNU') { throw 'TFLM supports AC6 or ATFE; GNU is available for PTE.' }
 . (Join-Path $PSScriptRoot 'windows-build-options.ps1')
+. (Join-Path $PSScriptRoot 'windows-tflm-configure.ps1')
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
     if ($argument -notmatch '^-D[A-Za-z0-9_][A-Za-z0-9_-]*(?::[A-Za-z]+)?=') {
@@ -218,7 +219,8 @@ try {
         CMakeExecutable=$cmakeExe; ConfigureArgs=$configureArgs; ModelPath=$ModelPath; Jobs=$Jobs }
     Write-WindowsFirmwareBuildInfo @infoArgs -Status started
     # Always reconfigure: model C arrays are generated during configuration.
-    Invoke-Checked $cmakeExe $configureArgs
+    Invoke-WindowsTflmConfigure -Executable $cmakeExe -Arguments $configureArgs `
+        -BuildDirectory $BuildDirectory
     if ($Action -ne 'Configure') {
         Invoke-Checked $cmakeExe @('--build', $BuildDirectory, '--parallel', "$Jobs")
     }
