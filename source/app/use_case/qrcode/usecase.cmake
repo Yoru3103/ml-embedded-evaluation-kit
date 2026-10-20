@@ -25,8 +25,8 @@ if ("${USE_CASE_BUILD}" STREQUAL "all" AND
     return()
 endif()
 
-# Reuse the angle-aware DFL decoder and LCD box drawing. This application only
-# accepts the grayscale 256x256, four-output QR-code model.
+# Reuse the angle-aware DFL decoder and LCD box drawing for grayscale,
+# four-output QR-code models at the configured input width and height.
 list(APPEND ${use_case}_API_LIST "yolov8_detection")
 add_library(qrcode_drawing STATIC
     ${CMAKE_CURRENT_LIST_DIR}/../yolov8_detection/src/DetectionDrawing.cc)
@@ -59,7 +59,18 @@ if (NOT QRCODE_LABEL_COUNT EQUAL 15)
     message(FATAL_ERROR "QR-code model requires 15 labels; found ${QRCODE_LABEL_COUNT}")
 endif()
 
-generate_images_code("${${use_case}_FILE_PATH}" ${SAMPLES_GEN_DIR} 256 CHANNELS 1)
+USER_OPTION(${use_case}_IMAGE_WIDTH "QR-code input width." 256 STRING)
+USER_OPTION(${use_case}_IMAGE_HEIGHT "QR-code input height." 256 STRING)
+USER_OPTION(${use_case}_IMAGE_RESIZE_MODE "QR-code image resize mode: crop or letterbox."
+    letterbox STRING)
+
+generate_images_code(
+    "${${use_case}_FILE_PATH}"
+    ${SAMPLES_GEN_DIR}
+    ${${use_case}_IMAGE_WIDTH}
+    HEIGHT ${${use_case}_IMAGE_HEIGHT}
+    CHANNELS 1
+    RESIZE_MODE ${${use_case}_IMAGE_RESIZE_MODE})
 generate_labels_code(
     INPUT "${${use_case}_LABELS_FILE}"
     DESTINATION_SRC ${SRC_GEN_DIR}

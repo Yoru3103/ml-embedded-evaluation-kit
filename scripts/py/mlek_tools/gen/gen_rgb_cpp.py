@@ -122,6 +122,46 @@ def resize_crop_image(
     return np.array(resized_image, dtype=np.uint8).flatten()
 
 
+def letterbox_geometry(
+        source_size: typing.Sequence[int],
+        image_size: typing.Sequence[int]
+) -> tuple[int, int, int, int]:
+    """Calculate the resized width, height, and centered padding offsets.
+
+    :param source_size: Source image width and height.
+    :param image_size:  Target image width and height.
+    :returns:           Resized width, resized height, left offset, top offset.
+    """
+    source_width, source_height = source_size
+    target_width, target_height = image_size
+    scale_ratio = min(target_width / source_width, target_height / source_height)
+    resized_width = min(target_width, max(1, round(source_width * scale_ratio)))
+    resized_height = min(target_height, max(1, round(source_height * scale_ratio)))
+    return (resized_width, resized_height, (target_width - resized_width) // 2,
+            (target_height - resized_height) // 2)
+
+
+def resize_letterbox_image(
+        original_image: Image.Image,
+        image_size: typing.Sequence
+) -> np.ndarray:
+    """Resize without cropping and pad to the requested width and height.
+
+    :param original_image: Image to resize and pad.
+    :param image_size:     New image width and height.
+    :returns:             Flattened resized and padded image.
+    """
+    target_width, target_height = image_size
+    resized_width, resized_height, left, top = letterbox_geometry(
+        original_image.size, image_size)
+    resized_image = original_image.resize(
+        (resized_width, resized_height), resample=Image.Resampling.BILINEAR)
+    fill = 114 if original_image.mode == "L" else (114, 114, 114)
+    output = Image.new(original_image.mode, (target_width, target_height), fill)
+    output.paste(resized_image, (left, top))
+    return np.array(output, dtype=np.uint8).flatten()
+
+
 def write_individual_img_cc_file(
         image_data: np.ndarray,
         image_filename: str,
@@ -192,6 +232,13 @@ def main():
     )
 
     parser.add_argument(
+        "--resize_mode",
+        choices=("crop", "letterbox"),
+        default="crop",
+        help="Crop to fill or preserve the whole image with gray padding."
+    )
+
+    parser.add_argument(
         "--license_template",
         type=str,
         help="Header template file",
@@ -236,7 +283,10 @@ def main():
         array_name = "im" + str(image_idx)
         image_array_names.append(array_name)
 
-        image_data = resize_crop_image(original_image, args.image_size)
+        if args.resize_mode == "letterbox":
+            image_data = resize_letterbox_image(original_image, args.image_size)
+        else:
+            image_data = resize_crop_image(original_image, args.image_size)
         write_individual_img_cc_file(image_data,
                                      filename,
                                      cc_filename,

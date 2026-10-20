@@ -37,9 +37,16 @@ endif()
 ##############################################################################
 function(generate_images_code input_dir gen_dir img_size)
 
-    cmake_parse_arguments(IMAGE "" "CHANNELS" "" ${ARGN})
+    cmake_parse_arguments(IMAGE "" "CHANNELS;HEIGHT;RESIZE_MODE" "" ${ARGN})
     if (NOT IMAGE_CHANNELS)
         set(IMAGE_CHANNELS 3)
+    endif()
+
+    if (NOT IMAGE_HEIGHT)
+        set(IMAGE_HEIGHT ${img_size})
+    endif()
+    if (NOT IMAGE_RESIZE_MODE)
+        set(IMAGE_RESIZE_MODE crop)
     endif()
 
     # Absolute paths for passing into python script
@@ -53,8 +60,9 @@ function(generate_images_code input_dir gen_dir img_size)
             ${PYTHON} -m mlek_tools.gen.gen_rgb_cpp
             --image_path ${input_dir_abs}
             --package_gen_dir ${gen_out_abs}
-            --image_size ${img_size} ${img_size}
+            --image_size ${img_size} ${IMAGE_HEIGHT}
             --channels ${IMAGE_CHANNELS}
+            --resize_mode ${IMAGE_RESIZE_MODE}
         RESULT_VARIABLE return_code
     )
     if (NOT return_code EQUAL "0")

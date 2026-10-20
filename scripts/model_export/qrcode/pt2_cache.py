@@ -38,7 +38,8 @@ def cache_identity(args: argparse.Namespace) -> dict:
     :param args:    Source and quantization options.
     :returns:       Configuration, tool versions and selected image hashes.
     """
-    names = ("image_size", "io_layout", "preprocessing", "per_channel", "seed", "target")
+    names = ("image_width", "image_height", "io_layout", "preprocessing", "per_channel",
+             "seed", "target")
     result = {name: getattr(args, name) for name in names}
     result["source_sha256"] = file_hash(args.model)
     result["versions"] = {name: version(name) for name in ("torch", "executorch", "torchao")}

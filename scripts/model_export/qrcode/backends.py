@@ -138,6 +138,8 @@ def quantize_pte(model: torch.nn.Module, paths: list[Path], metadata: dict,
     if options.memory_mode == "all":
         options.memory_mode = "Dedicated_Sram"
     options.input_channels = metadata["input_channels"]
+    input_shape = metadata["input"]["shape"]
+    options.image_size = (input_shape[3], input_shape[2])
     if not hasattr(options, "output"):
         options.output = options.output_dir / f"pte_{options.memory_mode}/best.pte"
     options.output.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +218,7 @@ def export_tflite(model: torch.nn.Module, calibration: list[np.ndarray],
                   samples: list[dict], metadata: dict, args: argparse.Namespace) -> dict:
     """Export FP32 and static INT8 LiteRT models using the same image preprocessing.
 
-    :param model:       Adapted ONNX graph.
+    :param model:       Native PT or adapted ONNX graph exposing raw OBB heads.
     :param calibration: Representative RGB NCHW samples.
     :param samples:     Cached ONNX predictions for validation.
     :param metadata:    Source tensor shapes and output order.

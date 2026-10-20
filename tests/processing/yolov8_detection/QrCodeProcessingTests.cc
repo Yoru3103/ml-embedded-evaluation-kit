@@ -266,12 +266,12 @@ bool TestRotatedNms()
     return true;
 }
 
-bool TestQrCodeInputLookup(TensorType type)
+bool TestQrCodeInputLookup(TensorType type, size_t width, size_t height)
 {
     auto input = std::make_shared<MemoryTensor>(
-        std::vector<size_t>{1, 256, 256, 1}, type, TensorLayout::NHWC);
+        std::vector<size_t>{1, height, width, 1}, type, TensorLayout::NHWC);
     QrCodePreProcess process{input};
-    std::vector<uint8_t> image(256 * 256);
+    std::vector<uint8_t> image(width * height);
     for (size_t index = 0; index < image.size(); ++index) {
         image[index] = static_cast<uint8_t>(index);
     }
@@ -307,6 +307,53 @@ bool TestQrCodeInputLookup(TensorType type)
         input->SetQuantParams({0.0F, 0});
         CHECK(!process.DoPreProcess(image.data(), image.size()));
     }
+    return true;
+}
+
+bool TestRectangularQrCodeHeads(TensorLayout layout)
+{
+    constexpr size_t width    = 32;
+    constexpr size_t height   = 64;
+    constexpr size_t channels = 47;
+    std::vector<std::shared_ptr<TensorIface>> outputs;
+    for (size_t stride : {size_t{8}, size_t{16}, size_t{32}}) {
+        const size_t rows    = height / stride;
+        const size_t columns = width / stride;
+        const size_t cells   = rows * columns;
+        auto head            = std::make_shared<MemoryTensor>(
+            layout == TensorLayout::NCHW ? std::vector<size_t>{1, channels, rows, columns}
+                                         : std::vector<size_t>{1, rows, columns, channels},
+            TensorType::FP32,
+            layout);
+        for (size_t index = 0; index < head->GetNumElements(); ++index) {
+            head->Set(index, -100.0F);
+        }
+        if (stride == 8) {
+            constexpr size_t cell = 2 * 4 + 1;
+            for (size_t side = 0; side < 4; ++side) {
+                const size_t channel = side * 8 + 1;
+                head->Set(layout == TensorLayout::NCHW ? channel * cells + cell
+                                                       : cell * channels + channel,
+                          100.0F);
+            }
+            head->Set(layout == TensorLayout::NCHW ? 32 * cells + cell : cell * channels + 32,
+                      4.0F);
+        }
+        outputs.push_back(head);
+    }
+    auto angle =
+        std::make_shared<MemoryTensor>(std::vector<size_t>{1, 1, 42}, TensorType::FP32, layout);
+    outputs.push_back(angle);
+    const YoloV8PostProcessParams params{width, height, 15, 20, 0.25F, 0.45F};
+    std::vector<yolov8_detection::DetectionResult> results;
+    YoloV8NewPostProcess process{outputs, results, params};
+    CHECK(process.DoPostProcess());
+    CHECK(results.size() == 1);
+    CHECK(results[0].classId == 0);
+    CHECK(std::abs(results[0].centerX - 12.0F) < 1e-4F);
+    CHECK(std::abs(results[0].centerY - 20.0F) < 1e-4F);
+    CHECK(std::abs(results[0].width - 16.0F) < 1e-4F);
+    CHECK(std::abs(results[0].height - 16.0F) < 1e-4F);
     return true;
 }
 
@@ -475,8 +522,14 @@ int main(int argc, char** argv)
     if (!TestRotatedNms() || !TestOrdinaryBox()) {
         return 1;
     }
+    for (TensorLayout layout : {TensorLayout::NCHW, TensorLayout::NHWC}) {
+        if (!TestRectangularQrCodeHeads(layout)) {
+            return 1;
+        }
+    }
     for (TensorType type : {TensorType::FP32, TensorType::INT8, TensorType::UINT8}) {
-        if (!TestQrCodeInputLookup(type)) {
+        if (!TestQrCodeInputLookup(type, 256, 256) ||
+            (type == TensorType::INT8 && !TestQrCodeInputLookup(type, 320, 192))) {
             return 1;
         }
         for (TensorLayout layout : {TensorLayout::NCHW, TensorLayout::NHWC}) {

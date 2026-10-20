@@ -206,7 +206,9 @@ def validate_outputs(predict: Callable, samples: list[dict], strict: bool,
             check_float_outputs(sample["reference"], actual, sample["image"])
         result = {"image": sample["image"], "outputs": errors}
         if not strict:
-            metrics = detection_metrics(sample["reference"], actual, sample["input"].shape[2],
+            input_shape = sample["input"].shape
+            metrics = detection_metrics(sample["reference"], actual,
+                                        (input_shape[3], input_shape[2]),
                                         sample["num_classes"])
             result["detection"] = metrics
             if (metrics["max_absolute_score_error"] > max_score_error
@@ -230,21 +232,37 @@ def _dfl_distances(head: np.ndarray, dfl_bins: int, stride: float) -> np.ndarray
     return (probabilities * np.arange(dfl_bins)[None, :, None]).sum(axis=1) * stride
 
 
-def decode_boxes(head: np.ndarray, image_size: int, angles: np.ndarray | None = None,
+def feature_grid(head: np.ndarray, image_size: int | tuple[int, int]
+                 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build anchor centers and XY distance scales for a rectangular feature map.
+
+    :param head:        Raw NCHW detection map.
+    :param image_size:  Input width and height, or square side length.
+    :returns:           Anchor centers and four coordinate scales.
+    """
+    width, height = ((image_size, image_size) if isinstance(image_size, int)
+                     else image_size)
+    stride_x, stride_y = width / head.shape[3], height / head.shape[2]
+    rows, columns = np.indices(head.shape[2:4])
+    centers = np.stack(((columns.ravel() + 0.5) * stride_x,
+                        (rows.ravel() + 0.5) * stride_y))
+    scales = np.array([stride_x, stride_y, stride_x, stride_y])[:, None]
+    return centers, scales
+
+
+def decode_boxes(head: np.ndarray, image_size: int | tuple[int, int],
+                 angles: np.ndarray | None = None,
                  dfl_bins: int = 16) -> np.ndarray:
     """Decode one head's DFL values to pixel-coordinate XYXY boxes.
 
     :param head:        Raw NCHW DFL/class head.
-    :param image_size:  Input image resolution.
+    :param image_size:  Input width and height, or square side length.
     :param angles:      Decoded angle radians for this feature map.
     :param dfl_bins:    Number of bins per DFL distribution.
     :returns:           Four box coordinates for every cell.
     """
-    size = head.shape[2]
-    stride = image_size / size
-    distances = _dfl_distances(head, dfl_bins, stride)
-    rows, columns = np.indices((size, size))
-    centers = (np.stack((columns.ravel(), rows.ravel())) + 0.5) * stride
+    centers, scales = feature_grid(head, image_size)
+    distances = _dfl_distances(head, dfl_bins, 1.0) * scales
     if angles is None:
         return np.concatenate((centers - distances[:2], centers + distances[2:]), axis=0)
     offsets = (distances[2:] - distances[:2]) * 0.5
@@ -257,17 +275,17 @@ def decode_boxes(head: np.ndarray, image_size: int, angles: np.ndarray | None = 
     return np.concatenate((centers - extents, centers + extents), axis=0)
 
 
-def detection_values(outputs: list[np.ndarray], image_size: int,
+def detection_values(outputs: list[np.ndarray], image_size: int | tuple[int, int],
                      num_classes: int) -> tuple[np.ndarray, np.ndarray]:
     """Decode class-only confidence and envelopes of oriented DFL boxes.
 
     :param outputs:     Three NCHW DFL/class heads and raw angle logits.
-    :param image_size:  Square input resolution in pixels.
+    :param image_size:  Input width and height, or square side length.
     :param num_classes: Class count from the checked model contract.
     :returns:           Class scores and XYXY boxes in descending head-size order.
     """
     heads = sorted((item for item in outputs if item.ndim == 4),
-                   key=lambda item: item.shape[2], reverse=True)
+                   key=lambda item: item.shape[2] * item.shape[3], reverse=True)
     auxiliary = next(item for item in outputs if item.ndim == 3)
     scores, boxes, offset = [], [], 0
     angle_values = (1 / (1 + np.exp(-np.clip(auxiliary[0, 0], -80, 80))) - 0.25) * np.pi
@@ -301,12 +319,12 @@ def _box_iou(original: np.ndarray, observed: np.ndarray) -> float:
 
 
 def detection_metrics(reference: list[np.ndarray], actual: list[np.ndarray],
-                      image_size: int, num_classes: int) -> dict:
+                      image_size: int | tuple[int, int], num_classes: int) -> dict:
     """Compare quantized scores and the box at the strongest source-model anchor.
 
     :param reference:   Original ONNX outputs.
     :param actual:      Dequantized converted outputs in the same order.
-    :param image_size:  Input image resolution.
+    :param image_size:  Input width and height, or square side length.
     :param num_classes: Class count from the checked model contract.
     :returns:           Score errors and strongest-anchor box overlap.
     """

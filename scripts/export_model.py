@@ -13,6 +13,18 @@ from model_export.common.reporting import export_manifest
 from model_export.common.cli import parse_args, select_tflite_backend
 
 
+def validate_generic_pt(args: argparse.Namespace):
+    """Keep Detect exports on their original square and YAML dataset contract.
+
+    :param args:    Unified export arguments after the QR OBB routes are checked.
+    :raises ValueError: Generic Detect inputs lack required shape or dataset data.
+    """
+    if args.image_width != args.image_height:
+        raise ValueError("Generic Detect PT export requires a square --image-size")
+    if args.format in ("both", "tflite") and args.data is None:
+        raise ValueError("Generic Detect PT-to-TFLite requires --data")
+
+
 def run_export(args: argparse.Namespace) -> dict:
     """Dispatch source models to existing conversion APIs and compile TFLite with Vela.
 
@@ -31,6 +43,20 @@ def run_export(args: argparse.Namespace) -> dict:
         result = import_module("model_export.qrcode.pt").try_export_pte(args)
         if result is not None:
             return result
+    if args.format in ("both", "tflite") and args.tflite_backend == "litert":
+        result = import_module("model_export.qrcode.pt").try_export_tflite(args)
+        if result is not None:
+            return result
+    validate_generic_pt(args)
+    return run_generic_pt_export(args)
+
+
+def run_generic_pt_export(args: argparse.Namespace) -> dict:
+    """Export ordinary Detect checkpoints through the existing generic adapters.
+
+    :param args:    Validated generic PT export arguments.
+    :returns:       PTE and TFLite artifacts from the Detect adapters.
+    """
     if getattr(args, "output_type", "int8") != "int8":
         raise ValueError("--output-type float32 requires the raw QR-code ONNX exporter "
                          "or the native OBB PT-to-PTE exporter")
