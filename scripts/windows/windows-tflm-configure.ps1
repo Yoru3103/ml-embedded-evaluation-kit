@@ -13,8 +13,26 @@ function Invoke-WindowsTflmConfigure {
     $dependencyRoot = [IO.Path]::GetFullPath((Join-Path $BuildDirectory '_deps'))
     $recovered = @{}
     while ($true) {
-        $output = @(& $Executable @Arguments 2>&1)
-        $configureExit = $LASTEXITCODE
+        $originalPreference = $ErrorActionPreference
+        try {
+            # Windows PowerShell 5.1 turns redirected native stderr into error
+            # records. CMake also writes ordinary progress there; use its exit
+            # code to determine failure rather than stopping on that output.
+            $ErrorActionPreference = 'Continue'
+            $output = @(& $Executable @Arguments 2>&1)
+            $configureExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $originalPreference
+        }
+        # Empty native stderr records stringify as a type name in PowerShell
+        # 5.1. Preserve their actual text so multiline CMake diagnostics parse.
+        $output = @($output | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                $_.Exception.Message
+            } else {
+                "$_"
+            }
+        })
         $output | ForEach-Object { Write-Host "$_" }
         if ($configureExit -eq 0) { return }
 

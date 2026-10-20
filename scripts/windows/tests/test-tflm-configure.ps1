@@ -13,6 +13,10 @@ New-Item -ItemType Directory -Path $project -Force | Out-Null
 cmake_minimum_required(VERSION 3.21)
 project(WindowsExtractionRecovery NONE)
 file(APPEND "${CMAKE_BINARY_DIR}/attempts.txt" "configure\n")
+if(MODE STREQUAL "stderr")
+    message("Downloading dependency: progress on stderr is not a failure")
+    return()
+endif()
 if(MODE STREQUAL "unrelated")
     message(FATAL_ERROR "A model validation error must remain fatal")
 endif()
@@ -35,24 +39,37 @@ if(NOT "${FETCHCONTENT_SOURCE_DIR_TENSORFLOW-FLATBUFFERS}" STREQUAL "${destinati
 endif()
 '@ | Set-Content -LiteralPath (Join-Path $project 'CMakeLists.txt') -Encoding utf8
 
-foreach ($mode in @('recover', 'unrelated', 'outside')) {
+foreach ($mode in @('stderr', 'recover', 'unrelated', 'outside')) {
     $build = Join-Path $testRoot $mode
     $failed = $false
+    $failureMessage = ''
+    $originalPreference = $ErrorActionPreference
     try {
         Invoke-WindowsTflmConfigure -Executable $CMake -BuildDirectory $build `
             -Arguments @('-S', $project, '-B', $build, "-DMODE=$mode")
     } catch {
         $failed = $true
-        if ($mode -eq 'recover') { throw }
+        $failureMessage = $_.Exception.Message
+        if ($mode -in @('stderr', 'recover')) { throw }
+    }
+    if ($ErrorActionPreference -ne $originalPreference) {
+        throw 'Native output capture must restore the caller error preference.'
     }
     $attempts = @(Get-Content -LiteralPath (Join-Path $build 'attempts.txt')).Count
-    if ($mode -eq 'recover') {
+    if ($mode -eq 'stderr') {
+        if ($failed -or $attempts -ne 1) {
+            throw 'Successful CMake progress on stderr must not abort or retry configuration.'
+        }
+    } elseif ($mode -eq 'recover') {
         $header = Join-Path $build '_deps/tensorflow-flatbuffers-src/include/probe.h'
         if ($failed -or $attempts -ne 2 -or (Get-Content $header) -ne 'extracted contents') {
             throw 'A verified extraction should be recovered with one retry and preserved contents.'
         }
     } elseif (-not $failed -or $attempts -ne 1) {
         throw "$mode must fail immediately without retrying."
+    }
+    if ($mode -eq 'unrelated' -and $failureMessage -notmatch 'failed with exit code') {
+        throw 'A real CMake failure must be reported using its exit code.'
     }
     if ($mode -eq 'outside' -and
         -not (Test-Path -LiteralPath (Join-Path $build 'outside/archive/include/probe.h'))) {
