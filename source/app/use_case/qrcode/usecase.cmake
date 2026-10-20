@@ -35,10 +35,7 @@ target_include_directories(qrcode_drawing PUBLIC
 target_link_libraries(qrcode_drawing PUBLIC hal yolov8_detection_api)
 list(APPEND ${use_case}_LINK_LIBS qrcode_drawing)
 
-USER_OPTION(${use_case}_MAX_DETECTIONS "Maximum detections after NMS (1-5)." 5 STRING)
-if (NOT "${${use_case}_MAX_DETECTIONS}" MATCHES "^[1-5]$")
-    message(FATAL_ERROR "qrcode_MAX_DETECTIONS must be between one and five")
-endif()
+USER_OPTION(${use_case}_MAX_DETECTIONS "Maximum detections after NMS." 20 STRING)
 USER_OPTION(${use_case}_SCORE_THRESHOLD "Class confidence threshold." 0.25 STRING)
 USER_OPTION(${use_case}_NMS_THRESHOLD "Rotated NMS IoU threshold." 0.45 STRING)
 USER_OPTION(${use_case}_DISPLAY_DOWNSCALE "LCD image downscale factor." 2 STRING)

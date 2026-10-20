@@ -68,12 +68,8 @@ USER_OPTION(
 USER_OPTION(
     ${use_case}_MAX_DETECTIONS
     "Maximum number of detections after NMS."
-    5
+    20
     STRING)
-
-if (${${use_case}_OBB} AND ${${use_case}_MAX_DETECTIONS} GREATER 5)
-    message(FATAL_ERROR "OBB supports at most five detections after rotated NMS.")
-endif()
 
 USER_OPTION(
     ${use_case}_SCORE_THRESHOLD
