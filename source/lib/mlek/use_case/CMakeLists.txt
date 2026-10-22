@@ -21,7 +21,7 @@ set(_MLEK_API_LIST
     asr kws noise_reduction         # Voice/Audio pipelines
     img_class object_detection vww yolov8_detection yolov8_pose  # Vision pipelines
     ad                              # Vibration pipeline
-    inference_runner)               # Generic runner - minimal inference
+    inference_runner pico_face)     # Generic runner and latent face generator
 
 foreach(_api_name ${_MLEK_API_LIST})
     add_subdirectory(${_api_name} EXCLUDE_FROM_ALL)

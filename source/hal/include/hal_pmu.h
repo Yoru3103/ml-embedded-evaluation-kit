@@ -31,6 +31,9 @@ void hal_pmu_init(void);
  */
 void hal_pmu_reset(void);
 
+/** @brief Reset NPU profiling only, preserving the CPU time base. */
+void hal_pmu_reset_npu(void);
+
 /** @brief Release the NPU PMU power reference after reading counters. */
 void hal_pmu_final(void);
 

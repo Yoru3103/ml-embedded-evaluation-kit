@@ -65,6 +65,7 @@ if (TARGET_PLATFORM STREQUAL "native")
     add_subdirectory(tests/hal/timer ${CMAKE_BINARY_DIR}/mps4-timer-tests)
     add_subdirectory(tests/hal/display ${CMAKE_BINARY_DIR}/mps4-display-tests)
     add_subdirectory(tests/processing/yolov8_detection ${CMAKE_BINARY_DIR}/yolov8-processing-tests)
+    add_subdirectory(tests/processing/pico_face ${CMAKE_BINARY_DIR}/pico-face-processing-tests)
 endif()
 
 print_useroptions()

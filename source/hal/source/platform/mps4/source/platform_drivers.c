@@ -53,7 +53,9 @@ static int verify_platform(void);
  * @brief   Initialises the HDLCD for MPS4 platform
  * @return  0 if successful, error code otherwise.
  */
+#if MPS4_DISPLAY_ENABLED
 static int platform_hdlcd_init(void);
+#endif
 
 /**
  * @brief   Creates a new vector table in RW memory region
@@ -65,12 +67,11 @@ static void create_rw_vector_table(void);
 /** Enable debug access on the Corstone-320 FPGA, as done by the FI101 selftest. */
 static void enable_fpga_debug(void)
 {
-    volatile uint32_t* force_disable =
-        (volatile uint32_t*)(CORSTONE320_SYSCTRL_BASE_S + 0x25CU);
-    volatile uint32_t* dcu_enable = (volatile uint32_t*)(LCM_BASE_S + 0x100U);
+    volatile uint32_t* force_disable = (volatile uint32_t*)(CORSTONE320_SYSCTRL_BASE_S + 0x25CU);
+    volatile uint32_t* dcu_enable    = (volatile uint32_t*)(LCM_BASE_S + 0x100U);
 
     *force_disable = 0xAAAAAAAAU;
-    *dcu_enable = 0x00005555U;
+    *dcu_enable    = 0x00005555U;
 }
 #endif /* defined(FPGA) */
 
@@ -123,10 +124,12 @@ int platform_init(void)
 
 #endif /* ARM_NPU */
 
-    /* Initialise HDLCD device. */
+    /* Initialise HDLCD only when a display is present and enabled. */
+#if MPS4_DISPLAY_ENABLED
     if (0 != (err = platform_hdlcd_init())) {
         return err;
     }
+#endif
 
     /* Print target design info */
     info("Target system design: %s\n", s_platform_name);
@@ -245,6 +248,7 @@ static void enable_hdlcd_irq(void)
     hdlcd_enable_irq(platform_get_hdlcd_dev(), INT_DMA_END_Msk);
 }
 
+#if MPS4_DISPLAY_ENABLED
 static int platform_hdlcd_init(void)
 {
     /* Initialise HDLCD */
@@ -263,15 +267,15 @@ static int platform_hdlcd_init(void)
         return hdlcd_err;
     }
 
-#if (HDLCD_RES_HEIGHT == 240) && (HDLCD_RES_WIDTH == 320)
+#    if (HDLCD_RES_HEIGHT == 240) && (HDLCD_RES_WIDTH == 320)
     const enum hdlcd_resolution_t res = HDLCD_RES_320x240;
     hdlcd_err                         = hdlcd_set_resolution(hdlcd_dev, res);
-#elif (HDLCD_RES_HEIGHT == 480) && (HDLCD_RES_WIDTH == 640)
+#    elif (HDLCD_RES_HEIGHT == 480) && (HDLCD_RES_WIDTH == 640)
     const enum hdlcd_resolution_t res = HDLCD_RES_VGA;
     hdlcd_err                         = hdlcd_set_resolution(hdlcd_dev, res);
-#else /* resolutions */
-#    error "Resolution not supported!"
-#endif /* resolutions */
+#    else /* resolutions */
+#        error "Resolution not supported!"
+#    endif /* resolutions */
 
     if (hdlcd_err != HDLCD_ERR_NONE) {
         printf_err("Failed to set HDLCD resolution.\n");
@@ -321,6 +325,7 @@ static int platform_hdlcd_init(void)
     debug("HDLCD device initialised.\n");
     return 0;
 }
+#endif
 
 #define VTABLE_SIZE 496
 
