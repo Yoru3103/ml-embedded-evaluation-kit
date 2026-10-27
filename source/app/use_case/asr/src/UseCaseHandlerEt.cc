@@ -71,6 +71,12 @@ namespace app {
         constexpr uint32_t melAudioSpanFactor = 100;
         const uint32_t melRows = melShape[fwk::et::ConformerModel::ms_inputMelRowsIdx];
         const uint32_t melCols = melShape[fwk::et::ConformerModel::ms_inputMelColsIdx];
+        if (melRows == 0 || melSpecWindowSize == 0 || melSpecHopSize == 0) {
+            printf_err("Invalid Conformer input dimensions or window settings\n");
+            return false;
+        }
+        const size_t maxAudioSamples =
+            melSpecWindowSize + static_cast<size_t>(melRows - 1) * melSpecHopSize;
 
         const auto audioMode    = HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT;
         const auto samplingRate = GET_AUDIO_SAMPLING_RATE(audioMode);
@@ -104,6 +110,10 @@ namespace app {
             if (!audioArrSize || !audioArr) {
                 debug("End of stream\n");
                 break;
+            }
+            if (audioArrSize > maxAudioSamples) {
+                warn("Audio exceeds model capacity; truncating to %zu samples\n", maxAudioSamples);
+                audioArrSize = static_cast<uint32_t>(maxAudioSamples);
             }
 
             /* Run the pre-processing, inference and post-processing. */

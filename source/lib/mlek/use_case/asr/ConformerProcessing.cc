@@ -24,9 +24,6 @@
 #include "mlek/log/log_macros.h"
 
 namespace arm::app {
-template class ConformerPreProcess<float>;
-template class ConformerPreProcess<int16_t>;
-
 template <class T>
 ConformerPreProcess<T>::ConformerPreProcess(
     const std::shared_ptr<fwk::iface::TensorIface>& inputTensorMelSpec,
@@ -45,20 +42,38 @@ ConformerPreProcess<T>::ConformerPreProcess(
 template <class T>
 bool ConformerPreProcess<T>::DoPreProcess(const void* input, size_t inputSize)
 {
+    if (!this->m_inputTensorMelSpec || !this->m_inputTensorChunkSize ||
+        this->m_inputTensorMelSpec->Type() != fwk::iface::TensorType::FP32 ||
+        this->m_inputTensorChunkSize->Type() != fwk::iface::TensorType::INT32 ||
+        this->m_inputTensorChunkSize->GetNumElements() != 1 ||
+        !this->m_inputTensorMelSpec->GetData() || !this->m_inputTensorChunkSize->GetData()) {
+        printf_err("Invalid Conformer input tensor types or storage\n");
+        return false;
+    }
+    const auto shape = this->m_inputTensorMelSpec->Shape();
+    if (shape.size() != 3 || shape[0] != 1 || shape[1] != this->m_chunkSize ||
+        shape[2] != audio::ConformerMelSpectrogram::ms_defaultNumFbankBins) {
+        printf_err("Conformer input shape does not match preprocessing settings\n");
+        return false;
+    }
+
     // Generate full mel spectrogram with padding
     auto elementsWritten =
         this->GenerateMelSpectrogram(input,
                                      inputSize,
                                      static_cast<float*>(this->m_inputTensorMelSpec->GetData()),
-                                     this->m_inputTensorMelSpec->Bytes());
+                                     this->m_inputTensorMelSpec->GetNumElements());
+    if (elementsWritten == 0) {
+        return false;
+    }
     auto paddingNeeded = this->m_inputTensorMelSpec->GetNumElements() - elementsWritten;
     std::fill_n(static_cast<float*>(this->m_inputTensorMelSpec->GetData()) + elementsWritten,
                 paddingNeeded,
                 -20.f);
 
     // Populate second input tensor with audio chunk size value
-    auto chunkSizeTensorData = static_cast<float*>(this->m_inputTensorChunkSize->GetData());
-    *chunkSizeTensorData     = static_cast<float>(this->m_chunkSize);
+    auto chunkSizeTensorData = static_cast<int32_t*>(this->m_inputTensorChunkSize->GetData());
+    *chunkSizeTensorData     = static_cast<int32_t>(this->m_chunkSize);
 
     return true;
 }
@@ -69,23 +84,36 @@ size_t ConformerPreProcess<T>::GenerateMelSpectrogram(const void* input,
                                                       float* output,
                                                       size_t outputSize)
 {
+    constexpr size_t numMels = audio::ConformerMelSpectrogram::ms_defaultNumFbankBins;
+    if (!input || !output || this->m_melSpecWindowSize == 0 || this->m_melSpecHopSize == 0 ||
+        inputSize < this->m_melSpecWindowSize) {
+        printf_err("Invalid Conformer audio or spectrogram buffer\n");
+        return 0;
+    }
+    const size_t numFrames = 1 + (inputSize - this->m_melSpecWindowSize) / this->m_melSpecHopSize;
+    if (numFrames > outputSize / numMels) {
+        printf_err("Conformer audio exceeds spectrogram capacity\n");
+        return 0;
+    }
     this->m_melSpectrogram.Init();
     this->m_slidingWindow.Reset(static_cast<const T*>(input), inputSize);
-    auto writeFrom  = output;
-    auto upperBound = output + outputSize;
+    auto writeFrom         = output;
+    size_t elementsWritten = 0;
     while (this->m_slidingWindow.HasNext()) {
-        if (writeFrom >= upperBound) {
-            printf_err("Would overflow\n");
-            return false;
-        }
         const T* windowStart = this->m_slidingWindow.Next();
         const T* windowEnd   = windowStart + this->m_melSpecWindowSize;
         auto window          = std::vector(windowStart, windowEnd);
         auto melSpecVector   = this->m_melSpectrogram.ComputeMelSpec(window);
+        if (melSpecVector.size() != numMels ||
+            melSpecVector.size() > outputSize - elementsWritten) {
+            printf_err("Invalid Conformer mel frame size\n");
+            return 0;
+        }
         memcpy(writeFrom, melSpecVector.data(), melSpecVector.size() * sizeof(float));
         writeFrom += melSpecVector.size();
+        elementsWritten += melSpecVector.size();
     }
-    return writeFrom - output;
+    return elementsWritten;
 }
 
 ConformerPostProcess::ConformerPostProcess(
@@ -193,4 +221,7 @@ bool ConformerPostProcess::DoPostProcess()
            this->m_decodedResult);
     return true;
 }
+
+template class ConformerPreProcess<float>;
+template class ConformerPreProcess<int16_t>;
 } // namespace arm::app

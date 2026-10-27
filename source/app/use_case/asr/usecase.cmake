@@ -137,7 +137,7 @@ elseif("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
         "/* Model parameters for ${use_case} */"
         "extern const int   g_melSpecWindowSize = 512"
         "extern const int   g_melSpecHopSize    = 160"
-        "extern const int   g_chunkSize         = 1500"
+        "extern const int   g_chunkSize         = 700"
         )
 endif()
 

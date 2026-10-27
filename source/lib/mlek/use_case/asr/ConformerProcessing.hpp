@@ -46,7 +46,7 @@ public:
      * @param inputTensorChunkSize      Second input tensor containing chunk size
      * @param melSpecWindowSize         Mel spectrogram window size
      * @param melSpecHopSize            Mel spectrogram hop size
-     * @param chunkSize                 Audio chunk size in milliseconds
+     * @param chunkSize                 Number of mel frames in the fixed model input
      */
     explicit ConformerPreProcess(
         const std::shared_ptr<fwk::iface::TensorIface>& inputTensorMelSpec,
@@ -59,7 +59,7 @@ public:
      * @brief               Carry out pre-processing and populate both input tensors
      *                      with the expected values.
      * @param input         Input audio data
-     * @param inputSize     Size of input audio data
+     * @param inputSize     Number of input audio samples
      * @return              True if pre-processing was successful, false otherwise
      */
     bool DoPreProcess(const void* input, size_t inputSize) override;
@@ -67,10 +67,10 @@ public:
     /**
      *                      Generate a mel spectrogram for the given input audio sample
      * @param input         Input audio data
-     * @param inputSize     Size of input audio data
+     * @param inputSize     Number of input audio samples
      * @param output        Output data
-     * @param outputSize    Size of output data
-     * @return              Number of elements written to the output data
+     * @param outputSize    Capacity of output in float elements, not bytes
+     * @return              Number of elements written, or zero on invalid input/capacity
      */
     size_t
     GenerateMelSpectrogram(const void* input, size_t inputSize, float* output, size_t outputSize);

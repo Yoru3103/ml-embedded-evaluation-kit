@@ -28,9 +28,10 @@
 #include "mlek/fwk/executorch/EtTensor.hpp"
 #include "mlek/use_case/asr/ConformerProcessing.hpp"
 
-std::shared_ptr<arm::app::fwk::et::EtTensor> CreateTestTensor(
-    executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Float>* tensorFactory,
-    const std::vector<int32_t>& shape)
+template <executorch::aten::ScalarType TYPE>
+std::shared_ptr<arm::app::fwk::et::EtTensor>
+CreateTestTensor(executorch::runtime::testing::TensorFactory<TYPE>* tensorFactory,
+                 const std::vector<int32_t>& shape)
 {
     auto tensor = tensorFactory->zeros(shape);
     return std::make_shared<arm::app::fwk::et::EtTensor>(arm::app::fwk::et::EtTensor(tensor));
@@ -59,7 +60,9 @@ TEST_CASE("Conformer pre-processing")
 {
     auto tensorFactory =
         executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Float>();
-    auto chunkSize  = 1500;
+    auto lengthFactory =
+        executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Int>();
+    auto chunkSize  = 700;
     auto nMels      = 80;
     auto nFfts      = 512;
     auto windowSize = 400;
@@ -68,7 +71,7 @@ TEST_CASE("Conformer pre-processing")
     SECTION("Mel spectrogram generation")
     {
         auto inputTensorMelSpec   = CreateTestTensor(&tensorFactory, {1, chunkSize, nMels});
-        auto inputTensorChunkSize = CreateTestTensor(&tensorFactory, {1});
+        auto inputTensorChunkSize = CreateTestTensor(&lengthFactory, {1});
 
         auto conformerPreProcess = arm::app::ConformerPreProcess<int16_t>(
             inputTensorMelSpec, inputTensorChunkSize, nFfts, hopSize, chunkSize);
@@ -87,11 +90,11 @@ TEST_CASE("Conformer pre-processing")
     SECTION("Populated input tensors with padded mel spectrogram and audio chunk size")
     {
         auto inputTensorMelSpec   = CreateTestTensor(&tensorFactory, {1, chunkSize, nMels});
-        auto inputTensorChunkSize = CreateTestTensor(&tensorFactory, {1});
+        auto inputTensorChunkSize = CreateTestTensor(&lengthFactory, {1});
 
         auto conformerPreProcess = arm::app::ConformerPreProcess<int16_t>(
             inputTensorMelSpec, inputTensorChunkSize, nFfts, hopSize, chunkSize);
-        conformerPreProcess.DoPreProcess(testDataWav.data(), testDataWav.size());
+        REQUIRE(conformerPreProcess.DoPreProcess(testDataWav.data(), testDataWav.size()));
 
         auto inputTensorMelSpecData = static_cast<float*>(inputTensorMelSpec->GetData());
         std::vector actualMelSpec(inputTensorMelSpecData,
@@ -105,8 +108,8 @@ TEST_CASE("Conformer pre-processing")
             CHECK(actualMelSpec[i] == Approx(expectedMelSpec[i]).epsilon(0.1).margin(1.0));
         }
 
-        float actualChunkSize = *static_cast<float*>(inputTensorChunkSize->GetData());
-        REQUIRE(actualChunkSize == static_cast<float>(chunkSize));
+        int32_t actualChunkSize = *static_cast<int32_t*>(inputTensorChunkSize->GetData());
+        REQUIRE(actualChunkSize == chunkSize);
     }
 }
 
