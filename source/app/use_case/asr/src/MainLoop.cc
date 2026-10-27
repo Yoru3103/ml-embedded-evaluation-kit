@@ -31,6 +31,9 @@ using AsrModel = arm::app::fwk::tflm::Wav2LetterModel;
 #    include "mlek/fwk/executorch/ConformerModel.hpp"
 
 using AsrModel = arm::app::fwk::et::ConformerModel;
+#    if defined(ASR_ET_STAGE_PROFILING)
+#        include "ConformerOpProfiler.hpp"
+#    endif
 #endif /** MLEK_FWK_TFLM or MLEK_FWK_EXECUTORCH */
 
 namespace arm {
@@ -50,6 +53,11 @@ static bool VerifyTensorDimensions(const arm::app::fwk::iface::Model& model);
 
 void MainLoop()
 {
+#if defined(MLEK_FWK_EXECUTORCH) && defined(ASR_ET_STAGE_PROFILING)
+    arm::app::ConformerOpProfiler opProfiler{arm::app::ReadConformerCpuCycles};
+    arm::app::fwk::et::EtBackendData backendData;
+    backendData.m_eventTracer = &opProfiler;
+#endif
     AsrModel model; /* Model wrapper object. */
 
     arm::app::fwk::iface::MemoryRegion modelMem{arm::app::asr::GetModelPointer(),
@@ -58,7 +66,11 @@ void MainLoop()
                                                   sizeof(arm::app::activationBuf)};
 
     /* Load the model. */
+#if defined(MLEK_FWK_EXECUTORCH) && defined(ASR_ET_STAGE_PROFILING)
+    if (!model.Init(computeMem, modelMem, &backendData)) {
+#else
     if (!model.Init(computeMem, modelMem)) {
+#endif
         printf_err("Failed to initialise model\n");
         return;
     }
@@ -69,6 +81,9 @@ void MainLoop()
     }
     /* Instantiate application context. */
     arm::app::ApplicationContext caseContext;
+#if defined(MLEK_FWK_EXECUTORCH) && defined(ASR_ET_STAGE_PROFILING)
+    caseContext.Set<arm::app::ConformerOpProfiler&>("opProfiler", opProfiler);
+#endif
     std::vector<std::string> labels;
     GetLabelsVector(labels);
 

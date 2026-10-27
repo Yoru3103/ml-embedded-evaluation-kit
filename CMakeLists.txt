@@ -53,12 +53,17 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 option(ASR_STAGE_PROFILING "Enable optional wav2letter processing-stage timing" OFF)
+option(ASR_ET_STAGE_PROFILING "Enable Conformer ExecuTorch six-stage timing" OFF)
 if (ASR_STAGE_PROFILING)
     add_compile_definitions(ASR_STAGE_PROFILING)
 endif()
 
 # Add hal target
 add_subdirectory(source/hal ${CMAKE_BINARY_DIR}/mlek-hal)
+
+if (ASR_ET_STAGE_PROFILING AND NOT CPU_PROFILE_ENABLED)
+    message(FATAL_ERROR "ASR_ET_STAGE_PROFILING requires CPU_PROFILE_ENABLED=ON")
+endif()
 
 if (ASR_STAGE_PROFILING AND NOT CPU_PROFILE_ENABLED)
     message(FATAL_ERROR "ASR stage profiling requires CPU_PROFILE_ENABLED=ON")

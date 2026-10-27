@@ -31,3 +31,15 @@ foreach(PROFILING_MODE IN ITEMS enabled disabled)
     endif()
     add_test(NAME processing-stage-scope-${PROFILING_MODE} COMMAND ${SCOPE_TEST_TARGET})
 endforeach()
+
+if (EXISTS "${MLEK_TEST_ROOT}/dependencies/executorch/runtime/core/event_tracer.h")
+    add_executable(conformer_op_profiler_tests ConformerOpProfilerTests.cc)
+    target_compile_features(conformer_op_profiler_tests PRIVATE cxx_std_17)
+    target_compile_definitions(conformer_op_profiler_tests PRIVATE
+        ET_EVENT_TRACER_ENABLED C10_USING_CUSTOM_GENERATED_MACROS)
+    target_include_directories(conformer_op_profiler_tests PRIVATE
+        ${MLEK_TEST_ROOT}/dependencies
+        ${MLEK_TEST_ROOT}/dependencies/executorch/runtime/core/portable_type/c10
+        ${MLEK_TEST_ROOT}/source/app/use_case/asr/include)
+    add_test(NAME conformer-op-profiler COMMAND conformer_op_profiler_tests)
+endif()

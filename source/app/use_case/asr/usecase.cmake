@@ -39,6 +39,17 @@ endif()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
 
+if (ASR_ET_STAGE_PROFILING AND "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
+    if (NOT ETHOS_U_NPU_ENABLED OR NOT TARGET_PLATFORM STREQUAL "mps4" OR
+        NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR "Conformer stage timing requires MPS4 NPU and GNU/Clang linker wrapping")
+    endif()
+    add_library(asr_et_stage_hooks INTERFACE)
+    target_compile_definitions(asr_et_stage_hooks INTERFACE ASR_ET_STAGE_PROFILING)
+    target_link_options(asr_et_stage_hooks INTERFACE "LINKER:--wrap=ethosu_invoke_v3")
+    list(APPEND ${use_case}_LINK_LIBS asr_et_stage_hooks)
+endif()
+
 # Append the API to use for this use case
 list(APPEND ${use_case}_API_LIST "asr")
 
@@ -154,7 +165,7 @@ if (COMMAND generate_pte_ops_lib)
 
     # If the target is generated, request it to be linked for this use case.
     if (TARGET ${use_case}_portable_ops_lib)
-        set(${use_case}_LINK_LIBS ${use_case}_portable_ops_lib)
+        list(APPEND ${use_case}_LINK_LIBS ${use_case}_portable_ops_lib)
     endif()
 endif()
 

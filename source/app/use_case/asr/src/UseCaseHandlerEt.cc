@@ -29,6 +29,9 @@
 #    include "mlek/use_case/asr/ConformerProcessing.hpp"
 
 #    include <cstring>
+#    if defined(ASR_ET_STAGE_PROFILING)
+#        include "ConformerOpProfiler.hpp"
+#    endif
 
 namespace arm {
 namespace app {
@@ -54,6 +57,11 @@ namespace app {
         auto melSpecWindowSize = ctx.Get<uint32_t>("melSpecWindowSize");
         auto melSpecHopSize    = ctx.Get<uint32_t>("melSpecHopSize");
         auto chunkSize         = ctx.Get<uint32_t>("chunkSize");
+#    if defined(ASR_ET_STAGE_PROFILING)
+        auto& opProfiler = ctx.Get<ConformerOpProfiler&>("opProfiler");
+        hal_pmu_reset();
+        hal_pmu_final();
+#    endif
 
         if (!model.IsInited()) {
             printf_err("Model is not initialised! Terminating processing.\n");
@@ -117,10 +125,16 @@ namespace app {
             }
 
             /* Run the pre-processing, inference and post-processing. */
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t preStart = ReadConformerCpuCycles();
+#    endif
             if (!preProcess.DoPreProcess(audioArr, audioArrSize)) {
                 printf_err("Pre-processing failed.");
                 return false;
             }
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t preCycles = ReadConformerCpuCycles() - preStart;
+#    endif
 
             info("Audio array size: %" PRIu32 "; sampling rate: %" PRIu32 "\n",
                  audioArrSize,
@@ -197,15 +211,39 @@ namespace app {
                                   dataPsnTxtInfStartY + (melImageHeight + fontYSpan) * 2,
                                   false);
 
+#    if defined(ASR_ET_STAGE_PROFILING)
+            pmu_counters countersStart{}, countersEnd{};
+            hal_pmu_reset_npu();
+            hal_pmu_get_counters(&countersStart);
+            opProfiler.Reset();
+            const uint64_t invokeStart  = ReadConformerCpuCycles();
+            const bool inferenceOk      = model.RunInference();
+            const uint64_t invokeCycles = ReadConformerCpuCycles() - invokeStart;
+            opProfiler.Stop();
+            hal_pmu_get_counters(&countersEnd);
+            hal_pmu_final();
+            if (!profiler.RecordProfiling(countersStart, countersEnd, "Inference") ||
+                !inferenceOk) {
+#    else
             if (!RunInference(model, profiler)) {
+#    endif
                 printf_err("Inference failed.");
                 return false;
             }
 
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t postStart = ReadConformerCpuCycles();
+#    endif
             if (!postProcess.DoPostProcess()) {
                 printf_err("Post-processing failed.");
                 return false;
             }
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t postCycles = ReadConformerCpuCycles() - postStart;
+            if (!opProfiler.Print(preCycles, invokeCycles, postCycles)) {
+                return false;
+            }
+#    endif
 
             /* Erase. */
             str_inf = std::string(str_inf.size(), ' ');
