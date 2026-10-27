@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -23,15 +23,14 @@
 
 #include "ConformerLogitsFixtures.hpp"
 #include "ConformerMelSpecFixtures.hpp"
-#include "mlek/use_case/asr/ConformerProcessing.hpp"
-#include "mlek/fwk/executorch/EtTensor.hpp"
 #include "executorch/runtime/core/exec_aten/exec_aten.h"
 #include "executorch/runtime/core/exec_aten/testing_util/tensor_factory.h"
+#include "mlek/fwk/executorch/EtTensor.hpp"
+#include "mlek/use_case/asr/ConformerProcessing.hpp"
 
 std::shared_ptr<arm::app::fwk::et::EtTensor> CreateTestTensor(
     executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Float>* tensorFactory,
-    const std::vector<int32_t>& shape
-)
+    const std::vector<int32_t>& shape)
 {
     auto tensor = tensorFactory->zeros(shape);
     return std::make_shared<arm::app::fwk::et::EtTensor>(arm::app::fwk::et::EtTensor(tensor));
@@ -42,18 +41,13 @@ std::shared_ptr<arm::app::fwk::et::EtTensor> CreateTestTensor(
     executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Float>* tensorFactory,
     const std::array<size_t, DIMS>& shape,
     const float* data,
-    const size_t dataSize
-)
+    const size_t dataSize)
 {
-    const size_t shapeProduct = std::accumulate(
-        shape.begin(),
-        shape.end(),
-        1,
-        std::multiplies<size_t>()
-    );
+    const size_t shapeProduct =
+        std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<size_t>());
     REQUIRE(dataSize <= shapeProduct);
 
-    auto sizes = std::vector<int32_t>(shape.begin(), shape.end());
+    auto sizes  = std::vector<int32_t>(shape.begin(), shape.end());
     auto tensor = tensorFactory->zeros(sizes);
     auto etTensor =
         std::make_shared<arm::app::fwk::et::EtTensor>(arm::app::fwk::et::EtTensor(tensor));
@@ -103,8 +97,7 @@ TEST_CASE("Conformer pre-processing")
         std::vector actualMelSpec(inputTensorMelSpecData,
                                   inputTensorMelSpecData + inputTensorMelSpec->GetNumElements());
         auto expectedMelSpec = std::vector<float>(inputTensorMelSpec->GetNumElements());
-        std::copy(
-            testDataMel.begin(), testDataMel.end(), expectedMelSpec.data());
+        std::copy(testDataMel.begin(), testDataMel.end(), expectedMelSpec.data());
         std::fill_n(expectedMelSpec.begin() + testDataMel.size(),
                     expectedMelSpec.size() - testDataMel.size(),
                     -20.f);
@@ -125,8 +118,7 @@ TEST_CASE("Conformer post-processing")
             {{0.1, 0.2, 0.3, 0.4, 0.5, 0.4, 0.3, 0.2, 0.1}, 4},
             {{0.4, 0.5, 0.5, 0.5, 0.5, 0.5}, 1},
             {{-0.4, -0.5, -0.5, -0.5, -0.5, -0.5}, 0},
-            {{-0.4, -0.2, 0.5, -0.5}, 2}
-        };
+            {{-0.4, -0.2, 0.5, -0.5}, 2}};
 
         for (const auto& fixture : fixtures) {
             auto testLogits     = fixture.first;
@@ -139,33 +131,26 @@ TEST_CASE("Conformer post-processing")
 
     SECTION("Arg max 2D")
     {
-        auto input = anotherDoorInt8Logits;
+        auto input        = anotherDoorInt8Logits;
         auto actualArgMax = arm::app::ConformerPostProcess::ArgMax2D(
-            input.data(), input.size(), anotherDoorInt8LogitsShape
-        );
-        REQUIRE(std::equal(
-            actualArgMax.begin(),
-            actualArgMax.end(),
-            anotherDoorInt8ArgMax.begin(),
-            anotherDoorInt8ArgMax.end()
-            )
-        );
+            input.data(), input.size(), anotherDoorInt8LogitsShape);
+        REQUIRE(std::equal(actualArgMax.begin(),
+                           actualArgMax.end(),
+                           anotherDoorInt8ArgMax.begin(),
+                           anotherDoorInt8ArgMax.end()));
     }
 
     SECTION("Decode")
     {
         auto input = anotherDoorInt8Logits;
         std::array<size_t, 2> inputShape;
-        std::copy(
-            anotherDoorInt8LogitsShape.begin(),
-            anotherDoorInt8LogitsShape.end(),
-            inputShape.data()
-        );
+        std::copy(anotherDoorInt8LogitsShape.begin(),
+                  anotherDoorInt8LogitsShape.end(),
+                  inputShape.data());
         std::string actualDecoded;
 
         arm::app::ConformerPostProcess::Decode(
-            input.data(), input.size(), inputShape, sentencePieceVocab, actualDecoded
-        );
+            input.data(), input.size(), inputShape, sentencePieceVocab, actualDecoded);
         REQUIRE(actualDecoded == anotherDoorInt8Decoded);
     }
 
@@ -173,24 +158,16 @@ TEST_CASE("Conformer post-processing")
     {
         auto tensorFactory =
             executorch::runtime::testing::TensorFactory<executorch::aten::ScalarType::Float>();
-        auto outputTensorLogits = CreateTestTensor(
-            &tensorFactory,
-            anotherDoorInt8LogitsShape,
-            anotherDoorInt8Logits.data(),
-            anotherDoorInt8Logits.size()
-        );
-        const auto chunkSize = static_cast<float>(anotherDoorInt8LogitsShape[0]);
+        auto outputTensorLogits     = CreateTestTensor(&tensorFactory,
+                                                       anotherDoorInt8LogitsShape,
+                                                       anotherDoorInt8Logits.data(),
+                                                       anotherDoorInt8Logits.size());
+        const auto chunkSize        = static_cast<float>(anotherDoorInt8LogitsShape[0]);
         std::array<size_t, 1> shape = {1};
-        auto outputTensorChunkSize = CreateTestTensor(
-            &tensorFactory,
-            shape,
-            &chunkSize,
-            1
-        );
+        auto outputTensorChunkSize  = CreateTestTensor(&tensorFactory, shape, &chunkSize, 1);
         std::string actualDecoded;
         auto conformerPostProcess = arm::app::ConformerPostProcess(
-            outputTensorLogits, outputTensorChunkSize, sentencePieceVocab, actualDecoded
-        );
+            outputTensorLogits, outputTensorChunkSize, sentencePieceVocab, actualDecoded);
         conformerPostProcess.DoPostProcess();
         REQUIRE(actualDecoded == anotherDoorInt8Decoded);
     }

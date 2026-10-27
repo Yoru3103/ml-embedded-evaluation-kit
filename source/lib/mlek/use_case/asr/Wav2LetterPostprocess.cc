@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2023, 2025 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2021-2023, 2025-2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -38,7 +38,7 @@ namespace app {
         this->m_outputTensor     = model.GetOutputTensor(0);
         this->m_outputContextLen = this->GetOutputContextLen();
         this->m_outputInnerLen   = this->GetOutputInnerLen();
-        this->m_totalLen = (2 * this->m_outputContextLen + this->m_outputInnerLen);
+        this->m_totalLen         = (2 * this->m_outputContextLen + this->m_outputInnerLen);
     }
 
     bool AsrPostProcess::DoPostProcess()
@@ -100,10 +100,9 @@ namespace app {
         return true;
     }
 
-    bool AsrPostProcess::EraseSectionsRowWise(
-            uint8_t*         ptrData,
-            const uint32_t   strideSzBytes,
-            const bool       lastIteration)
+    bool AsrPostProcess::EraseSectionsRowWise(uint8_t* ptrData,
+                                              const uint32_t strideSzBytes,
+                                              const bool lastIteration)
     {
         /* In this case, the "zero-ing" is quite simple as the region
          * to be zeroed sits in contiguous memory (row-major). */
@@ -114,17 +113,18 @@ namespace app {
             /* Set output of each classification window to the blank token. */
             std::memset(ptrData, 0, eraseLen);
             for (size_t windowIdx = 0; windowIdx < this->m_outputContextLen; windowIdx++) {
-                ptrData[windowIdx*strideSzBytes + this->m_blankTokenIdx] = 1;
+                ptrData[windowIdx * strideSzBytes + this->m_blankTokenIdx] = 1;
             }
         }
 
         /* Erase right context? */
         if (false == lastIteration) {
-            uint8_t* rightCtxPtr = ptrData + (strideSzBytes * (this->m_outputContextLen + this->m_outputInnerLen));
+            uint8_t* rightCtxPtr =
+                ptrData + (strideSzBytes * (this->m_outputContextLen + this->m_outputInnerLen));
             /* Set output of each classification window to the blank token. */
             std::memset(rightCtxPtr, 0, eraseLen);
             for (size_t windowIdx = 0; windowIdx < this->m_outputContextLen; windowIdx++) {
-                rightCtxPtr[windowIdx*strideSzBytes + this->m_blankTokenIdx] = 1;
+                rightCtxPtr[windowIdx * strideSzBytes + this->m_blankTokenIdx] = 1;
             }
         }
 
@@ -188,8 +188,7 @@ namespace app {
             return 0;
         }
 
-        const float inOutRowRatio = static_cast<float>(inputRows) /
-                                     static_cast<float>(outputRows);
+        const float inOutRowRatio = static_cast<float>(inputRows) / static_cast<float>(outputRows);
 
         return std::round(static_cast<float>(this->m_inputContextLen) / inOutRowRatio);
     }

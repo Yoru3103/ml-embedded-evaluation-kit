@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2023, 2025 Arm Limited and/or its affiliates
+ * SPDX-FileCopyrightText: Copyright 2021-2023, 2025-2026 Arm Limited and/or its affiliates
  * <open-source-office@arm.com> SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,8 +16,8 @@
  */
 #include "mlek/use_case/asr/Wav2LetterPreprocess.hpp"
 
-#include "mlek/math/PlatformMath.hpp"
 #include "mlek/fwk/iface/Tensor.hpp"
+#include "mlek/math/PlatformMath.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -45,9 +45,11 @@ namespace app {
 
     bool AsrPreProcess::DoPreProcess(const void* audioData, const size_t audioDataLen)
     {
-        this->m_mfccSlidingWindow = audio::SlidingWindow<const int16_t>(
-                static_cast<const int16_t*>(audioData), audioDataLen,
-                this->m_mfccWindowLen, this->m_mfccWindowStride);
+        this->m_mfccSlidingWindow =
+            audio::SlidingWindow<const int16_t>(static_cast<const int16_t*>(audioData),
+                                                audioDataLen,
+                                                this->m_mfccWindowLen,
+                                                this->m_mfccWindowStride);
 
         uint32_t mfccBufIdx = 0;
 
@@ -58,9 +60,8 @@ namespace app {
         /* While we can slide over the audio. */
         while (this->m_mfccSlidingWindow.HasNext()) {
             const int16_t* mfccWindow = this->m_mfccSlidingWindow.Next();
-            auto mfccAudioData = std::vector<int16_t>(
-                                        mfccWindow,
-                                        mfccWindow + this->m_mfccWindowLen);
+            auto mfccAudioData =
+                std::vector<int16_t>(mfccWindow, mfccWindow + this->m_mfccWindowLen);
             auto mfcc = this->m_mfcc.MfccCompute(mfccAudioData);
             for (size_t i = 0; i < this->m_mfccBuf.dimSize(0); ++i) {
                 this->m_mfccBuf(i, mfccBufIdx) = mfcc[i];
@@ -71,11 +72,12 @@ namespace app {
         /* Pad MFCC if needed by adding MFCC for zeros. */
         if (mfccBufIdx != this->m_numFeatureFrames) {
             std::vector<int16_t> zerosWindow = std::vector<int16_t>(this->m_mfccWindowLen, 0);
-            std::vector<float> mfccZeros = this->m_mfcc.MfccCompute(zerosWindow);
+            std::vector<float> mfccZeros     = this->m_mfcc.MfccCompute(zerosWindow);
 
             while (mfccBufIdx != this->m_numFeatureFrames) {
                 memcpy(&this->m_mfccBuf(0, mfccBufIdx),
-                       mfccZeros.data(), sizeof(float) * m_numMfccFeats);
+                       mfccZeros.data(),
+                       sizeof(float) * m_numMfccFeats);
                 ++mfccBufIdx;
             }
         }
@@ -117,15 +119,25 @@ namespace app {
                                       Array2d<float>& delta1,
                                       Array2d<float>& delta2)
     {
-        const std::vector <float> delta1Coeffs =
-            {6.66666667e-02,  5.00000000e-02,  3.33333333e-02,
-             1.66666667e-02, -3.46944695e-18, -1.66666667e-02,
-            -3.33333333e-02, -5.00000000e-02, -6.66666667e-02};
+        const std::vector<float> delta1Coeffs = {6.66666667e-02,
+                                                 5.00000000e-02,
+                                                 3.33333333e-02,
+                                                 1.66666667e-02,
+                                                 -3.46944695e-18,
+                                                 -1.66666667e-02,
+                                                 -3.33333333e-02,
+                                                 -5.00000000e-02,
+                                                 -6.66666667e-02};
 
-        const std::vector <float> delta2Coeffs =
-            {0.06060606,      0.01515152,     -0.01731602,
-            -0.03679654,     -0.04329004,     -0.03679654,
-            -0.01731602,      0.01515152,      0.06060606};
+        const std::vector<float> delta2Coeffs = {0.06060606,
+                                                 0.01515152,
+                                                 -0.01731602,
+                                                 -0.03679654,
+                                                 -0.04329004,
+                                                 -0.03679654,
+                                                 -0.01731602,
+                                                 0.01515152,
+                                                 0.06060606};
 
         if (delta1.dimSize(0) == 0 || delta2.dimSize(0) != delta1.dimSize(0) ||
             mfcc.dimSize(0) == 0 || mfcc.dimSize(1) == 0) {
@@ -133,8 +145,8 @@ namespace app {
         }
 
         /* Get the middle index; coeff vec len should always be odd. */
-        const size_t coeffLen = delta1Coeffs.size();
-        const size_t fMidIdx = (coeffLen - 1)/2;
+        const size_t coeffLen       = delta1Coeffs.size();
+        const size_t fMidIdx        = (coeffLen - 1) / 2;
         const size_t numFeatures    = mfcc.dimSize(0);
         const size_t numFeatVectors = mfcc.dimSize(1);
 
@@ -143,25 +155,27 @@ namespace app {
             /* For each feature, iterate through time (t) samples representing feature evolution and
              * calculate d/dt and d^2/dt^2, using 1D convolution with differential kernels.
              * Convolution padding = valid, result size is `time length - kernel length + 1`.
-             * The result is padded with 0 from both sides to match the size of initial time samples data.
+             * The result is padded with 0 from both sides to match the size of initial time samples
+             * data.
              *
              * For the small filter, conv1D implementation as a simple loop is efficient enough.
-             * Filters of a greater size would need CMSIS-DSP functions to be used, like arm_fir_f32.
+             * Filters of a greater size would need CMSIS-DSP functions to be used, like
+             * arm_fir_f32.
              */
 
             for (size_t j = fMidIdx; j < numFeatVectors - fMidIdx; ++j) {
-                float d1 = 0;
-                float d2 = 0;
+                float d1               = 0;
+                float d2               = 0;
                 const size_t mfccStIdx = j - fMidIdx;
 
                 for (size_t k = 0, m = coeffLen - 1; k < coeffLen; ++k, --m) {
 
-                    d1 +=  mfcc(i,mfccStIdx + k) * delta1Coeffs[m];
-                    d2 +=  mfcc(i,mfccStIdx + k) * delta2Coeffs[m];
+                    d1 += mfcc(i, mfccStIdx + k) * delta1Coeffs[m];
+                    d2 += mfcc(i, mfccStIdx + k) * delta2Coeffs[m];
                 }
 
-                delta1(i,j) = d1;
-                delta2(i,j) = d2;
+                delta1(i, j) = d1;
+                delta2(i, j) = d2;
             }
         }
 
@@ -177,8 +191,8 @@ namespace app {
         if (stddev == 0) {
             std::fill(vec.begin(), vec.end(), 0);
         } else {
-            const float stddevInv = 1.f/stddev;
-            const float normalisedMean = mean/stddev;
+            const float stddevInv      = 1.f / stddev;
+            const float normalisedMean = mean / stddev;
 
             auto NormalisingFunction = [=](float& value) {
                 value = value * stddevInv - normalisedMean;
@@ -194,14 +208,13 @@ namespace app {
         AsrPreProcess::StandardizeVecF32(this->m_delta2Buf);
     }
 
-    float AsrPreProcess::GetQuantElem(
-                const float     elem,
-                const float     quantScale,
-                const int       quantOffset,
-                const float     minVal,
-                const float     maxVal)
+    float AsrPreProcess::GetQuantElem(const float elem,
+                                      const float quantScale,
+                                      const int quantOffset,
+                                      const float minVal,
+                                      const float maxVal)
     {
-        float val = std::round((elem/quantScale) + quantOffset);
+        float val = std::round((elem / quantScale) + quantOffset);
         return std::min<float>(std::max<float>(val, minVal), maxVal);
     }
 

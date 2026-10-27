@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,18 +17,18 @@
  */
 #if defined(MLEK_FWK_EXECUTORCH)
 
-#include "UseCaseHandler.hpp"
+#    include "UseCaseHandler.hpp"
 
-#include "mlek/common/AudioRenderUtils.hpp"
-#include "BufAttributes.hpp"
-#include "mlek/fwk/executorch/ConformerModel.hpp"
-#include "mlek/use_case/asr/ConformerProcessing.hpp"
-#include "mlek/common/ImageUtils.hpp"
-#include "UseCaseCommonUtils.hpp"
-#include "hal.h"
-#include "mlek/log/log_macros.h"
+#    include "BufAttributes.hpp"
+#    include "UseCaseCommonUtils.hpp"
+#    include "hal.h"
+#    include "mlek/common/AudioRenderUtils.hpp"
+#    include "mlek/common/ImageUtils.hpp"
+#    include "mlek/fwk/executorch/ConformerModel.hpp"
+#    include "mlek/log/log_macros.h"
+#    include "mlek/use_case/asr/ConformerProcessing.hpp"
 
-#include <cstring>
+#    include <cstring>
 
 namespace arm {
 namespace app {
@@ -60,9 +60,9 @@ namespace app {
             return false;
         }
 
-        auto inputTensorMelSpec  = model.GetInputTensor(0);
-        auto inputTensorChunkSize = model.GetInputTensor(1);
-        auto outputTensorLogits  = model.GetOutputTensor(0);
+        auto inputTensorMelSpec    = model.GetInputTensor(0);
+        auto inputTensorChunkSize  = model.GetInputTensor(1);
+        auto outputTensorLogits    = model.GetOutputTensor(0);
         auto outputTensorChunkSize = model.GetOutputTensor(1);
 
         auto melShape = inputTensorMelSpec->Shape();
@@ -76,34 +76,24 @@ namespace app {
         const auto samplingRate = GET_AUDIO_SAMPLING_RATE(audioMode);
 
         auto preProcess = ConformerPreProcess<int16_t>(
-            inputTensorMelSpec,
-            inputTensorChunkSize,
-            melSpecWindowSize,
-            melSpecHopSize,
-            chunkSize
-        );
+            inputTensorMelSpec, inputTensorChunkSize, melSpecWindowSize, melSpecHopSize, chunkSize);
 
         std::string decodedResult;
 
-        auto postProcess = ConformerPostProcess(
-            outputTensorLogits,
-            outputTensorChunkSize,
-            labels,
-            decodedResult
-        );
+        auto postProcess =
+            ConformerPostProcess(outputTensorLogits, outputTensorChunkSize, labels, decodedResult);
 
         hal_audio_init();
-        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST,
-                                 HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
+        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST, HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
             printf_err("Failed to configure audio\n");
             return false;
         }
 
         /* Loop to process audio clips. */
         while (true) {
-#ifdef INTERACTIVE_MODE
+#    ifdef INTERACTIVE_MODE
             AwaitUserInput(); // Wait for user input before moving forward.
-#endif /* INTERACTIVE_MODE */
+#    endif                    /* INTERACTIVE_MODE */
 
             hal_display_clear(COLOR_BLACK);
 

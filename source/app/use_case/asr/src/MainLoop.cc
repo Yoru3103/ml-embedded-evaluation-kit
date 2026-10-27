@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021, 2024-2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2021, 2024-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -15,20 +15,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "Labels.hpp"                /* For label strings. */
-#include "UseCaseHandler.hpp"        /* Handlers for different user options. */
-#include "mlek/log/log_macros.h"             /* Logging functions */
-#include "BufAttributes.hpp"        /* Buffer attributes to be applied */
-#include "UseCaseCommonUtils.hpp"    /* Utils functions. */
+#include "BufAttributes.hpp"      /* Buffer attributes to be applied */
+#include "Labels.hpp"             /* For label strings. */
+#include "UseCaseCommonUtils.hpp" /* Utils functions. */
+#include "UseCaseHandler.hpp"     /* Handlers for different user options. */
+#include "mlek/log/log_macros.h"  /* Logging functions */
 
 /** Based on ML framework, set up the model namespace. */
 #if defined(MLEK_FWK_TFLM)
-#include "mlek/fwk/tflm/Wav2LetterModel.hpp"       /* Model class for running inference. */
-#include "mlek/use_case/asr/AsrClassifier.hpp"         /* Classifier. */
+#    include "mlek/fwk/tflm/Wav2LetterModel.hpp"   /* Model class for running inference. */
+#    include "mlek/use_case/asr/AsrClassifier.hpp" /* Classifier. */
 
 using AsrModel = arm::app::fwk::tflm::Wav2LetterModel;
 #elif defined(MLEK_FWK_EXECUTORCH)
-#include "mlek/fwk/executorch/ConformerModel.hpp"
+#    include "mlek/fwk/executorch/ConformerModel.hpp"
 
 using AsrModel = arm::app::fwk::et::ConformerModel;
 #endif /** MLEK_FWK_TFLM or MLEK_FWK_EXECUTORCH */
@@ -69,7 +69,7 @@ void MainLoop()
     }
     /* Instantiate application context. */
     arm::app::ApplicationContext caseContext;
-    std::vector <std::string> labels;
+    std::vector<std::string> labels;
     GetLabelsVector(labels);
 
     arm::app::Profiler profiler{"asr"};
@@ -82,8 +82,10 @@ void MainLoop()
         arm::app::fwk::tflm::Wav2LetterModel::ms_outputColsIdx}; /* Classifier wrapper object. */
     caseContext.Set<uint32_t>("frameLength", arm::app::asr::g_FrameLength);
     caseContext.Set<uint32_t>("frameStride", arm::app::asr::g_FrameStride);
-    caseContext.Set<float>("scoreThreshold", arm::app::asr::g_ScoreThreshold);  /* Score threshold. */
-    caseContext.Set<uint32_t>("ctxLen", arm::app::asr::g_ctxLen);  /* Left and right context length (MFCC feat vectors). */
+    caseContext.Set<float>("scoreThreshold",
+                           arm::app::asr::g_ScoreThreshold); /* Score threshold. */
+    caseContext.Set<uint32_t>(
+        "ctxLen", arm::app::asr::g_ctxLen); /* Left and right context length (MFCC feat vectors). */
     caseContext.Set<arm::app::AsrClassifier&>("classifier", classifier);
 #elif defined(MLEK_FWK_EXECUTORCH)
     caseContext.Set<uint32_t>("melSpecWindowSize", arm::app::asr::g_melSpecWindowSize);
@@ -92,12 +94,11 @@ void MainLoop()
 #endif /** MLEK_FWK_TFLM or MLEK_FWK_EXECUTORCH */
     caseContext.Set<arm::app::Profiler&>("profiler", profiler);
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
-    caseContext.Set<const std::vector <std::string>&>("labels", labels);
+    caseContext.Set<const std::vector<std::string>&>("labels", labels);
 
     bool executionSuccessful = ClassifyAudioHandler(caseContext);
 
-    info("Main loop terminated %s.\n",
-        executionSuccessful ? "successfully" : "with failure");
+    info("Main loop terminated %s.\n", executionSuccessful ? "successfully" : "with failure");
 }
 
 static bool VerifyTensorDimensions(const arm::app::fwk::iface::Model& model)

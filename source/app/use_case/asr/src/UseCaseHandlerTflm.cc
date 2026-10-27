@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,19 +17,19 @@
  */
 #if defined(MLEK_FWK_TFLM)
 
-#include "UseCaseHandler.hpp"
+#    include "UseCaseHandler.hpp"
 
-#include "mlek/use_case/asr/AsrClassifier.hpp"
-#include "mlek/use_case/asr/AsrResult.hpp"
-#include "mlek/common/AudioSlidingWindow.hpp"
-#include "mlek/common/ImageUtils.hpp"
-#include "mlek/use_case/asr/OutputDecode.hpp"
-#include "UseCaseCommonUtils.hpp"
-#include "mlek/fwk/tflm/Wav2LetterModel.hpp"
-#include "mlek/use_case/asr/Wav2LetterPostprocess.hpp"
-#include "mlek/use_case/asr/Wav2LetterPreprocess.hpp"
-#include "hal.h"
-#include "mlek/log/log_macros.h"
+#    include "UseCaseCommonUtils.hpp"
+#    include "hal.h"
+#    include "mlek/common/AudioSlidingWindow.hpp"
+#    include "mlek/common/ImageUtils.hpp"
+#    include "mlek/fwk/tflm/Wav2LetterModel.hpp"
+#    include "mlek/log/log_macros.h"
+#    include "mlek/use_case/asr/AsrClassifier.hpp"
+#    include "mlek/use_case/asr/AsrResult.hpp"
+#    include "mlek/use_case/asr/OutputDecode.hpp"
+#    include "mlek/use_case/asr/Wav2LetterPostprocess.hpp"
+#    include "mlek/use_case/asr/Wav2LetterPreprocess.hpp"
 
 namespace arm {
 namespace app {
@@ -44,12 +44,12 @@ namespace app {
     /* ASR inference handler. */
     bool ClassifyAudioHandler(ApplicationContext& ctx)
     {
-        auto& model          = ctx.Get<fwk::iface::Model&>("model");
-        auto& profiler       = ctx.Get<Profiler&>("profiler");
-        auto mfccFrameLen    = ctx.Get<uint32_t>("frameLength");
-        auto mfccFrameStride = ctx.Get<uint32_t>("frameStride");
-        auto scoreThreshold  = ctx.Get<float>("scoreThreshold");
-        auto inputCtxLen     = ctx.Get<uint32_t>("ctxLen");
+        auto& model                            = ctx.Get<fwk::iface::Model&>("model");
+        auto& profiler                         = ctx.Get<Profiler&>("profiler");
+        auto mfccFrameLen                      = ctx.Get<uint32_t>("frameLength");
+        auto mfccFrameStride                   = ctx.Get<uint32_t>("frameStride");
+        auto scoreThreshold                    = ctx.Get<float>("scoreThreshold");
+        auto inputCtxLen                       = ctx.Get<uint32_t>("ctxLen");
         constexpr uint32_t dataPsnTxtInfStartX = 20;
         constexpr uint32_t dataPsnTxtInfStartY = 40;
 
@@ -93,17 +93,16 @@ namespace app {
                                                     fwk::tflm::Wav2LetterModel::ms_outputRowsIdx);
 
         hal_audio_init();
-        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST,
-                                 HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
+        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST, HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
             printf_err("Failed to configure audio\n");
             return false;
         }
 
         /* Loop to process audio clips. */
         while (true) {
-#ifdef INTERACTIVE_MODE
+#    ifdef INTERACTIVE_MODE
             AwaitUserInput(); // Wait for user input before moving forward.
-#endif /* INTERACTIVE_MODE */
+#    endif                    /* INTERACTIVE_MODE */
 
             hal_display_clear(COLOR_BLACK);
 
@@ -177,10 +176,10 @@ namespace app {
                     audioDataSlider.Index(),
                     scoreThreshold));
 
-#if VERIFY_TEST_OUTPUT
+#    if VERIFY_TEST_OUTPUT
                 armDumpTensor(outputTensor,
                               outputTensor->dims->data[Wav2LetterModel::ms_outputColsIdx]);
-#endif        /* VERIFY_TEST_OUTPUT */
+#    endif /* VERIFY_TEST_OUTPUT */
             } /* while (audioDataSlider.HasNext()) */
 
             /* Erase. */

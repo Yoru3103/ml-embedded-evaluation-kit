@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021,2023, 2025 Arm Limited and/or
+ * SPDX-FileCopyrightText: Copyright 2021,2023, 2025-2026 Arm Limited and/or
  * its affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -58,20 +58,20 @@ namespace app {
         T* tensorData = tensor->GetData<T>();
 
         /* Get the top 1 results. */
-        for (uint32_t i = 0, row = 0; i < nElems; ++i, row+=nLetters) {
+        for (uint32_t i = 0, row = 0; i < nElems; ++i, row += nLetters) {
             std::pair<T, uint32_t> top_1 = std::make_pair(tensorData[row + 0], 0);
 
             for (uint32_t j = 1; j < nLetters; ++j) {
                 if (top_1.first < tensorData[row + j]) {
-                    top_1.first = tensorData[row + j];
+                    top_1.first  = tensorData[row + j];
                     top_1.second = j;
                 }
             }
 
-            double score = static_cast<int> (top_1.first);
+            double score                  = static_cast<int>(top_1.first);
             vecResults[i].m_normalisedVal = scale * (score - zeroPoint);
-            vecResults[i].m_label = labels[top_1.second];
-            vecResults[i].m_labelIdx = top_1.second;
+            vecResults[i].m_label         = labels[top_1.second];
+            vecResults[i].m_labelIdx      = top_1.second;
         }
 
         return true;
@@ -96,61 +96,61 @@ namespace app {
         uint32_t topNCount,
         bool use_softmax)
     {
-            UNUSED(use_softmax);
-            vecResults.clear();
+        UNUSED(use_softmax);
+        vecResults.clear();
 
-            const auto minTensorDims = (this->m_outputTensorRowsIdx > this->m_outputTensorColsIdx)
-                                           ? this->m_outputTensorRowsIdx
-                                           : this->m_outputTensorColsIdx;
+        const auto minTensorDims = (this->m_outputTensorRowsIdx > this->m_outputTensorColsIdx)
+                                       ? this->m_outputTensorRowsIdx
+                                       : this->m_outputTensorColsIdx;
 
-            const uint32_t outColsIdx = this->m_outputTensorColsIdx;
-            auto outputShape          = outputTensor->Shape();
+        const uint32_t outColsIdx = this->m_outputTensorColsIdx;
+        auto outputShape          = outputTensor->Shape();
 
-            /* Health checks. */
-            if (outputTensor == nullptr) {
-                printf_err("Output vector is null pointer.\n");
-                return false;
-            } else if (outputShape.size() < minTensorDims) {
-                printf_err("Output tensor expected to be %dD\n", minTensorDims);
-                return false;
-            } else if (outputShape[outColsIdx] < topNCount) {
-                printf_err("Output vectors are smaller than %" PRIu32 "\n", topNCount);
-                return false;
-            } else if (outputShape[outColsIdx] != labels.size()) {
-                printf("Output size doesn't match the labels' size\n");
-                return false;
-            }
+        /* Health checks. */
+        if (outputTensor == nullptr) {
+            printf_err("Output vector is null pointer.\n");
+            return false;
+        } else if (outputShape.size() < minTensorDims) {
+            printf_err("Output tensor expected to be %dD\n", minTensorDims);
+            return false;
+        } else if (outputShape[outColsIdx] < topNCount) {
+            printf_err("Output vectors are smaller than %" PRIu32 "\n", topNCount);
+            return false;
+        } else if (outputShape[outColsIdx] != labels.size()) {
+            printf("Output size doesn't match the labels' size\n");
+            return false;
+        }
 
-            if (topNCount != 1) {
-                warn("TopNCount value ignored in this implementation\n");
-            }
+        if (topNCount != 1) {
+            warn("TopNCount value ignored in this implementation\n");
+        }
 
-            /* To return the floating point values, we need quantization parameters. */
-            auto quantParams = outputTensor->GetQuantParams();
+        /* To return the floating point values, we need quantization parameters. */
+        auto quantParams = outputTensor->GetQuantParams();
 
-            bool resultState;
+        bool resultState;
 
-            switch (outputTensor->Type()) {
-            case fwk::iface::TensorType::UINT8:
-                resultState = this->GetTopResults<uint8_t>(
-                    outputTensor, vecResults, labels, quantParams.scale, quantParams.offset);
-                break;
-            case fwk::iface::TensorType::INT8:
-                resultState = this->GetTopResults<int8_t>(
-                    outputTensor, vecResults, labels, quantParams.scale, quantParams.offset);
-                break;
-            default:
-                printf_err("Tensor type %s not supported by classifier\n",
-                           fwk::iface::GetTensorDataTypeName(outputTensor->Type()));
-                return false;
-            }
+        switch (outputTensor->Type()) {
+        case fwk::iface::TensorType::UINT8:
+            resultState = this->GetTopResults<uint8_t>(
+                outputTensor, vecResults, labels, quantParams.scale, quantParams.offset);
+            break;
+        case fwk::iface::TensorType::INT8:
+            resultState = this->GetTopResults<int8_t>(
+                outputTensor, vecResults, labels, quantParams.scale, quantParams.offset);
+            break;
+        default:
+            printf_err("Tensor type %s not supported by classifier\n",
+                       fwk::iface::GetTensorDataTypeName(outputTensor->Type()));
+            return false;
+        }
 
-            if (!resultState) {
-                printf_err("Failed to get sorted set\n");
-                return false;
-            }
+        if (!resultState) {
+            printf_err("Failed to get sorted set\n");
+            return false;
+        }
 
-            return true;
+        return true;
     }
 
 } /* namespace app */
