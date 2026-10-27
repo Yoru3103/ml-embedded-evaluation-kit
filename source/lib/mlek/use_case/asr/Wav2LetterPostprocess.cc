@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "mlek/use_case/asr/Wav2LetterPostprocess.hpp"
+#include "mlek/common/ProcessingStageScope.hpp"
 #include "mlek/log/log_macros.h"
 
 #include <cmath>
@@ -43,6 +44,7 @@ namespace app {
 
     bool AsrPostProcess::DoPostProcess()
     {
+        MLEK_PROCESSING_STAGE("Postprocess");
         /* Basic checks. */
         if (!this->IsInputValid(this->m_outputTensor, this->m_reductionAxisIdx)) {
             return false;
@@ -104,6 +106,7 @@ namespace app {
                                               const uint32_t strideSzBytes,
                                               const bool lastIteration)
     {
+        MLEK_PROCESSING_STAGE("Post.ContextMask");
         /* In this case, the "zero-ing" is quite simple as the region
          * to be zeroed sits in contiguous memory (row-major). */
         const uint32_t eraseLen = strideSzBytes * this->m_outputContextLen;

@@ -20,6 +20,7 @@
 #include "mlek/common/AudioSlidingWindow.hpp"
 #include "mlek/common/BaseProcessing.hpp"
 #include "mlek/common/DataStructures.hpp"
+#include "mlek/common/ProcessingStageScope.hpp"
 #include "mlek/fwk/iface/Tensor.hpp"
 #include "mlek/log/log_macros.h"
 #include "mlek/use_case/asr/Wav2LetterMfcc.hpp"
@@ -121,6 +122,7 @@ namespace app {
                       const int quantOffset)
         {
             /* Check the output size will fit everything. */
+            MLEK_PROCESSING_STAGE("Pre.InputQuantizeAndPack");
             if (outputBufSz < (this->m_mfccBuf.dimSize(0) * 3 * sizeof(T))) {
                 printf_err("Tensor size too small for features\n");
                 return false;

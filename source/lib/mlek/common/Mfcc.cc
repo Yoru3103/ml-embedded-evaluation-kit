@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include "mlek/common/Mfcc.hpp"
+#include "mlek/common/ProcessingStageScope.hpp"
 #include "mlek/log/log_macros.h"
 #include "mlek/math/PlatformMath.hpp"
 
@@ -216,39 +217,57 @@ namespace app {
 
             /* TensorFlow way of normalizing .wav data to (-1, 1). */
             constexpr float normaliser = 1.0 / (1u << 15u);
-            for (size_t i = 0; i < this->m_params.m_frameLen; i++) {
-                this->m_frame[i] = static_cast<float>(audioData[i]) * normaliser;
+            {
+                MLEK_PROCESSING_STAGE("MFCC.NormalizeAudio");
+                for (size_t i = 0; i < this->m_params.m_frameLen; i++) {
+                    this->m_frame[i] = static_cast<float>(audioData[i]) * normaliser;
+                }
             }
 
             /* Apply window function to input frame. */
-            for (size_t i = 0; i < this->m_params.m_frameLen; i++) {
-                this->m_frame[i] *= this->m_windowFunc[i];
+            {
+                MLEK_PROCESSING_STAGE("MFCC.HannWindow");
+                for (size_t i = 0; i < this->m_params.m_frameLen; i++) {
+                    this->m_frame[i] *= this->m_windowFunc[i];
+                }
+
+                /* Set remaining frame values to 0. */
+                std::fill(
+                    this->m_frame.begin() + this->m_params.m_frameLen, this->m_frame.end(), 0);
             }
 
-            /* Set remaining frame values to 0. */
-            std::fill(this->m_frame.begin() + this->m_params.m_frameLen, this->m_frame.end(), 0);
-
             /* Compute FFT. */
-            math::MathUtils::FftF32(this->m_frame, this->m_buffer, this->m_fftInstance);
+            {
+                MLEK_PROCESSING_STAGE("MFCC.FFT");
+                math::MathUtils::FftF32(this->m_frame, this->m_buffer, this->m_fftInstance);
+            }
 
             /* Convert to power spectrum. */
-            this->ConvertToPowerSpectrum();
+            {
+                MLEK_PROCESSING_STAGE("MFCC.PowerSpectrum");
+                this->ConvertToPowerSpectrum();
+            }
 
             /* Apply mel filterbanks. */
-            if (!this->ApplyMelFilterBank(this->m_buffer,
-                                          this->m_melFilterBank,
-                                          this->m_filterBankFilterFirst,
-                                          this->m_filterBankFilterLast,
-                                          this->m_melEnergies)) {
-                printf_err("Failed to apply MEL filter banks\n");
+            {
+                MLEK_PROCESSING_STAGE("MFCC.MelFilterBank");
+                if (!this->ApplyMelFilterBank(this->m_buffer,
+                                              this->m_melFilterBank,
+                                              this->m_filterBankFilterFirst,
+                                              this->m_filterBankFilterLast,
+                                              this->m_melEnergies)) {
+                    printf_err("Failed to apply MEL filter banks\n");
+                }
             }
 
             /* Convert to logarithmic scale. */
+            MLEK_PROCESSING_STAGE("MFCC.LogMel");
             this->ConvertToLogarithmicScale(this->m_melEnergies);
         }
 
         std::vector<float> MFCC::MfccCompute(const std::vector<int16_t>& audioData)
         {
+            MLEK_PROCESSING_STAGE("MFCC.Frame");
             this->MfccComputePreFeature(audioData);
 
             std::vector<float> mfccOut(this->m_params.m_numMfccFeatures);
@@ -258,6 +277,7 @@ namespace app {
             float* ptrMfcc = mfccOut.data();
 
             /* Take DCT. Uses matrix mul. */
+            MLEK_PROCESSING_STAGE("MFCC.DCT");
             for (size_t i = 0, j = 0; i < mfccOut.size(); ++i, j += this->m_params.m_numFbankBins) {
                 *ptrMfcc++ = math::MathUtils::DotProductF32(
                     ptrDct + j, ptrMel, this->m_params.m_numFbankBins);

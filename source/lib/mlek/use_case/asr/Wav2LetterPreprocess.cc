@@ -45,6 +45,7 @@ namespace app {
 
     bool AsrPreProcess::DoPreProcess(const void* audioData, const size_t audioDataLen)
     {
+        MLEK_PROCESSING_STAGE("Preprocess");
         this->m_mfccSlidingWindow =
             audio::SlidingWindow<const int16_t>(static_cast<const int16_t*>(audioData),
                                                 audioDataLen,
@@ -53,37 +54,46 @@ namespace app {
 
         uint32_t mfccBufIdx = 0;
 
-        std::fill(m_mfccBuf.begin(), m_mfccBuf.end(), 0.f);
-        std::fill(m_delta1Buf.begin(), m_delta1Buf.end(), 0.f);
-        std::fill(m_delta2Buf.begin(), m_delta2Buf.end(), 0.f);
-
-        /* While we can slide over the audio. */
-        while (this->m_mfccSlidingWindow.HasNext()) {
-            const int16_t* mfccWindow = this->m_mfccSlidingWindow.Next();
-            auto mfccAudioData =
-                std::vector<int16_t>(mfccWindow, mfccWindow + this->m_mfccWindowLen);
-            auto mfcc = this->m_mfcc.MfccCompute(mfccAudioData);
-            for (size_t i = 0; i < this->m_mfccBuf.dimSize(0); ++i) {
-                this->m_mfccBuf(i, mfccBufIdx) = mfcc[i];
-            }
-            ++mfccBufIdx;
+        {
+            MLEK_PROCESSING_STAGE("Pre.ResetBuffers");
+            std::fill(m_mfccBuf.begin(), m_mfccBuf.end(), 0.f);
+            std::fill(m_delta1Buf.begin(), m_delta1Buf.end(), 0.f);
+            std::fill(m_delta2Buf.begin(), m_delta2Buf.end(), 0.f);
         }
 
-        /* Pad MFCC if needed by adding MFCC for zeros. */
-        if (mfccBufIdx != this->m_numFeatureFrames) {
-            std::vector<int16_t> zerosWindow = std::vector<int16_t>(this->m_mfccWindowLen, 0);
-            std::vector<float> mfccZeros     = this->m_mfcc.MfccCompute(zerosWindow);
-
-            while (mfccBufIdx != this->m_numFeatureFrames) {
-                memcpy(&this->m_mfccBuf(0, mfccBufIdx),
-                       mfccZeros.data(),
-                       sizeof(float) * m_numMfccFeats);
+        {
+            MLEK_PROCESSING_STAGE("Pre.MFCCAndPadding");
+            /* While we can slide over the audio. */
+            while (this->m_mfccSlidingWindow.HasNext()) {
+                const int16_t* mfccWindow = this->m_mfccSlidingWindow.Next();
+                auto mfccAudioData =
+                    std::vector<int16_t>(mfccWindow, mfccWindow + this->m_mfccWindowLen);
+                auto mfcc = this->m_mfcc.MfccCompute(mfccAudioData);
+                for (size_t i = 0; i < this->m_mfccBuf.dimSize(0); ++i) {
+                    this->m_mfccBuf(i, mfccBufIdx) = mfcc[i];
+                }
                 ++mfccBufIdx;
             }
-        }
 
-        /* Compute first and second order deltas from MFCCs. */
-        AsrPreProcess::ComputeDeltas(this->m_mfccBuf, this->m_delta1Buf, this->m_delta2Buf);
+            /* Pad MFCC if needed by adding MFCC for zeros. */
+            if (mfccBufIdx != this->m_numFeatureFrames) {
+                std::vector<int16_t> zerosWindow = std::vector<int16_t>(this->m_mfccWindowLen, 0);
+                std::vector<float> mfccZeros     = this->m_mfcc.MfccCompute(zerosWindow);
+
+                while (mfccBufIdx != this->m_numFeatureFrames) {
+                    memcpy(&this->m_mfccBuf(0, mfccBufIdx),
+                           mfccZeros.data(),
+                           sizeof(float) * m_numMfccFeats);
+                    ++mfccBufIdx;
+                }
+            }
+
+            /* Compute first and second order deltas from MFCCs. */
+        }
+        {
+            MLEK_PROCESSING_STAGE("Pre.Deltas12");
+            AsrPreProcess::ComputeDeltas(this->m_mfccBuf, this->m_delta1Buf, this->m_delta2Buf);
+        }
 
         /* Standardize calculated features. */
         this->Standarize();
@@ -203,6 +213,7 @@ namespace app {
 
     void AsrPreProcess::Standarize()
     {
+        MLEK_PROCESSING_STAGE("Pre.Standardize");
         AsrPreProcess::StandardizeVecF32(this->m_mfccBuf);
         AsrPreProcess::StandardizeVecF32(this->m_delta1Buf);
         AsrPreProcess::StandardizeVecF32(this->m_delta2Buf);

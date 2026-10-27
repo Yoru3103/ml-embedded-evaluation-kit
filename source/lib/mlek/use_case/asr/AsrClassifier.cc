@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "mlek/use_case/asr/AsrClassifier.hpp"
+#include "mlek/common/ProcessingStageScope.hpp"
 
 #include "mlek/fwk/iface/Tensor.hpp"
 #include "mlek/log/log_macros.h"
@@ -53,25 +54,31 @@ namespace app {
         }
 
         /* Final results' container. */
-        vecResults = std::vector<ClassificationResult>(nElems);
+        {
+            MLEK_PROCESSING_STAGE("Post.ArgmaxAndLabels");
+            vecResults = std::vector<ClassificationResult>(nElems);
 
-        T* tensorData = tensor->GetData<T>();
+            T* tensorData = tensor->GetData<T>();
 
-        /* Get the top 1 results. */
-        for (uint32_t i = 0, row = 0; i < nElems; ++i, row += nLetters) {
-            std::pair<T, uint32_t> top_1 = std::make_pair(tensorData[row + 0], 0);
+            /* Get the top 1 results. */
+            for (uint32_t i = 0, row = 0; i < nElems; ++i, row += nLetters) {
+                std::pair<T, uint32_t> top_1 = std::make_pair(tensorData[row + 0], 0);
 
-            for (uint32_t j = 1; j < nLetters; ++j) {
-                if (top_1.first < tensorData[row + j]) {
-                    top_1.first  = tensorData[row + j];
-                    top_1.second = j;
+                for (uint32_t j = 1; j < nLetters; ++j) {
+                    if (top_1.first < tensorData[row + j]) {
+                        top_1.first  = tensorData[row + j];
+                        top_1.second = j;
+                    }
                 }
-            }
 
-            double score                  = static_cast<int>(top_1.first);
-            vecResults[i].m_normalisedVal = scale * (score - zeroPoint);
-            vecResults[i].m_label         = labels[top_1.second];
-            vecResults[i].m_labelIdx      = top_1.second;
+                double score = static_cast<int>(top_1.first);
+                {
+                    MLEK_PROCESSING_STAGE("Post.ScoreDequantize");
+                    vecResults[i].m_normalisedVal = scale * (score - zeroPoint);
+                }
+                vecResults[i].m_label    = labels[top_1.second];
+                vecResults[i].m_labelIdx = top_1.second;
+            }
         }
 
         return true;

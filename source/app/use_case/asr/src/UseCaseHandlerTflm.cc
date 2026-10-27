@@ -17,6 +17,7 @@
  */
 #if defined(MLEK_FWK_TFLM)
 
+#    include "AsrStageProfiler.hpp"
 #    include "UseCaseHandler.hpp"
 
 #    include "UseCaseCommonUtils.hpp"
@@ -40,6 +41,23 @@ namespace app {
      * @return      true if successful, false otherwise.
      **/
     static bool PresentInferenceResult(const std::vector<asr::AsrResult>& results);
+
+#    if defined(ASR_STAGE_PROFILING)
+    static bool RunStageProfiledInference(fwk::iface::Model& model, Profiler& profiler)
+    {
+        pmu_counters start{}, end{};
+        hal_pmu_reset_npu();
+        hal_pmu_get_counters(&start);
+        bool success = false;
+        {
+            MLEK_PROCESSING_STAGE("Inference.Invoke");
+            success = model.RunInference();
+        }
+        hal_pmu_get_counters(&end);
+        hal_pmu_final();
+        return profiler.RecordProfiling(start, end, "Inference") && success;
+    }
+#    endif
 
     /* ASR inference handler. */
     bool ClassifyAudioHandler(ApplicationContext& ctx)
@@ -75,7 +93,15 @@ namespace app {
         /* NOTE: This is only used for time stamp calculation. */
         const float secondsPerSample = (1.0 / audio::Wav2LetterMFCC::ms_defaultSamplingFreq);
 
+#    if defined(ASR_STAGE_PROFILING)
+        AsrStageProfiler stageProfiler;
+        info("ASR stage profiling enabled\n");
+#    endif
+
         /* Set up pre and post-processing objects. */
+#    if defined(ASR_STAGE_PROFILING)
+        ProcessingStageScope::s_observer("Setup.PrePost", true);
+#    endif
         AsrPreProcess preProcess =
             AsrPreProcess(inputTensor,
                           fwk::tflm::Wav2LetterModel::ms_numMfccFeatures,
@@ -92,6 +118,10 @@ namespace app {
                                                     fwk::tflm::Wav2LetterModel::ms_blankTokenIdx,
                                                     fwk::tflm::Wav2LetterModel::ms_outputRowsIdx);
 
+#    if defined(ASR_STAGE_PROFILING)
+        ProcessingStageScope::s_observer("Setup.PrePost", false);
+        AsrStageProfiler::PrintAndReset();
+#    endif
         hal_audio_init();
         if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST, HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
             printf_err("Failed to configure audio\n");
@@ -138,48 +168,61 @@ namespace app {
 
             /* Start sliding through audio clip. */
             while (audioDataSlider.HasNext()) {
-
-                /* If not enough audio, see how much can be sent for processing. */
-                size_t nextStartIndex = audioDataSlider.NextWindowStartIndex();
-                if (nextStartIndex + audioDataWindowLen > audioArrSize) {
-                    inferenceWindowLen = audioArrSize - nextStartIndex;
-                }
-
-                const int16_t* inferenceWindow = audioDataSlider.Next();
-
                 info("Inference %zu/%zu\n",
-                     audioDataSlider.Index() + 1,
+                     finalResults.size() + 1,
                      static_cast<size_t>(ceilf(audioDataSlider.FractionalTotalStrides() + 1)));
+                {
+                    MLEK_PROCESSING_STAGE("Window");
 
-                /* Run the pre-processing, inference and post-processing. */
-                if (!preProcess.DoPreProcess(inferenceWindow, inferenceWindowLen)) {
-                    printf_err("Pre-processing failed.");
-                    return false;
-                }
+                    /* If not enough audio, see how much can be sent for processing. */
+                    size_t nextStartIndex = audioDataSlider.NextWindowStartIndex();
+                    if (nextStartIndex + audioDataWindowLen > audioArrSize) {
+                        inferenceWindowLen = audioArrSize - nextStartIndex;
+                    }
 
-                if (!RunInference(model, profiler)) {
-                    printf_err("Inference failed.");
-                    return false;
-                }
+                    const int16_t* inferenceWindow = audioDataSlider.Next();
 
-                /* Post processing needs to know if we are on the last audio window. */
-                postProcess.m_lastIteration = !audioDataSlider.HasNext();
-                if (!postProcess.DoPostProcess()) {
-                    printf_err("Post-processing failed.");
-                    return false;
-                }
+                    /* Run the pre-processing, inference and post-processing. */
+                    if (!preProcess.DoPreProcess(inferenceWindow, inferenceWindowLen)) {
+                        printf_err("Pre-processing failed.");
+                        return false;
+                    }
 
-                /* Add results from this window to our final results vector. */
-                finalResults.emplace_back(asr::AsrResult(
-                    singleInfResult,
-                    (audioDataSlider.Index() * secondsPerSample * audioDataWindowStride),
-                    audioDataSlider.Index(),
-                    scoreThreshold));
+#    if defined(ASR_STAGE_PROFILING)
+                    if (!RunStageProfiledInference(model, profiler)) {
+#    else
+                    if (!RunInference(model, profiler)) {
+#    endif
+                        printf_err("Inference failed.");
+                        return false;
+                    }
+
+                    /* Post processing needs to know if we are on the last audio window. */
+                    postProcess.m_lastIteration = !audioDataSlider.HasNext();
+                    if (!postProcess.DoPostProcess()) {
+                        printf_err("Post-processing failed.");
+                        return false;
+                    }
+
+                    /* Add results from this window to our final results vector. */
+                    {
+                        MLEK_PROCESSING_STAGE("Results.CollectWindow");
+                        finalResults.emplace_back(asr::AsrResult(
+                            singleInfResult,
+                            (audioDataSlider.Index() * secondsPerSample * audioDataWindowStride),
+                            audioDataSlider.Index(),
+                            scoreThreshold));
+                    }
 
 #    if VERIFY_TEST_OUTPUT
-                armDumpTensor(outputTensor,
-                              outputTensor->dims->data[Wav2LetterModel::ms_outputColsIdx]);
+                    armDumpTensor(outputTensor,
+                                  outputTensor->dims->data[Wav2LetterModel::ms_outputColsIdx]);
 #    endif /* VERIFY_TEST_OUTPUT */
+                }
+#    if defined(ASR_STAGE_PROFILING)
+                AsrStageProfiler::PrintAndReset();
+                profiler.PrintProfilingResult();
+#    endif
             } /* while (audioDataSlider.HasNext()) */
 
             /* Erase. */
@@ -193,7 +236,11 @@ namespace app {
                 return false;
             }
 
+#    if defined(ASR_STAGE_PROFILING)
+            AsrStageProfiler::PrintAndReset();
+#    else
             profiler.PrintProfilingResult();
+#    endif
         }
 
         return true;
@@ -211,14 +258,21 @@ namespace app {
         info("Total number of inferences: %zu\n", results.size());
         /* Results from multiple inferences should be combined before processing. */
         std::vector<ClassificationResult> combinedResults;
-        for (const auto& result : results) {
-            combinedResults.insert(
-                combinedResults.end(), result.m_resultVec.begin(), result.m_resultVec.end());
+        {
+            MLEK_PROCESSING_STAGE("Results.Merge");
+            for (const auto& result : results) {
+                combinedResults.insert(
+                    combinedResults.end(), result.m_resultVec.begin(), result.m_resultVec.end());
+            }
         }
 
         /* Get each inference result string using the decoder. */
         for (const auto& result : results) {
-            std::string infResultStr = audio::asr::DecodeOutput(result.m_resultVec);
+            std::string infResultStr;
+            {
+                MLEK_PROCESSING_STAGE("Decode.WindowDiagnostic");
+                infResultStr = audio::asr::DecodeOutput(result.m_resultVec);
+            }
 
             info("For timestamp: %f (inference #: %" PRIu32 "); label: %s\n",
                  result.m_timeStamp,
@@ -227,7 +281,11 @@ namespace app {
         }
 
         /* Get the decoded result for the combined result. */
-        std::string finalResultStr = audio::asr::DecodeOutput(combinedResults);
+        std::string finalResultStr;
+        {
+            MLEK_PROCESSING_STAGE("Decode.Final");
+            finalResultStr = audio::asr::DecodeOutput(combinedResults);
+        }
 
         hal_display_show_text(finalResultStr.c_str(),
                               finalResultStr.size(),
