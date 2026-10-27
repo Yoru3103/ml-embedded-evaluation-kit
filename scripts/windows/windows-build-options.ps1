@@ -40,7 +40,7 @@ function Write-WindowsFirmwareBuildInfo {
         foreach ($line in Get-Content -LiteralPath $cachePath) {
             if ($line -match '^([A-Za-z0-9_]+):[^=]+=(.*)$') {
                 $name, $value = $Matches[1], $Matches[2]
-                if ($name -match '^(CMAKE_BUILD_TYPE|ML_FRAMEWORK|ML_FWK_TMP_MEM_(BASE|SIZE)|FB_BASE|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|ETHOS_U_NPU_.*|TA_CONFIG_FILE|TA_SRAM_BASE|TA_EXT_BASE|INTERACTIVE_MODE|SEMIHOSTING_ENABLED|CPU_PROFILE_ENABLED|USE_SINGLE_INPUT)$' -or
+                if ($name -match '^(CMAKE_BUILD_TYPE|ML_FRAMEWORK|ML_FWK_TMP_MEM_(BASE|SIZE)|FB_BASE|TARGET_PLATFORM|TARGET_SUBSYSTEM|FPGA_PLATFORM_SSE_320|ETHOS_U_NPU_.*|TA_CONFIG_FILE|TA_SRAM_BASE|TA_EXT_BASE|INTERACTIVE_MODE|SEMIHOSTING_ENABLED|CPU_PROFILE_ENABLED|ASR_(ET_)?STAGE_PROFILING|USE_SINGLE_INPUT)$' -or
                     $name.StartsWith("${UseCase}_")) {
                     $configuration[$name] = $value
                 }
