@@ -39,6 +39,17 @@ endif()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
 
+if (ASR_SIMPLE_STAGE_PROFILING)
+    if (NOT "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_TFLM}" OR
+        NOT ETHOS_U_NPU_ENABLED OR NOT TARGET_PLATFORM STREQUAL "mps4" OR
+        NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR "Wav2letter simple timing requires MPS4 TFLM NPU and linker wrapping")
+    endif()
+    add_library(asr_simple_stage_hooks INTERFACE)
+    target_link_options(asr_simple_stage_hooks INTERFACE "LINKER:--wrap=ethosu_invoke_v3")
+    list(APPEND ${use_case}_LINK_LIBS asr_simple_stage_hooks)
+endif()
+
 if (ASR_ET_STAGE_PROFILING AND "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
     if (NOT ETHOS_U_NPU_ENABLED OR NOT TARGET_PLATFORM STREQUAL "mps4" OR
         NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

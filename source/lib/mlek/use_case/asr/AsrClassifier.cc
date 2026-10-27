@@ -72,14 +72,27 @@ namespace app {
                 }
 
                 double score = static_cast<int>(top_1.first);
+#if defined(ASR_SIMPLE_STAGE_PROFILING)
+                vecResults[i].m_normalisedVal = score;
+#else
                 {
                     MLEK_PROCESSING_STAGE("Post.ScoreDequantize");
                     vecResults[i].m_normalisedVal = scale * (score - zeroPoint);
                 }
+#endif
                 vecResults[i].m_label    = labels[top_1.second];
                 vecResults[i].m_labelIdx = top_1.second;
             }
         }
+
+#if defined(ASR_SIMPLE_STAGE_PROFILING)
+        {
+            MLEK_SIMPLE_PROCESSING_STAGE("Dequantize");
+            for (auto& result : vecResults) {
+                result.m_normalisedVal = scale * (result.m_normalisedVal - zeroPoint);
+            }
+        }
+#endif
 
         return true;
     }

@@ -10,7 +10,7 @@
 
 namespace {
 std::vector<std::string> s_events;
-#if defined(ASR_STAGE_PROFILING)
+#if defined(ASR_STAGE_PROFILING) || defined(ASR_SIMPLE_STAGE_PROFILING)
 void Observe(const char* name, bool begin)
 { s_events.emplace_back(std::string(begin ? "begin:" : "end:") + name); }
 #endif
@@ -18,16 +18,24 @@ void Observe(const char* name, bool begin)
 
 int main()
 {
-#if defined(ASR_STAGE_PROFILING)
+#if defined(ASR_STAGE_PROFILING) || defined(ASR_SIMPLE_STAGE_PROFILING)
     arm::app::ProcessingStageScope::s_observer = Observe;
 #endif
     {
+#if defined(ASR_SIMPLE_STAGE_PROFILING)
+        MLEK_PROCESSING_STAGE("must not record detailed scope");
+        MLEK_SIMPLE_PROCESSING_STAGE("outer");
+        {
+            MLEK_SIMPLE_PROCESSING_STAGE("inner");
+        }
+#else
         MLEK_PROCESSING_STAGE("outer");
         {
             MLEK_PROCESSING_STAGE("inner");
         }
+#endif
     }
-#if defined(ASR_STAGE_PROFILING)
+#if defined(ASR_STAGE_PROFILING) || defined(ASR_SIMPLE_STAGE_PROFILING)
     const std::vector<std::string> expected = {
         "begin:outer", "begin:inner", "end:inner", "end:outer"};
     if (s_events != expected) {

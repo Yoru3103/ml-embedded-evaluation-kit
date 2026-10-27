@@ -123,6 +123,7 @@ namespace app {
         {
             /* Check the output size will fit everything. */
             MLEK_PROCESSING_STAGE("Pre.InputQuantizeAndPack");
+            MLEK_SIMPLE_PROCESSING_STAGE("Quantize");
             if (outputBufSz < (this->m_mfccBuf.dimSize(0) * 3 * sizeof(T))) {
                 printf_err("Tensor size too small for features\n");
                 return false;

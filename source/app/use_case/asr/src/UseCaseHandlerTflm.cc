@@ -18,6 +18,7 @@
 #if defined(MLEK_FWK_TFLM)
 
 #    include "AsrStageProfiler.hpp"
+#    include "AsrSimpleStageProfiler.hpp"
 #    include "UseCaseHandler.hpp"
 
 #    include "UseCaseCommonUtils.hpp"
@@ -64,6 +65,9 @@ namespace app {
     {
         auto& model                            = ctx.Get<fwk::iface::Model&>("model");
         auto& profiler                         = ctx.Get<Profiler&>("profiler");
+#    if defined(ASR_SIMPLE_STAGE_PROFILING)
+        UNUSED(profiler);
+#    endif
         auto mfccFrameLen                      = ctx.Get<uint32_t>("frameLength");
         auto mfccFrameStride                   = ctx.Get<uint32_t>("frameStride");
         auto scoreThreshold                    = ctx.Get<float>("scoreThreshold");
@@ -96,6 +100,10 @@ namespace app {
 #    if defined(ASR_STAGE_PROFILING)
         AsrStageProfiler stageProfiler;
         info("ASR stage profiling enabled\n");
+#    endif
+#    if defined(ASR_SIMPLE_STAGE_PROFILING)
+        AsrSimpleStageProfiler simpleStageProfiler;
+        info("ASR simple stage profiling enabled; NPU.Driver includes submission/wait\n");
 #    endif
 
         /* Set up pre and post-processing objects. */
@@ -188,7 +196,14 @@ namespace app {
                         return false;
                     }
 
-#    if defined(ASR_STAGE_PROFILING)
+#    if defined(ASR_SIMPLE_STAGE_PROFILING)
+                    bool inferenceSucceeded = false;
+                    {
+                        MLEK_SIMPLE_PROCESSING_STAGE("Invoke");
+                        inferenceSucceeded = model.RunInference();
+                    }
+                    if (!inferenceSucceeded) {
+#    elif defined(ASR_STAGE_PROFILING)
                     if (!RunStageProfiledInference(model, profiler)) {
 #    else
                     if (!RunInference(model, profiler)) {
@@ -222,6 +237,10 @@ namespace app {
 #    if defined(ASR_STAGE_PROFILING)
                 AsrStageProfiler::PrintAndReset();
                 profiler.PrintProfilingResult();
+#    elif defined(ASR_SIMPLE_STAGE_PROFILING)
+                if (!AsrSimpleStageProfiler::PrintAndReset()) {
+                    return false;
+                }
 #    endif
             } /* while (audioDataSlider.HasNext()) */
 
@@ -238,7 +257,7 @@ namespace app {
 
 #    if defined(ASR_STAGE_PROFILING)
             AsrStageProfiler::PrintAndReset();
-#    else
+#    elif !defined(ASR_SIMPLE_STAGE_PROFILING)
             profiler.PrintProfilingResult();
 #    endif
         }

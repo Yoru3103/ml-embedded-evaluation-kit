@@ -45,6 +45,7 @@ namespace app {
     bool AsrPostProcess::DoPostProcess()
     {
         MLEK_PROCESSING_STAGE("Postprocess");
+        MLEK_SIMPLE_PROCESSING_STAGE("Postprocess");
         /* Basic checks. */
         if (!this->IsInputValid(this->m_outputTensor, this->m_reductionAxisIdx)) {
             return false;

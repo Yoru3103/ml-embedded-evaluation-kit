@@ -13,6 +13,7 @@ extracted build dependencies are required. Use -Package to create an FPGA ZIP.
 param(
     [Parameter(Mandatory=$true)][string]$ModelPath,
     [ValidateSet('Dedicated_Sram', 'Shared_Sram')][string]$MemoryMode = 'Dedicated_Sram',
+    [ValidateSet('Simple', 'Detailed')][string]$TimingMode = 'Simple',
     [ValidateSet('FPGA', 'FVP')][string]$Target = 'FPGA',
     [ValidateSet('Configure', 'Build')][string]$Action = 'Build',
     [string]$CompilerBin,
@@ -32,7 +33,7 @@ if ($Package -and ($Target -ne 'FPGA' -or $Action -ne 'Build')) {
 }
 Push-Location $repoRoot
 try {
-    $tag = "$($MemoryMode.ToLowerInvariant())-$($Target.ToLowerInvariant())"
+    $tag = "$($MemoryMode.ToLowerInvariant())-$($Target.ToLowerInvariant())-$($TimingMode.ToLowerInvariant())"
     if (-not $BuildDirectory) { $BuildDirectory = "build/asr-stage/tflm-$tag" }
     if (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
         $BuildDirectory = Join-Path $repoRoot $BuildDirectory
@@ -44,21 +45,31 @@ try {
         TimingAdapterConfig = 'ta_config_u85_sys_dram_1024'
         ActivationBufferSize = $ActivationBufferSize; BuildDirectory = $BuildDirectory
         CMakeArgs = @(
-            '-DASR_STAGE_PROFILING=ON',
+            "-DASR_STAGE_PROFILING=$(if ($TimingMode -eq 'Detailed') {'ON'} else {'OFF'})",
+            "-DASR_SIMPLE_STAGE_PROFILING=$(if ($TimingMode -eq 'Simple') {'ON'} else {'OFF'})",
             '-DASR_ET_STAGE_PROFILING=OFF') + $CMakeArgs
     }
     if ($MemoryMode -eq 'Dedicated_Sram') { $options.CacheSizeKiB = $CacheSizeKiB }
     & (Join-Path $PSScriptRoot 'build.ps1') @options
+    $flag = if ($TimingMode -eq 'Simple') {'ASR_SIMPLE_STAGE_PROFILING'} else {'ASR_STAGE_PROFILING'}
     if (-not (Select-String -LiteralPath "$BuildDirectory/CMakeCache.txt" `
-            -Pattern '^ASR_STAGE_PROFILING:BOOL=ON$' -Quiet)) {
+            -Pattern "^${flag}:BOOL=ON$" -Quiet)) {
         throw 'Stage profiling was not enabled in this build.'
     }
+    $buildInfoPath = Join-Path $BuildDirectory 'build-info.json'
+    $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json
+    $buildInfo | Add-Member -Force -NotePropertyName profiling_output_format `
+        -NotePropertyValue $TimingMode.ToLowerInvariant()
+    $buildInfo | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $buildInfoPath -Encoding utf8
     if ($Package) {
         . (Join-Path $PSScriptRoot 'windows-venv.ps1')
         $compiler = Resolve-WindowsToolchainBin -Toolchain ATFE -CompilerBin $CompilerBin
         if (-not $PackageDirectory) {
             $PackageDirectory = "build/board-test-packages/asr-stage/tflm-$tag"
         }
+        New-Item -ItemType Directory -Force -Path $PackageDirectory | Out-Null
+        Copy-Item -LiteralPath 'docs/sections/wav2letter_stage_timing.md' `
+            -Destination (Join-Path $PackageDirectory 'TIMING_GUIDE.md')
         & (Join-Path $PSScriptRoot 'package-fpga.ps1') -BuildDirectory $BuildDirectory `
             -CompilerBin $compiler -OutputDirectory $PackageDirectory
     }

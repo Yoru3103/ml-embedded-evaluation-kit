@@ -46,6 +46,7 @@ namespace app {
     bool AsrPreProcess::DoPreProcess(const void* audioData, const size_t audioDataLen)
     {
         MLEK_PROCESSING_STAGE("Preprocess");
+        MLEK_SIMPLE_PROCESSING_STAGE("Preprocess");
         this->m_mfccSlidingWindow =
             audio::SlidingWindow<const int16_t>(static_cast<const int16_t*>(audioData),
                                                 audioDataLen,
