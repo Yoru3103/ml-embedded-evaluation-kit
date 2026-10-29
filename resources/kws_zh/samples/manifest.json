@@ -1,0 +1,44 @@
+[
+  {
+    "member": "mobvoi_hotword_dataset/3479affb150445de18164cb55d27171d.wav",
+    "sha256": "08ab248aac3564c017e54855ab7e2b7d2564915c2d1bc9bc43259ac4c48ae9be",
+    "distance": "1m",
+    "angle": "180",
+    "noise_volume": "30db",
+    "gender": "f",
+    "age": "010",
+    "keyword_id": 0,
+    "utt_id": "3479affb150445de18164cb55d27171d",
+    "noise_type": "TV",
+    "speaker_id": "ce562b2587dd014a3cf65fbcf303b746",
+    "official_split": "p_test",
+    "filename": "01_hi_xiaowen.wav",
+    "source_file": "3479affb150445de18164cb55d27171d.wav"
+  },
+  {
+    "member": "mobvoi_hotword_dataset/03c7cebbeaafb8d364a3e9af85c083da.wav",
+    "sha256": "1a2318383e2e589632aeaf3e8a47f83be40fdb563a9162fbe3a2e0e7c5f4d3fe",
+    "distance": "3m",
+    "angle": "030",
+    "noise_volume": "15db",
+    "gender": "m",
+    "age": "038",
+    "keyword_id": 1,
+    "utt_id": "03c7cebbeaafb8d364a3e9af85c083da",
+    "noise_type": "music",
+    "speaker_id": "6867342813f440e86f67b8d39ab1512d",
+    "official_split": "p_test",
+    "filename": "02_nihao_wenwen.wav",
+    "source_file": "03c7cebbeaafb8d364a3e9af85c083da.wav"
+  },
+  {
+    "member": "mobvoi_hotword_dataset/bfd7168856c9fd439d6b06bedbd29b85.wav",
+    "sha256": "0ca77a230550e767561d7988d02d72c70e77d919910d9ca167eec551434ad300",
+    "utt_id": "bfd7168856c9fd439d6b06bedbd29b85",
+    "speaker_id": "f577be3041ea54a7ba9e0202dceed92d",
+    "keyword_id": -1,
+    "official_split": "n_test",
+    "filename": "03_background.wav",
+    "source_file": "bfd7168856c9fd439d6b06bedbd29b85.wav"
+  }
+]

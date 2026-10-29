@@ -84,6 +84,7 @@ add_subdirectory(source/app ${CMAKE_BINARY_DIR}/mlek-app)
 
 if (TARGET_PLATFORM STREQUAL "native")
     add_subdirectory(tests/processing/asr ${CMAKE_BINARY_DIR}/asr-processing-tests)
+    add_subdirectory(tests/processing/kws_zh ${CMAKE_BINARY_DIR}/kws-zh-processing-tests)
     add_subdirectory(tests/hal/timer ${CMAKE_BINARY_DIR}/mps4-timer-tests)
     add_subdirectory(tests/hal/display ${CMAKE_BINARY_DIR}/mps4-display-tests)
     add_subdirectory(tests/processing/yolov8_detection ${CMAKE_BINARY_DIR}/yolov8-processing-tests)
