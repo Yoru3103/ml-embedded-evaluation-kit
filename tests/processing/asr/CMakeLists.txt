@@ -6,6 +6,16 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     include(CTest)
 endif()
 get_filename_component(MLEK_TEST_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+add_executable(asr_uart_protocol_tests AsrUartProtocolTests.cc)
+target_compile_features(asr_uart_protocol_tests PRIVATE cxx_std_17)
+target_include_directories(asr_uart_protocol_tests PRIVATE
+    ${MLEK_TEST_ROOT}/source/app/use_case/asr/include)
+add_test(NAME asr-uart-protocol COMMAND asr_uart_protocol_tests)
+add_executable(conformer_sliding_window_tests ConformerSlidingWindowTests.cc)
+target_compile_features(conformer_sliding_window_tests PRIVATE cxx_std_17)
+target_include_directories(conformer_sliding_window_tests PRIVATE
+    ${MLEK_TEST_ROOT}/source/app/use_case/asr/include)
+add_test(NAME conformer-sliding-window COMMAND conformer_sliding_window_tests)
 add_executable(conformer_processing_tests
     ConformerProcessingTests.cc
     ${MLEK_TEST_ROOT}/source/lib/mlek/use_case/asr/ConformerProcessing.cc

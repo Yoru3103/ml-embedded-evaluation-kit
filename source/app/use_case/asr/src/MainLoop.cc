@@ -111,7 +111,11 @@ void MainLoop()
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
     caseContext.Set<const std::vector<std::string>&>("labels", labels);
 
+#if defined(ASR_INPUT_UART)
+    bool executionSuccessful = ClassifyUartAudioHandler(caseContext);
+#else
     bool executionSuccessful = ClassifyAudioHandler(caseContext);
+#endif
 
     info("Main loop terminated %s.\n", executionSuccessful ? "successfully" : "with failure");
 }
