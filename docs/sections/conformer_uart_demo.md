@@ -39,6 +39,15 @@ Close MobaXterm or any other process using the same COM port. Discover ports wit
     -WavPath "C:\audio\hello.wav"
 ```
 
+Add `-Denoise` to run conservative host-side head/tail-profile denoising before
+uploading, in the same command. It supports UART and FVP TCP. Optional parameters
+are `-NoiseSource auto|head|tail`, `-NoiseThresholdDbfs -40`, `-EdgeSeconds 1`,
+`-MaxReductionDb 6`, and `-DenoisePython <python.exe>`. Without a suitable quiet
+profile the original PCM is sent. Python with numpy and soundfile is required
+only when this switch is enabled. See [denoising details](asr_denoise_experiment.md).
+The sender additionally prints Denoise applied/skipped, Denoise.Host and
+Total.Wall. The input file is unchanged and temporary processed files are removed.
+
 The script checks the container and sends PCM bytes, not the WAV header. It accepts
 RIFF/WAVE PCM format 1, mono, 16000 Hz, signed 16-bit samples. `fmt ` and `data`
 chunks are located explicitly, with unknown chunks and odd chunk padding handled;

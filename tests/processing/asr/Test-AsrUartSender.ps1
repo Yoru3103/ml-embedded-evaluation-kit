@@ -108,4 +108,25 @@ $fake = [AsrFakeSerial]::new(); $fake.DropAck=$true
 $rejected=$false
 try { $null = Invoke-AsrUartTransfer $fake $audio 42 1 } catch { $rejected=$true }
 Assert-True ($rejected -and $fake.Received.Count -eq 512) 'Timeout retried or continued the upload'
+. (Join-Path $repoRoot 'scripts/windows/asr-denoise-tools.ps1')
+$bypass = Invoke-AsrDenoise -Path $valid
+Assert-True (-not $bypass.Report.applied -and $bypass.Audio.Crc -eq $audio.Crc) `
+    'No-profile denoising did not preserve the original PCM'
+$quietPath = New-TestWav -Bytes 64000
+$quietBytes = [IO.File]::ReadAllBytes($quietPath)
+for ($i=56; $i -lt $quietBytes.Length; $i+=2) {
+    $quietBytes[$i] = [byte](($i/2) % 8)
+    $quietBytes[$i+1] = 0
+}
+[IO.File]::WriteAllBytes($quietPath, $quietBytes)
+$quiet = [Mlek.AsrAudio]::Load($quietPath)
+$processed = Invoke-AsrDenoise -Path $quietPath
+Assert-True ($processed.Report.applied -and $processed.Audio.Samples -eq $quiet.Samples -and
+    $processed.Audio.Crc -ne $quiet.Crc) 'Denoising did not supply the processed PCM'
+$fake = [AsrFakeSerial]::new()
+$result = Invoke-AsrUartTransfer $fake $processed.Audio 44 2
+Assert-True ($fake.Crc -eq $processed.Audio.Crc -and
+    [Mlek.AsrAudio]::Crc32($fake.Received.ToArray()) -eq $fake.Crc -and
+    $result.Reply -match '^ASR_RESULT 44 ') 'Denoised PCM/CRC were not uploaded consistently'
 Write-Output 'ASR WAV validation, framing, CRC, ACK, replay and timeout tests: PASS'
+Write-Output 'Integrated denoising, bypass, processed PCM and upload CRC tests: PASS'
