@@ -290,6 +290,8 @@ bool QrCodeHandler(ApplicationContext& ctx)
 #if defined(QRCODE_INPUT_SEMIHOST) || defined(QRCODE_INPUT_UART)
         const char* title = "QR / barcode detector";
         hal_display_set_text_color(COLOR_WHITE);
+        // Clear the full row: hal_display_clear redraws the longer kit title.
+        hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
         hal_display_show_text(title, std::strlen(title), 9, 0, false);
 #endif
         const std::string message{"Running inference"};

@@ -53,6 +53,8 @@ bool ProcessFile(fwk::et::EtModel& model, const std::vector<std::string>& labels
     hal_display_clear(COLOR_BLACK);
     hal_display_set_text_color(COLOR_WHITE);
     const char* title = "Chinese KWS | send WAV";
+    // Clear the full row: hal_display_clear redraws the longer kit title.
+    hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
     hal_display_show_text(title, std::strlen(title), 9, 0, false);
     for (;;) {
         size_t bytes      = 0;
@@ -64,6 +66,8 @@ bool ProcessFile(fwk::et::EtModel& model, const std::vector<std::string>& labels
                                 static_cast<uint64_t>(KWS_ZH_COOLDOWN_MS) * 16};
         hal_display_clear(COLOR_BLACK);
         hal_display_set_text_color(COLOR_WHITE);
+        // Clear the full row: hal_display_clear redraws the longer kit title.
+        hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
         hal_display_show_text(title, std::strlen(title), 9, 0, false);
         ShowWave(audio, samples, 0, false);
         size_t count = 0;

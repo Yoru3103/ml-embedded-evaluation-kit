@@ -180,6 +180,8 @@ bool ClassifyVsiAudioHandler(ApplicationContext& ctx)
     s_status          = nullptr;
     const char* title = "Conformer ASR | VSI";
     hal_display_set_text_color(COLOR_WHITE);
+    // Clear the full row: hal_display_clear redraws the longer kit title.
+    hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
     hal_display_show_text(title, std::strlen(title), 9, 0, false);
     ShowStatus("Listening...");
     printf("ASR_VSI_READY 1 16000 320\n");

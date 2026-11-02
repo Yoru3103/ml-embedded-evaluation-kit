@@ -112,6 +112,7 @@ bool ProcessVsi(fwk::et::EtModel& model, const std::vector<std::string>& labels)
     s_window.Reset(0);
     hal_display_clear(COLOR_BLACK);
     s_status = nullptr;
+    hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
     Text("Chinese KWS | live VSI", 0);
     Text("Timestamp = detector trigger", 215);
     ShowStatus("Listening - warming up...");
