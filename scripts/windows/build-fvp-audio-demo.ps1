@@ -3,7 +3,7 @@
 <# Build the SSE-320 U85-1024 Dedicated256 custom VSI audio demo. #>
 [CmdletBinding()]
 param(
-    [ValidateSet('kws_zh', 'asr')][string]$UseCase = 'kws_zh',
+    [ValidateSet('kws_zh', 'asr', 'asr_zh')][string]$UseCase = 'kws_zh',
     [ValidateSet('VSI', 'STATIC')][string]$InputMode = 'VSI',
     [ValidateSet('Configure', 'Build')][string]$Action = 'Build',
     [string]$ModelPath,
@@ -29,6 +29,8 @@ if (-not $BuildDirectory) {
 if (-not $ModelPath) {
     $ModelPath = if ($UseCase -eq 'kws_zh') {
         'resources_downloaded/kws_zh/pte_Dedicated_Sram_256k/wekws_dstcn_u85.pte'
+    } elseif ($UseCase -eq 'asr_zh') {
+        'resources_downloaded/asr_zh/int8-state-768k/zipformer_small_ctc_zh_u85_1024_dedicated_768k_int8_state.pte'
     } else {
         'resources_downloaded/asr/et151-u85-1024-dedicated-256k/' +
         'conformer_fp32_cln_wer_6_47_arm_delegate_ethos-u85-1024_Dedicated_Sram.pte'
@@ -51,6 +53,12 @@ $options = @{
 if ($UseCase -eq 'kws_zh') {
     $options.CMakeArgs += @('-DML_FWK_TMP_MEM_BASE=0x72000000',
         '-DML_FWK_TMP_MEM_SIZE=0x00300000', '-Dkws_zh_STREAM_HOP_SAMPLES=16000')
+} elseif ($UseCase -eq 'asr_zh') {
+    $options.CacheSizeKiB = 768
+    $options.ActivationBufferSize = '0x00800000'
+    $options.CMakeArgs += @('-DCPU_PROFILE_ENABLED=OFF', '-Dasr_zh_INT8_STATE=ON',
+        '-Dasr_zh_FIXED_FEATURES=OFF', '-Dasr_zh_VALIDATE=OFF', '-Dasr_zh_DUMP_TENSORS=OFF',
+        '-DML_FWK_TMP_MEM_BASE=0x76000000', '-DML_FWK_TMP_MEM_SIZE=0x02000000')
 } else {
     $options.ActivationBufferSize = '0x00200000'
     $options.CMakeArgs += @('-DML_FWK_TMP_MEM_BASE=0x94000000',

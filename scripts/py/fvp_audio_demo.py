@@ -19,7 +19,8 @@ from pathlib import Path
 import sys
 from typing import Optional
 
-from fvp_audio_demo_sources import AudioSource, list_devices
+from fvp_audio_demo_sources import AudioSource, list_devices, sounddevice_module
+from record_audio_demo import record_utterance
 from fvp_audio_demo_vsi.protocol import AUTHKEY, AudioBlock, EOS, ERROR, REQUEST
 
 
@@ -36,6 +37,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     source.add_argument("--microphone", action="store_true", help="capture a live microphone")
     source.add_argument("--list-devices", action="store_true", help="enumerate; do not capture")
     parser.add_argument("--device", type=int, help="sounddevice input device index")
+    parser.add_argument("--record-utterance", action="store_true",
+                        help="record one sentence with Start/Stop buttons before sending")
     parser.add_argument("--vad-dbfs", type=float, help="microphone start energy gate in dBFS")
     parser.add_argument("--level-meter", action="store_true",
                         help="print microphone RMS once a second")
@@ -45,6 +48,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                         help="bounded audio queue; >=20 ms, rounded down to 20 ms blocks")
     parser.add_argument("--duration", type=float, help="maximum acquired audio seconds")
     options = parser.parse_args(argv)
+    if options.record_utterance and not options.microphone:
+        parser.error("--record-utterance requires --microphone")
     if options.vad_dbfs is not None and (
             not math.isfinite(options.vad_dbfs) or not -90 <= options.vad_dbfs <= -1):
         parser.error("--vad-dbfs must be between -90 and -1")
@@ -109,6 +114,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             with Listener(("127.0.0.1", options.port), authkey=AUTHKEY) as listener:
                 print(f"Audio listening on 127.0.0.1:{options.port}; capture starts on NEXT",
                       flush=True)
+                if options.record_utterance:
+                    # Tk and all recording controls remain on the main thread.
+                    options.recorded_pcm = record_utterance(
+                        sounddevice_module(), options.device,
+                        min(options.duration or 30, 30), source.stop)
                 with listener.accept() as connection:
                     return 0 if serve_connection(connection, source) else 1
         finally:

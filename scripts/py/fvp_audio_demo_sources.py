@@ -113,7 +113,8 @@ class AudioSource:
         :param options: Parsed wav, device, duration, realtime and queue_ms options.
         """
         self.options = options
-        self.queue = BlockQueue(options.queue_ms, drop_oldest=options.wav is None)
+        self.queue = BlockQueue(options.queue_ms, drop_oldest=(
+            options.wav is None and not getattr(options, "record_utterance", False)))
         self.stop = threading.Event()
         self.thread: Optional[threading.Thread] = None
         self.position = 0
@@ -139,6 +140,15 @@ class AudioSource:
         try:
             if self.options.wav is not None:
                 self._wav()
+            elif getattr(self.options, "record_utterance", False):
+                recording = getattr(self.options, "recorded_pcm", None)
+                if recording is None:
+                    raise RuntimeError("Recording was not prepared by the host controls")
+                for offset in range(0, len(recording), BLOCK_SAMPLES * 2):
+                    pcm = recording[offset:offset + BLOCK_SAMPLES * 2]
+                    if not self.queue.put(AudioBlock(self.position, pcm)):
+                        break
+                    self.position += len(pcm) // 2
             else:
                 self._microphone()
         except (OSError, ValueError, RuntimeError, wave.Error, ImportError) as error:

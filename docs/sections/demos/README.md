@@ -650,6 +650,7 @@ FPGA 固件输出到 `build/fpga-file/hand-pose/bin/mlek_yolov8_pose.axf`。
 - [FVP 音频链路说明](audio.md)
 - [手部关键点演示说明](hand_pose.md)
 - [二维码演示说明](qrcode.md)
+- [中文 ASR：VSI 输入与按键录音](asr_zh.md)
 
 本报告记录当前演示功能和复现方法。截图按第 2 节的占位补入；
 模型版本、构建参数和二进制来源可通过对应目录的 `build-info.json` 追溯。

@@ -3,7 +3,7 @@
 <# Run the host server and custom VSI0 pull-DMA audio demo. Ctrl+C stops both. #>
 [CmdletBinding(DefaultParameterSetName='Wav')]
 param(
-    [ValidateSet('kws_zh', 'asr')][string]$UseCase = 'kws_zh',
+    [ValidateSet('kws_zh', 'asr', 'asr_zh')][string]$UseCase = 'kws_zh',
     [Parameter(Mandatory=$true, ParameterSetName='Wav')][string]$Wav,
     [Parameter(Mandatory=$true, ParameterSetName='Microphone')][switch]$Microphone,
     [Parameter(ParameterSetName='Microphone')][int]$Device,
@@ -34,10 +34,11 @@ function Resolve-DemoPath {
 }
 if (-not $BuildDirectory) { $BuildDirectory = "build/fvp-audio/$UseCase" }
 $BuildDirectory = Resolve-DemoPath $BuildDirectory
+$cacheBytes = if ($UseCase -eq 'asr_zh') {786432} else {262144}
 $cache = Get-Content -LiteralPath (Join-Path $BuildDirectory 'CMakeCache.txt')
 foreach ($setting in @("${UseCase}_INPUT_MODE=VSI", 'TARGET_PLATFORM=mps4',
         'TARGET_SUBSYSTEM=sse-320', 'ETHOS_U_NPU_ID=U85', 'ETHOS_U_NPU_CONFIG_ID=Z1024',
-        'ETHOS_U_NPU_MEMORY_MODE=Dedicated_Sram', 'ETHOS_U_NPU_CACHE_SIZE=262144',
+        'ETHOS_U_NPU_MEMORY_MODE=Dedicated_Sram', "ETHOS_U_NPU_CACHE_SIZE=$cacheBytes",
         'FPGA_PLATFORM_SSE_320=OFF', 'SEMIHOSTING_ENABLED=OFF', 'MPS4_DISPLAY_ENABLED=ON',
         'ETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF')) {
     $key, $value = $setting.Split('=')
@@ -74,6 +75,7 @@ $bridge = Resolve-DemoPath 'scripts/py/fvp_audio_demo_vsi'
 $hostArguments = @($hostScript, '--port', "$Port", '--queue-ms', "$QueueMs")
 if ($Microphone) {
     $hostArguments += '--microphone'
+    if ($UseCase -eq 'asr_zh') { $hostArguments += '--record-utterance' }
     if ($UseCase -eq 'asr' -and $PSBoundParameters.ContainsKey('VadDbfs')) {
         $hostArguments += @('--vad-dbfs', $VadDbfs.ToString([Globalization.CultureInfo]::InvariantCulture))
     } elseif ($PSBoundParameters.ContainsKey('VadDbfs')) {
@@ -177,13 +179,13 @@ try {
         $fvp.Refresh()
         $server.Refresh()
         if (-not $completed -and
-            $outputTail -match 'AUDIO_EOS sample=\d+|ASR_VSI_EOS \d+ success=1') {
+            $outputTail -match 'AUDIO_EOS sample=\d+|ASR_VSI_EOS \d+ success=1|ASR_ZH_VSI_EOS success=1') {
             $completed = $true
             if ($SmokeTimeoutSeconds -eq 0) {
                 Write-Host "`nAudio complete. LCD result remains visible; press Q or Ctrl+C to exit."
             }
         }
-        if ($outputTail -match 'ASR_VSI_ERROR|VSI audio input failed|VSI audio bridge missing') {
+        if ($outputTail -match 'ASR_VSI_ERROR|ASR_ZH_VSI_ERROR|ASR_ZH completed success=0|VSI audio input failed|VSI audio bridge missing') {
             throw "FVP audio error; see $fvpLog"
         }
         if ($server.HasExited -and $server.ExitCode -ne 0) {

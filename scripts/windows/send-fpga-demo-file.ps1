@@ -4,7 +4,7 @@
 <# Upload a WAV or image to a resident FPGA file demo; TCP supports FVP validation. #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('kws_zh','asr','hand-pose','qrcode')][string]$UseCase,
+    [Parameter(Mandatory=$true)][ValidateSet('kws_zh','asr','asr_zh','hand-pose','qrcode')][string]$UseCase,
     [Parameter(Mandatory=$true)][string]$InputPath,
     [string]$Port,
     [string]$TcpHost,
@@ -16,6 +16,8 @@ param(
     [switch]$ValidateOnly
 )
 $ErrorActionPreference = 'Stop'
+$globalTimer=[Diagnostics.Stopwatch]::StartNew()
+$targetTiming=@{}
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
 if (-not $ValidateOnly -and ((-not $Port -and -not $TcpHost) -or ($Port -and $TcpHost))) {
     throw 'Specify exactly one of -Port (FPGA) or -TcpHost (FVP).'
@@ -31,9 +33,9 @@ if ($UseCase -eq 'asr') {
 . (Join-Path $PSScriptRoot 'asr-uart-tools.ps1')
 $requestId = [uint32](Get-Random -Minimum 1 -Maximum 2147483647)
 $inputFile = (Resolve-Path -LiteralPath $InputPath).ProviderPath
-if ($UseCase -eq 'kws_zh') {
+if ($UseCase -in @('kws_zh','asr_zh')) {
     $audio = [Mlek.AsrAudio]::Load($inputFile)
-    $magic='KWD1'; $width=[uint32]16000; $height=$audio.Samples; $payload=$audio.Pcm
+    $magic=if ($UseCase -eq 'asr_zh') {'ZHD1'} else {'KWD1'}; $width=[uint32]16000; $height=$audio.Samples; $payload=$audio.Pcm
 } else {
     $tempDirectory = Join-Path $repoRoot "build/file-demo-inputs/$requestId"
     New-Item -ItemType Directory -Force $tempDirectory | Out-Null
@@ -74,6 +76,7 @@ if ($TcpHost) {
         8,[IO.Ports.StopBits]::One)
     $transport.Handshake=[IO.Ports.Handshake]::None
     $transport.DtrEnable=$false; $transport.RtsEnable=$false
+    $transport.Encoding=[Text.UTF8Encoding]::new($false)
     $transport.ReadTimeout=500; $transport.WriteTimeout=5000
     $transport.NewLine="`n"
 }
@@ -83,6 +86,11 @@ function Read-FileReply([string]$Pattern) {
         try { $line=$transport.ReadLine().TrimEnd("`r") }
         catch [TimeoutException] { continue }
         if ($line -match "^FILE_ERROR $requestId ") { throw $line }
+        if ($line -match '^ASR_ZH_TIMING end_to_end_us=([0-9]+) npu_us=([0-9]+)$') {
+            $targetTiming.EndToEndUs=[double]$Matches[1]
+            $targetTiming.NpuUs=[double]$Matches[2]
+            continue
+        }
         if ($line -match $Pattern) { return $line }
         if ($line -and $line -notmatch '^FILE_ACK ') { Write-Host $line }
     }
@@ -98,13 +106,14 @@ try {
         catch [TimeoutException] { continue }
         if ($line -match "^FILE_HELLO $magic ([0-9]+) ([0-9]+) ([0-9]+) 512$") {
             if ([uint32]$Matches[1] -ne $width -or $payload.Length -gt [uint32]$Matches[3] -or
-                ($UseCase -ne 'kws_zh' -and [uint32]$Matches[2] -ne $height)) {
+                ($UseCase -notin @('kws_zh','asr_zh') -and [uint32]$Matches[2] -ne $height)) {
                 throw 'Input dimensions/capacity do not match target firmware.'
             }
             $hello=$line; break
         }
     }
     if (-not $hello) { throw "No compatible $UseCase file firmware responded." }
+    $uploadTimer=[Diagnostics.Stopwatch]::StartNew()
     $transport.Write($header,0,$header.Length)
     $null=Read-FileReply "^FILE_READY $requestId$"
     for ($offset=0; $offset -lt $payload.Length;) {
@@ -112,7 +121,15 @@ try {
         $transport.Write($payload,$offset,$count); $offset+=$count
         $null=Read-FileReply "^FILE_ACK $requestId $offset$"
     }
+    $uploadMs=$uploadTimer.Elapsed.TotalMilliseconds
     Read-FileReply "^FILE_RESULT $requestId [0-9]+$" | Write-Output
+    $globalTimer.Stop()
+    Write-Output ('UART.Upload: {0:F3} ms' -f $uploadMs)
+    if ($targetTiming.ContainsKey('EndToEndUs')) {
+        Write-Output ('End-to-end: {0:F3} ms' -f ($targetTiming.EndToEndUs/1000))
+        Write-Output ('NPU.Total: {0:F3} ms' -f ($targetTiming.NpuUs/1000))
+    }
+    Write-Output ('Global.Total: {0:F3} ms' -f $globalTimer.Elapsed.TotalMilliseconds)
 } finally {
     $transport.Dispose()
 }

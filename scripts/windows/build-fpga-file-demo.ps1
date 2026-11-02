@@ -4,7 +4,7 @@
 <# Build a resident WAV/image UART file receiver, also executable on FVP for validation. #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('kws_zh','asr','hand-pose','qrcode')][string]$UseCase,
+    [Parameter(Mandatory=$true)][ValidateSet('kws_zh','asr','asr_zh','hand-pose','qrcode')][string]$UseCase,
     [ValidateSet('FPGA','FVP')][string]$Target = 'FPGA',
     [string]$BuildDirectory,
     [string]$ModelPath,
@@ -18,6 +18,7 @@ $case = if ($UseCase -eq 'hand-pose') { 'yolov8_pose' } else { $UseCase }
 if (-not $BuildDirectory) { $BuildDirectory = "build/$($Target.ToLowerInvariant())-file/$UseCase" }
 $models = @{
     kws_zh='resources_downloaded/kws_zh/pte_Dedicated_Sram_256k/wekws_dstcn_u85.pte'
+    asr_zh='resources_downloaded/asr_zh/int8-state-768k/zipformer_small_ctc_zh_u85_1024_dedicated_768k_int8_state.pte'
     asr='resources_downloaded/asr/et151-u85-1024-dedicated-256k/conformer_fp32_cln_wer_6_47_arm_delegate_ethos-u85-1024_Dedicated_Sram.pte'
     'hand-pose'='resources_downloaded/yolov8_pose/hand_pose_u85-1024_ded_256KiB_mixed.pte'
     qrcode='resources_downloaded/yolo_QRcode/usr_quant_nhwc_angle3d/pte/best_bifpn_gray_nhwc_angle3d_u85_1024_384KiB.pte'
@@ -37,6 +38,13 @@ $options = @{
 }
 switch ($UseCase) {
     'kws_zh' { $options.InputPath='resources/kws_zh/samples' }
+    'asr_zh' {
+        $options.InputPath='resources/asr_zh/samples/demo.wav'
+        $options.CacheSizeKiB=768; $options.ActivationBufferSize='0x00800000'
+        $options.CMakeArgs += @('-DCPU_PROFILE_ENABLED=ON', '-Dasr_zh_INT8_STATE=ON',
+            '-Dasr_zh_FIXED_FEATURES=OFF', '-Dasr_zh_VALIDATE=OFF', '-Dasr_zh_DUMP_TENSORS=OFF',
+            '-DML_FWK_TMP_MEM_BASE=0x76000000', '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF')
+    }
     'asr' {
         $options.InputPath='resources/asr/samples/another_door.wav'
         $options.CMakeArgs += @('-DASR_ET_STAGE_PROFILING=ON', '-DASR_STAGE_PROFILING=OFF',

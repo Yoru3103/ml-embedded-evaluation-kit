@@ -84,6 +84,7 @@ add_subdirectory(source/app ${CMAKE_BINARY_DIR}/mlek-app)
 
 if (TARGET_PLATFORM STREQUAL "native")
     add_subdirectory(tests/processing/asr ${CMAKE_BINARY_DIR}/asr-processing-tests)
+    add_subdirectory(tests/processing/asr_zh ${CMAKE_BINARY_DIR}/asr-zh-processing-tests)
     add_subdirectory(tests/processing/kws_zh ${CMAKE_BINARY_DIR}/kws-zh-processing-tests)
     add_subdirectory(tests/processing/asr_vsi ${CMAKE_BINARY_DIR}/asr_vsi-tests)
     add_subdirectory(tests/processing/fvp_audio ${CMAKE_BINARY_DIR}/fvp_audio-tests)
