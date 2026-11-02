@@ -35,6 +35,11 @@ namespace app {
     bool ClassifyUartAudioHandler(ApplicationContext& ctx);
 #endif
 
+#if defined(ASR_INPUT_VSI)
+    /** Segment continuous VSI PCM and decode completed Conformer utterances. */
+    bool ClassifyVsiAudioHandler(ApplicationContext& ctx);
+#endif
+
 } /* namespace app */
 } /* namespace arm */
 

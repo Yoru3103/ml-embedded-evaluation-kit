@@ -20,6 +20,9 @@
 #include "UseCaseCommonUtils.hpp" /* Utils functions. */
 #include "UseCaseHandler.hpp"     /* Handlers for different user options. */
 #include "mlek/log/log_macros.h"  /* Logging functions */
+#if defined(ASR_INPUT_VSI)
+#    include "FvpAudioInput.hpp"
+#endif
 
 /** Based on ML framework, set up the model namespace. */
 #if defined(MLEK_FWK_TFLM)
@@ -50,6 +53,14 @@ namespace app {
 
 /** @brief   Verify input and output tensor are of certain min dimensions. */
 static bool VerifyTensorDimensions(const arm::app::fwk::iface::Model& model);
+
+#if defined(ASR_INPUT_UART)
+static constexpr auto kClassifyInput = arm::app::ClassifyUartAudioHandler;
+#elif defined(ASR_INPUT_VSI)
+static constexpr auto kClassifyInput = arm::app::ClassifyVsiAudioHandler;
+#else
+static constexpr auto kClassifyInput = arm::app::ClassifyAudioHandler;
+#endif
 
 void MainLoop()
 {
@@ -111,13 +122,14 @@ void MainLoop()
     caseContext.Set<arm::app::fwk::iface::Model&>("model", model);
     caseContext.Set<const std::vector<std::string>&>("labels", labels);
 
-#if defined(ASR_INPUT_UART)
-    bool executionSuccessful = ClassifyUartAudioHandler(caseContext);
-#else
-    bool executionSuccessful = ClassifyAudioHandler(caseContext);
-#endif
+    const bool executionSuccessful = kClassifyInput(caseContext);
 
     info("Main loop terminated %s.\n", executionSuccessful ? "successfully" : "with failure");
+#if defined(ASR_INPUT_VSI)
+    if (executionSuccessful) {
+        arm::app::fvp_audio::HoldResult();
+    }
+#endif
 }
 
 static bool VerifyTensorDimensions(const arm::app::fwk::iface::Model& model)

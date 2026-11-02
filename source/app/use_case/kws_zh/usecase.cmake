@@ -21,6 +21,26 @@ if ("${USE_CASE_BUILD}" STREQUAL "all" AND
     return()
 endif()
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
+USER_OPTION(${use_case}_INPUT_MODE "Chinese KWS input: STATIC, VSI or UART" STATIC STRING)
+set_property(CACHE ${use_case}_INPUT_MODE PROPERTY STRINGS STATIC VSI UART)
+if (NOT ${use_case}_INPUT_MODE MATCHES "^(STATIC|VSI|UART)$")
+    message(FATAL_ERROR "kws_zh_INPUT_MODE must be STATIC, VSI or UART")
+endif()
+if (${use_case}_INPUT_MODE STREQUAL "VSI")
+    include(${MLEK_ROOT}/scripts/cmake/fvp_audio_demo.cmake)
+    mlek_add_fvp_audio_demo(${use_case})
+    USER_OPTION(${use_case}_STREAM_HOP_SAMPLES "Live KWS inference hop in PCM samples"
+        16000 STRING)
+    math(EXPR _stream_remainder "${${use_case}_STREAM_HOP_SAMPLES} % 160")
+    if (${${use_case}_STREAM_HOP_SAMPLES} LESS 160 OR
+        ${${use_case}_STREAM_HOP_SAMPLES} GREATER 31920 OR NOT _stream_remainder EQUAL 0)
+        message(FATAL_ERROR "KWS stream hop must be 160..31920 and a multiple of 160")
+    endif()
+    add_library(kws_zh_vsi_mode INTERFACE)
+    target_compile_definitions(kws_zh_vsi_mode INTERFACE KWS_ZH_INPUT_VSI
+        KWS_ZH_STREAM_HOP_SAMPLES=${${use_case}_STREAM_HOP_SAMPLES})
+    list(APPEND ${use_case}_LINK_LIBS kws_zh_vsi_mode)
+endif()
 list(APPEND ${use_case}_API_LIST "kws_zh")
 if (TARGET_PLATFORM STREQUAL "mps4" AND TARGET_SUBSYSTEM STREQUAL "sse-320" AND
     ETHOS_U_NPU_MEMORY_MODE STREQUAL "Dedicated_Sram" AND DEFINED ML_FWK_TMP_MEM_BASE)
@@ -78,3 +98,10 @@ set(${use_case}_COMPILE_DEFS
     "KWS_ZH_COOLDOWN_MS=${${use_case}_COOLDOWN_MS}"
     "KWS_ZH_DUMP_OUTPUT=$<BOOL:${${use_case}_DUMP_OUTPUT}>"
     "KWS_ZH_WINDOW_STRIDE=${${use_case}_WINDOW_STRIDE}")
+
+if (${use_case}_INPUT_MODE STREQUAL "UART")
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR SEMIHOSTING_ENABLED)
+        message(FATAL_ERROR "KWS file UART requires SSE-320 and UART stdout")
+    endif()
+    list(APPEND ${use_case}_COMPILE_DEFS KWS_ZH_INPUT_UART)
+endif()

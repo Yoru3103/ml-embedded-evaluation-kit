@@ -39,10 +39,41 @@ endif()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
 
-USER_OPTION(${use_case}_INPUT_MODE "ASR input source: STATIC or UART" STATIC STRING)
-set_property(CACHE ${use_case}_INPUT_MODE PROPERTY STRINGS STATIC UART)
-if (NOT ${use_case}_INPUT_MODE MATCHES "^(STATIC|UART)$")
-    message(FATAL_ERROR "asr_INPUT_MODE must be STATIC or UART")
+USER_OPTION(${use_case}_INPUT_MODE "ASR input source: STATIC, UART or VSI" STATIC STRING)
+set_property(CACHE ${use_case}_INPUT_MODE PROPERTY STRINGS STATIC UART VSI)
+if (NOT ${use_case}_INPUT_MODE MATCHES "^(STATIC|UART|VSI)$")
+    message(FATAL_ERROR "asr_INPUT_MODE must be STATIC, UART or VSI")
+endif()
+if (${use_case}_INPUT_MODE STREQUAL "VSI")
+    if (NOT "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}")
+        message(FATAL_ERROR "ASR VSI requires ExecuTorch Conformer")
+    endif()
+    include(${MLEK_ROOT}/scripts/cmake/fvp_audio_demo.cmake)
+    mlek_add_fvp_audio_demo(${use_case})
+    USER_OPTION(${use_case}_VSI_VAD_RMS "VSI speech RMS threshold in 16-bit PCM units"
+        800 STRING)
+    USER_OPTION(${use_case}_VSI_SILENCE_MS "VSI sentence-end silence in milliseconds"
+        1000 STRING)
+    USER_OPTION(${use_case}_VSI_PRE_ROLL_MS "VSI audio retained before speech in milliseconds"
+        600 STRING)
+    if (NOT "${${use_case}_VSI_PRE_ROLL_MS}" MATCHES "^[1-9][0-9]*$" OR
+        ${use_case}_VSI_PRE_ROLL_MS LESS 200 OR ${use_case}_VSI_PRE_ROLL_MS GREATER 2000)
+        message(FATAL_ERROR "asr_VSI_PRE_ROLL_MS must be an integer from 200 to 2000")
+    endif()
+    if (NOT "${${use_case}_VSI_VAD_RMS}" MATCHES "^[1-9][0-9]*$" OR
+        ${use_case}_VSI_VAD_RMS GREATER_EQUAL 32768)
+        message(FATAL_ERROR "asr_VSI_VAD_RMS must be an integer from 1 to 32767")
+    endif()
+    if (NOT "${${use_case}_VSI_SILENCE_MS}" MATCHES "^[1-9][0-9]*$" OR
+        ${use_case}_VSI_SILENCE_MS LESS 20 OR ${use_case}_VSI_SILENCE_MS GREATER 5000)
+        message(FATAL_ERROR "asr_VSI_SILENCE_MS must be an integer from 20 to 5000")
+    endif()
+    add_library(asr_vsi_mode INTERFACE)
+    target_compile_definitions(asr_vsi_mode INTERFACE ASR_INPUT_VSI
+        ASR_VSI_VAD_RMS=${${use_case}_VSI_VAD_RMS}
+        ASR_VSI_PRE_ROLL_MS=${${use_case}_VSI_PRE_ROLL_MS}
+        ASR_VSI_SILENCE_MS=${${use_case}_VSI_SILENCE_MS})
+    list(APPEND ${use_case}_LINK_LIBS asr_vsi_mode)
 endif()
 if (${use_case}_INPUT_MODE STREQUAL "UART")
     if (NOT "${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_EXECUTORCH}" OR
@@ -55,7 +86,7 @@ if (${use_case}_INPUT_MODE STREQUAL "UART")
     add_library(asr_uart_mode INTERFACE)
     target_compile_definitions(asr_uart_mode INTERFACE ASR_INPUT_UART
         ASR_UART_FPGA=$<BOOL:${FPGA_PLATFORM_SSE_320}>
-        $<$<AND:$<NOT:$<BOOL:${FPGA_PLATFORM_SSE_320}>>,$<BOOL:${MPS4_DISPLAY_ENABLED}>>:ASR_UART_LCD>)
+        $<$<BOOL:${MPS4_DISPLAY_ENABLED}>:ASR_UART_LCD>)
     list(APPEND ${use_case}_LINK_LIBS asr_uart_mode)
 endif()
 

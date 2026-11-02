@@ -10,6 +10,16 @@ if (NOT ${ML_FRAMEWORK} IN_LIST ${use_case}_ML_FRAMEWORK)
 endif()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
+USER_OPTION(${use_case}_INPUT_MODE "Pose input source: STATIC, SEMIHOST or UART" STATIC STRING)
+set_property(CACHE ${use_case}_INPUT_MODE PROPERTY STRINGS STATIC SEMIHOST UART)
+if (NOT ${use_case}_INPUT_MODE MATCHES "^(STATIC|SEMIHOST|UART)$")
+    message(FATAL_ERROR "yolov8_pose_INPUT_MODE must be STATIC, SEMIHOST or UART")
+endif()
+if (${use_case}_INPUT_MODE STREQUAL "SEMIHOST" AND
+    (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR
+     FPGA_PLATFORM_SSE_320 OR NOT SEMIHOSTING_ENABLED OR NOT MPS4_DISPLAY_ENABLED))
+    message(FATAL_ERROR "Pose semihost demo requires SSE-320 FVP, semihosting and LCD")
+endif()
 list(APPEND ${use_case}_API_LIST "yolov8_pose")
 
 USER_OPTION(
@@ -230,7 +240,7 @@ if (ML_FRAMEWORK STREQUAL "${ML_FRAMEWORK_EXECUTORCH}" AND COMMAND generate_pte_
         SELECT_OPS_LIST "")
 
     if (TARGET ${use_case}_portable_ops_lib)
-        set(${use_case}_LINK_LIBS ${use_case}_portable_ops_lib)
+        list(APPEND ${use_case}_LINK_LIBS ${use_case}_portable_ops_lib)
     endif()
 endif()
 
@@ -250,3 +260,18 @@ set(${use_case}_COMPILE_DEFS
     "YOLOV8_POSE_DISPLAY_DOWNSCALE=${${use_case}_DISPLAY_DOWNSCALE}"
     "YOLOV8_POSE_PMU_WARMUP_RUNS=${${use_case}_PMU_WARMUP_RUNS}"
     "YOLOV8_POSE_PMU_MEASURED_RUNS=${${use_case}_PMU_MEASURED_RUNS}")
+
+if (${use_case}_INPUT_MODE STREQUAL "SEMIHOST")
+    list(APPEND ${use_case}_COMPILE_DEFS YOLOV8_POSE_INPUT_SEMIHOST
+        "YOLOV8_POSE_INPUT_SIZE=${${use_case}_IMAGE_SIZE}")
+endif()
+
+if (${use_case}_INPUT_MODE STREQUAL "UART")
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR SEMIHOSTING_ENABLED)
+        message(FATAL_ERROR "File UART input requires SSE-320 and UART stdout")
+    endif()
+    add_library(yolov8_pose_uart_file_mode INTERFACE)
+    target_compile_definitions(yolov8_pose_uart_file_mode INTERFACE YOLOV8_POSE_INPUT_UART
+        YOLOV8_POSE_INPUT_SIZE=${${use_case}_IMAGE_SIZE})
+    list(APPEND ${use_case}_LINK_LIBS yolov8_pose_uart_file_mode)
+endif()

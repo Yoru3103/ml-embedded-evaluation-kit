@@ -45,16 +45,21 @@ namespace {
     void PrintResult(uint32_t id, uint64_t npu, uint64_t total, const std::string& text)
     { printf("ASR_RESULT %" PRIu32 " %" PRIu64 " %" PRIu64 " %s\n", id, npu, total, text.c_str()); }
 
-    void ShowUartStatus(const char* status)
+    void ShowUartStatus(const char* status, bool clear = true)
     {
 #    if defined(ASR_UART_LCD)
-        hal_display_clear(COLOR_BLACK);
+        if (clear) {
+            hal_display_clear(COLOR_BLACK);
+        } else {
+            hal_display_show_box(0, 30, 320, 15, COLOR_BLACK);
+        }
         hal_display_set_text_color(COLOR_WHITE);
-        const char* title = "Conformer ASR | FVP";
+        const char* title = "Conformer ASR | file input";
         hal_display_show_text(title, std::strlen(title), 9, 0, false);
         hal_display_show_text(status, std::strlen(status), 9, 30, false);
 #    else
         (void)status;
+        (void)clear;
 #    endif
     }
 
@@ -110,7 +115,7 @@ namespace {
                  total / 1000,
                  total % 1000);
         hal_display_show_text(timing, std::strlen(timing), 9, 210, false);
-        const char* note = "Simulated times (fast mode)";
+        const char* note = "Ready for next WAV";
         hal_display_show_text(note, std::strlen(note), 9, 225, false);
 #    else
         (void)text;
@@ -188,7 +193,7 @@ bool ClassifyUartAudioHandler(ApplicationContext& ctx)
             }
             continue;
         }
-        ShowUartStatus("Receiving audio...");
+        ShowUartStatus("Receiving audio...", false);
         printf("ASR_READY %" PRIu32 "\n", request.id);
         auto* bytes             = reinterpret_cast<uint8_t*>(s_audio);
         const size_t totalBytes = request.samples * sizeof(int16_t);
@@ -213,7 +218,7 @@ bool ClassifyUartAudioHandler(ApplicationContext& ctx)
         }
         if (!complete || (crc ^ 0xFFFFFFFFU) != request.crc) {
             printf("ASR_ERROR %" PRIu32 " %s\n", request.id, complete ? "CRC" : "TIMEOUT");
-            ShowUartStatus("Upload error - see UART");
+            ShowUartStatus("Upload error - see UART", false);
             continue;
         }
         ShowUartStatus("Processing...");

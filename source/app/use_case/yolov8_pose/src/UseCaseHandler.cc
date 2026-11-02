@@ -4,6 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "UseCaseHandler.hpp"
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+#    include "../../../image_demo/include/ImageRequest.hpp"
+#    include "BufAttributes.hpp"
+#endif
+
+#if defined(YOLOV8_POSE_INPUT_UART)
+#    include "../../../file_demo/include/UartFileInput.hpp"
+#endif
 
 #include "UseCaseCommonUtils.hpp"
 #include "hal.h"
@@ -18,11 +26,17 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
 namespace arm::app {
 namespace {
+
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+    static uint8_t
+        s_runtimeImage[YOLOV8_POSE_INPUT_SIZE * YOLOV8_POSE_INPUT_SIZE * 3] IFM_BUF_ATTRIBUTE;
+#endif
 
     struct ImageDimensions {
         uint32_t width{0};
@@ -246,11 +260,19 @@ bool YoloV8PoseHandler(ApplicationContext& ctx)
          numOutputs == 1 ? "packed" : "split",
          YOLOV8_POSE_COORDINATES_NORMALIZED ? "normalized" : "pixel");
 
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+    if (dimensions.width != YOLOV8_POSE_INPUT_SIZE || dimensions.height != YOLOV8_POSE_INPUT_SIZE) {
+        printf_err("HAND_POSE_ERROR input dimensions mismatch\n");
+        return false;
+    }
+#else
     if (get_sample_img_width() != dimensions.width ||
         get_sample_img_height() != dimensions.height) {
         printf_err("Generated image dimensions do not match model input\n");
         return false;
     }
+#endif
+    const size_t imageBytes = static_cast<size_t>(dimensions.width) * dimensions.height * 3;
 
     auto inputLayout = fwk::iface::TensorLayout::INVALID;
 #if defined(MLEK_FWK_TFLM)
@@ -271,8 +293,12 @@ bool YoloV8PoseHandler(ApplicationContext& ctx)
                                        YOLOV8_POSE_NMS_THRESHOLD,
                                        YOLOV8_POSE_COORDINATES_NORMALIZED}};
 
-    constexpr uint32_t imageStartX   = 10;
-    constexpr uint32_t imageStartY   = 35;
+    constexpr uint32_t imageStartX = 10;
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+    constexpr uint32_t imageStartY = 15;
+#else
+    constexpr uint32_t imageStartY = 35;
+#endif
     constexpr uint32_t textStartY    = 40;
     constexpr uint32_t displayWidth  = 320;
     constexpr uint32_t displayHeight = 240;
@@ -287,10 +313,56 @@ bool YoloV8PoseHandler(ApplicationContext& ctx)
         return false;
     }
 
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+#    if !defined(YOLOV8_POSE_INPUT_UART)
+    uint32_t previous = 0;
+    bool havePrevious = false;
+#    endif
+    info("HAND_POSE_READY width=%" PRIu32 " height=%" PRIu32 "\n",
+         dimensions.width,
+         dimensions.height);
+    for (;;) {
+#    if defined(YOLOV8_POSE_INPUT_UART)
+        uint32_t request = file_demo::Receive(
+            "HPD1", dimensions.width, dimensions.height, s_runtimeImage, sizeof(s_runtimeImage));
+#    else
+        uint32_t request = 0;
+        for (;;) {
+            FILE* file = std::fopen("hand-pose-input.bin", "rb");
+            if (file) {
+                const auto status = image_demo::ReadRequest(file,
+                                                            dimensions.width,
+                                                            dimensions.height,
+                                                            {"HPD1", 3},
+                                                            s_runtimeImage,
+                                                            sizeof(s_runtimeImage),
+                                                            havePrevious,
+                                                            previous,
+                                                            request);
+                std::fclose(file);
+                if (status == image_demo::ReadStatus::ERROR) {
+                    printf_err("HAND_POSE_ERROR INPUT (length, dimensions or CRC)\n");
+                    return false;
+                }
+                if (status == image_demo::ReadStatus::READY) {
+                    break;
+                }
+            }
+            for (volatile uint32_t delay = 0; delay < 1000000U; ++delay) {}
+        }
+#    endif
+#    if !defined(YOLOV8_POSE_INPUT_UART)
+        previous     = request;
+        havePrevious = true;
+#    endif
+        const uint8_t* image  = s_runtimeImage;
+        const char* imageName = "camera/file capture";
+        info("HAND_POSE_REQUEST id=%" PRIu32 "\n", request);
+#else
     for (uint32_t index = 0; index < get_sample_n_elements(); ++index) {
-#ifdef INTERACTIVE_MODE
+#    ifdef INTERACTIVE_MODE
         AwaitUserInput();
-#endif
+#    endif
 
         const uint8_t* image = get_sample_data_ptr(index);
         if (image == nullptr) {
@@ -299,15 +371,21 @@ bool YoloV8PoseHandler(ApplicationContext& ctx)
         }
 
         info("Running pose image %" PRIu32 ": %s\n", index, get_sample_data_filename(index));
+        const char* imageName = get_sample_data_filename(index);
+#endif
         hal_display_clear(COLOR_BLACK);
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+        const char* title = "Hand pose | 21 keypoints";
+        hal_display_set_text_color(COLOR_WHITE);
+        hal_display_show_text(title, std::strlen(title), 9, 0, false);
+#endif
         hal_display_show_image(
             image, dimensions.width, dimensions.height, 3, imageStartX, imageStartY, downscale);
 
         if (!profiler.StartProfiling("Pre-processing")) {
             return false;
         }
-        const bool preProcessSuccessful =
-            preProcess.DoPreProcess(image, get_sample_img_total_bytes());
+        const bool preProcessSuccessful = preProcess.DoPreProcess(image, imageBytes);
         const bool preProfileSuccessful = profiler.StopProfiling();
         if (!preProcessSuccessful || !preProfileSuccessful) {
             printf_err("YOLOv8 pose pre-processing failed\n");
@@ -344,10 +422,15 @@ bool YoloV8PoseHandler(ApplicationContext& ctx)
 
         profiler.PrintProfilingResult();
 
-        PrintResults(
-            results, labels, get_sample_data_filename(index), dimensions.width, dimensions.height);
+        PrintResults(results, labels, imageName, dimensions.width, dimensions.height);
         PresentResults(results, textStartX, textStartY);
         DrawPoseResults(results, imageStartX, imageStartY, downscale);
+#if defined(YOLOV8_POSE_INPUT_SEMIHOST) || defined(YOLOV8_POSE_INPUT_UART)
+        info("HAND_POSE_RESULT id=%" PRIu32 " count=%zu\n", request, results.size());
+#    if defined(YOLOV8_POSE_INPUT_UART)
+        std::printf("FILE_RESULT %" PRIu32 " %zu\n", request, results.size());
+#    endif
+#endif
 
 #if VERIFY_TEST_OUTPUT
         for (const auto& outputTensor : outputTensors) {

@@ -11,6 +11,9 @@
 #include "mlek/log/log_macros.h"
 #include "mlek/use_case/kws_zh/KaldiFbank.hpp"
 #include "mlek/use_case/kws_zh/WakeWordDecoder.hpp"
+#if defined(KWS_ZH_INPUT_VSI)
+#    include "FvpAudioInput.hpp"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -19,9 +22,18 @@
 namespace arm::app::kws_zh {
 extern uint8_t* GetModelPointer();
 extern size_t GetModelLen();
+#if defined(KWS_ZH_INPUT_VSI)
+bool ProcessVsi(fwk::et::EtModel& model, const std::vector<std::string>& labels);
+#endif
+
+#if defined(KWS_ZH_INPUT_UART)
+bool ProcessFile(fwk::et::EtModel& model, const std::vector<std::string>& labels);
+#endif
 
 static uint8_t s_activation[ACTIVATION_BUF_SZ] ACTIVATION_BUF_ATTRIBUTE;
+#if !defined(KWS_ZH_INPUT_VSI) && !defined(KWS_ZH_INPUT_UART)
 static KaldiFbank s_fbank;
+#endif
 
 /** Validate the fixed checkpoint contract before accessing tensors. */
 static bool CheckModel(const fwk::et::EtModel& model)
@@ -37,6 +49,7 @@ static bool CheckModel(const fwk::et::EtModel& model)
 }
 
 /** Process static PCM clips with overlapping, independently evaluated windows. */
+#if !defined(KWS_ZH_INPUT_VSI) && !defined(KWS_ZH_INPUT_UART)
 static bool Process(fwk::et::EtModel& model, const std::vector<std::string>& labels)
 {
     Profiler profiler{"kws_zh"};
@@ -76,7 +89,7 @@ static bool Process(fwk::et::EtModel& model, const std::vector<std::string>& lab
             if (!scores) {
                 return false;
             }
-#if KWS_ZH_DUMP_OUTPUT
+#    if KWS_ZH_DUMP_OUTPUT
             for (size_t frame = 0; frame < KaldiFbank::kFrames; ++frame) {
                 info("KWS_ZH score clip=%zu start=%zu frame=%zu value0=%.9f value1=%.9f\n",
                      clip,
@@ -85,7 +98,7 @@ static bool Process(fwk::et::EtModel& model, const std::vector<std::string>& lab
                      scores[frame * 2],
                      scores[frame * 2 + 1]);
             }
-#endif
+#    endif
             profiler.StartProfiling("WakeWordDecode");
             const auto events = decoder.Decode(scores, KaldiFbank::kFrames, start, count);
             profiler.StopProfiling();
@@ -127,6 +140,7 @@ static bool Process(fwk::et::EtModel& model, const std::vector<std::string>& lab
     model.LogMemoryUsage();
     return clip > 0;
 }
+#endif
 } // namespace arm::app::kws_zh
 
 void MainLoop()
@@ -147,6 +161,17 @@ void MainLoop()
         return;
     }
     info("WeKWS Chinese KWS: Fbank 40, 25/10 ms, 198 frames, PCM16 scale\n");
+#if defined(KWS_ZH_INPUT_VSI)
+    const bool success = kws_zh::ProcessVsi(model, labels);
+#elif defined(KWS_ZH_INPUT_UART)
+    const bool success = kws_zh::ProcessFile(model, labels);
+#else
     const bool success = kws_zh::Process(model, labels);
+#endif
     info("Main loop terminated %s.\n", success ? "successfully" : "with failure");
+#if defined(KWS_ZH_INPUT_VSI)
+    if (success) {
+        fvp_audio::HoldResult();
+    }
+#endif
 }
