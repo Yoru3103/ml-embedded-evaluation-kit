@@ -42,12 +42,7 @@ bool AsrZhOpProfiler::PrintStage(const char* name, uint64_t cycles)
     return true;
 }
 
-bool AsrZhOpProfiler::Print(size_t chunk,
-                            size_t chunks,
-                            uint64_t pre,
-                            uint64_t invoke,
-                            uint64_t post,
-                            uint64_t stateCopy) const
+bool AsrZhOpProfiler::Validate(uint64_t invoke) const
 {
     const auto& quantize    = Get(Operation::QUANTIZE);
     const auto& npu         = Get(Operation::ETHOS_U);
@@ -64,6 +59,23 @@ bool AsrZhOpProfiler::Print(size_t chunk,
                    invoke);
         return false;
     }
+    return true;
+}
+
+bool AsrZhOpProfiler::Print(size_t chunk,
+                            size_t chunks,
+                            uint64_t pre,
+                            uint64_t invoke,
+                            uint64_t post,
+                            uint64_t stateCopy) const
+{
+    if (!Validate(invoke)) {
+        return false;
+    }
+    const auto& quantize    = Get(Operation::QUANTIZE);
+    const auto& npu         = Get(Operation::ETHOS_U);
+    const auto& dequantize  = Get(Operation::DEQUANTIZE);
+    const uint64_t measured = quantize.cycles + npu.cycles + dequantize.cycles;
     info("ASR_ZH timing: chunk=%zu/%zu cpu_hz=%" PRIu32 "\n",
          chunk + 1,
          chunks,

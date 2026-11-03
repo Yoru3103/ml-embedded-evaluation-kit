@@ -649,13 +649,6 @@ bool EtModel::ReadTensorQuantParams(executorch::aten::ScalarType scalarType,
         }
         return true;
     }
-#if defined(ASR_ZH_RESCALE_PROBE)
-    if (std::strcmp(tensorKind, "output") == 0 && index >= 75 && index <= 78) {
-        // The rescale probe exports internal values only for raw-byte inspection.
-        params = {1.0f, 0};
-        return true;
-    }
-#endif
     printf_err("Missing or invalid %s tensor %zu quantization configuration\n", tensorKind, index);
     return false;
 }

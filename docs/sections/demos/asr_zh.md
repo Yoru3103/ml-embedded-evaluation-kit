@@ -51,6 +51,12 @@ WAV 必须为 16 kHz、单声道、PCM16，最长 30 秒。识别结果在终端
 
 板端仅输出汇总，不逐块打印计时。更新计时功能后需重新加载 FPGA 固件。
 
+现有演示命令无需增加参数。`asr_zh_TIMING_OUTPUT` 默认 `AUTO`：开启 CPU profiling
+时，UART 输入选择 `SUMMARY`，静态输入选择 `DETAILED`；未开启 profiling 时选择 `OFF`。
+也可在 CMake 中显式选择 `OFF`、`SUMMARY` 或 `DETAILED`；后两者需要
+`CPU_PROFILE_ENABLED=ON`。汇总的端侧耗时为状态准备、前处理、推理、解码和状态回传
+的计时总和，排除 UART、LCD、验证和转储。详细模式保留每块 Q/NPU/DQ 等阶段输出。
+
 - FVP AXF：`build/fvp-audio/asr_zh/bin/mlek_asr_zh.axf`
 - FPGA AXF：`build/fpga-file/asr_zh/bin/mlek_asr_zh.axf`
 - FPGA 三份 BIN：`build/fpga-file/asr_zh/bin/sectors/asr_zh/`

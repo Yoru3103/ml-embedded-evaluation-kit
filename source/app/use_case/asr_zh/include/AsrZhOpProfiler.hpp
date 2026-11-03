@@ -63,6 +63,7 @@ public:
         }
     }
 
+    bool Validate(uint64_t invoke) const;
     bool Print(size_t chunk,
                size_t chunks,
                uint64_t pre,

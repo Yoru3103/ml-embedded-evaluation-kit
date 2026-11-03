@@ -73,12 +73,7 @@ namespace {
     bool BindStates(fwk::et::EtModel& model, StreamingState& states)
     {
         using fwk::iface::TensorType;
-        const bool expectedOutputs = model.GetNumOutputs() == 75
-#if defined(ASR_ZH_RESCALE_PROBE)
-                                     || model.GetNumOutputs() == 79
-#endif
-            ;
-        if (model.GetNumInputs() != 75 || !expectedOutputs) {
+        if (model.GetNumInputs() != 75 || model.GetNumOutputs() != 75) {
             return false;
         }
         const auto in  = model.GetInputTensor(0);
@@ -89,8 +84,11 @@ namespace {
             return false;
         }
         for (size_t slot = 1; slot <= StreamingState::kCount; ++slot) {
-            const auto input     = model.GetInputTensor(slot);
-            const auto output    = model.GetOutputTensor(slot);
+            const auto input  = model.GetInputTensor(slot);
+            const auto output = model.GetOutputTensor(slot);
+            if (!input || !output) {
+                return false;
+            }
             const bool quantized = ASR_ZH_INT8_STATE && slot != 74;
             const auto type =
                 slot == 74 ? TensorType::INT32 : (quantized ? TensorType::INT8 : TensorType::FP32);
@@ -123,10 +121,10 @@ namespace {
         return true;
     }
 
-    void PrintValidation(fwk::et::EtModel& model,
-                         size_t chunk,
-                         const float* features,
-                         const CtcDecoder& decoder)
+    [[maybe_unused]] void PrintValidation(fwk::et::EtModel& model,
+                                          size_t chunk,
+                                          const float* features,
+                                          const CtcDecoder& decoder)
     {
         info("ASR_ZH_PATH chunk=%zu", chunk);
         const auto& path = decoder.Path();
@@ -212,6 +210,9 @@ bool ProcessAudio(fwk::et::EtModel& model)
         CtcDecoder decoder{assets::kTokens, 1000};
         if (!states.Reset() || !s_fbank.Begin(pcm, count)) {
             success = false;
+#if defined(ASR_ZH_INPUT_VSI) || defined(ASR_ZH_INPUT_UART)
+            CompleteDemoClip(false);
+#endif
             break;
         }
         const uint64_t setup = Cycles() - setupBegin;
@@ -219,12 +220,15 @@ bool ProcessAudio(fwk::et::EtModel& model)
         float* features      = input->GetData<float>();
         size_t chunk         = 0;
         uint64_t total       = setup;
-        const size_t chunks  = (s_fbank.Frames() + KaldiFbank::kAdvance - 1) / KaldiFbank::kAdvance;
-        uint64_t totalPre = 0, totalInvoke = 0, totalPost = 0, totalCopy = 0;
+        [[maybe_unused]] const size_t chunks =
+            (s_fbank.Frames() + KaldiFbank::kAdvance - 1) / KaldiFbank::kAdvance;
+        [[maybe_unused]] uint64_t totalPre = 0, totalInvoke = 0, totalPost = 0, totalCopy = 0;
 #if ASR_ZH_PROFILE
-        uint64_t totalQuantize = 0, totalNpu = 0, totalDequantize = 0;
+        [[maybe_unused]] uint64_t totalQuantize = 0, totalNpu = 0, totalDequantize = 0;
+#    if ASR_ZH_TIMING_DETAILED
         info("ASR_ZH timing: CPU elapsed cycles; NPU.Driver includes submission/wait; "
              "UART/display/validation/dump excluded\n");
+#    endif
 #endif
         while (chunk * KaldiFbank::kAdvance < s_fbank.Frames()) {
 #if ASR_ZH_FIXED_FEATURES
@@ -257,17 +261,17 @@ bool ProcessAudio(fwk::et::EtModel& model)
             g_profiler->Stop();
 #endif
             if (!invoked) {
-#if ASR_ZH_PROFILE
-                using Operation           = AsrZhOpProfiler::Operation;
-                const uint64_t quantize   = g_profiler->Get(Operation::QUANTIZE).cycles;
-                const uint64_t npu        = g_profiler->Get(Operation::ETHOS_U).cycles;
-                const uint64_t dequantize = g_profiler->Get(Operation::DEQUANTIZE).cycles;
-                const uint64_t measured   = quantize + npu + dequantize;
                 printf_err("ASR_ZH_FAILED clip=%zu chunk=%zu stage=Invoke "
                            "completed_chunks=%zu\n",
                            clips,
                            chunk + 1,
                            chunk);
+#if ASR_ZH_TIMING_DETAILED
+                using Operation           = AsrZhOpProfiler::Operation;
+                const uint64_t quantize   = g_profiler->Get(Operation::QUANTIZE).cycles;
+                const uint64_t npu        = g_profiler->Get(Operation::ETHOS_U).cycles;
+                const uint64_t dequantize = g_profiler->Get(Operation::DEQUANTIZE).cycles;
+                const uint64_t measured   = quantize + npu + dequantize;
                 AsrZhOpProfiler::PrintStage("Failed.Pre", pre);
                 AsrZhOpProfiler::PrintStage("Failed.Q", quantize);
                 AsrZhOpProfiler::PrintStage("Failed.NPU", npu);
@@ -323,7 +327,12 @@ bool ProcessAudio(fwk::et::EtModel& model)
             totalQuantize += g_profiler->Get(Operation::QUANTIZE).cycles;
             totalNpu += g_profiler->Get(Operation::ETHOS_U).cycles;
             totalDequantize += g_profiler->Get(Operation::DEQUANTIZE).cycles;
-            if (!g_profiler->Print(chunk, chunks, pre, invoke, post, copy)) {
+#    if ASR_ZH_TIMING_DETAILED
+            const bool validTiming = g_profiler->Print(chunk, chunks, pre, invoke, post, copy);
+#    else
+            const bool validTiming = g_profiler->Validate(invoke);
+#    endif
+            if (!validTiming) {
                 success = false;
                 break;
             }
@@ -334,7 +343,21 @@ bool ProcessAudio(fwk::et::EtModel& model)
         const std::string text    = decoder.Text();
         const uint64_t textCycles = Cycles() - textBegin;
         total += textCycles;
-#if ASR_ZH_PROFILE
+#if ASR_ZH_TIMING_SUMMARY
+        const uint64_t frequency = get_mps4_core_clock();
+        if (frequency) {
+            const auto toUs = [frequency](uint64_t cycles) {
+                return cycles / frequency * 1000000ULL +
+                       cycles % frequency * 1000000ULL / frequency;
+            };
+            printf("ASR_ZH_TIMING end_to_end_us=%" PRIu64 " npu_us=%" PRIu64 "\n",
+                   toUs(total),
+                   toUs(totalNpu));
+        } else {
+            success = false;
+        }
+#endif
+#if ASR_ZH_TIMING_DETAILED
         info(
             "ASR_ZH timing: summary chunks=%zu cpu_hz=%" PRIu32 "\n", chunk, get_mps4_core_clock());
         AsrZhOpProfiler::PrintStage("Clip.Setup", setup);
@@ -344,9 +367,10 @@ bool ProcessAudio(fwk::et::EtModel& model)
         AsrZhOpProfiler::PrintStage("Dequantize", totalDequantize);
         const uint64_t measured = totalQuantize + totalNpu + totalDequantize;
         if (measured > totalInvoke) {
-            return false;
+            success = false;
         }
-        AsrZhOpProfiler::PrintStage("Invoke.Other", totalInvoke - measured);
+        AsrZhOpProfiler::PrintStage("Invoke.Other",
+                                    totalInvoke >= measured ? totalInvoke - measured : 0);
         AsrZhOpProfiler::PrintStage("Postprocess", totalPost + textCycles);
         AsrZhOpProfiler::PrintStage("State.Copy", totalCopy);
         AsrZhOpProfiler::PrintStage("Decode.Final", textCycles);
@@ -354,20 +378,20 @@ bool ProcessAudio(fwk::et::EtModel& model)
         AsrZhOpProfiler::PrintStage("Pipeline.Total", total);
 #endif
         info("ASR_ZH_TEXT clip=%zu chunks=%zu text=%s\n", clips, chunk, text.c_str());
+#if !defined(ASR_ZH_INPUT_UART) || ASR_ZH_TIMING_DETAILED
         info("ASR_ZH_TOTAL samples=%u cycles=%" PRIu64 " text_cycles=%" PRIu64
              " computed_feature_frames=%zu\n",
              count,
              total,
              textCycles,
              s_fbank.ComputedFrames());
+#endif
 #if ASR_ZH_VALIDATE && !ASR_ZH_FIXED_FEATURES
         info("ASR_ZH_TEXT_REFERENCE match=%d\n", text == assets::kExpectedText);
         success = success && text == assets::kExpectedText;
 #endif
 #if defined(ASR_ZH_INPUT_VSI) || defined(ASR_ZH_INPUT_UART)
-        if (success) {
-            CompleteDemoClip();
-        }
+        CompleteDemoClip(success);
 #endif
         ++clips;
         if (!success) {
