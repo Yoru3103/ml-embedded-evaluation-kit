@@ -48,13 +48,15 @@ PCM16, zero-padded after the valid sample count:
 | magic | uint32 | `0x41554431` |
 | firstSample | uint64 | Absolute source sample offset, starting at zero |
 | samples | uint32 | Valid samples, 0 through 320 |
-| flags | uint32 | EOS=1, DISCONTINUITY=2, ERROR=4 |
+| flags | uint32 | EOS=1, DISCONTINUITY=2, ERROR=4, AUTO_UTTERANCES=8, WAITING=16 |
 | backlogSamples | uint32 | Valid queued samples after this block was removed |
 
 Divide `firstSample` by 16000 for source-relative seconds. Header fields are
 explicitly serialized; do not transmit a native C struct with padding. Unknown
 flags, out-of-range unsigned values and sample-interval overflow are rejected.
-ERROR requires EOS; a zero-sample block requires EOS. A final zero-sample EOS
+ERROR requires EOS; a zero-sample block requires EOS or standalone WAITING.
+Button capture uses WAITING while the recording controls are open; these blocks
+do not advance the source position or count toward the utterance limit. A final zero-sample EOS
 follows all valid samples, including a short final block. The server closes its
 connection after EOS. The bridge caches terminal state for further target pulls.
 

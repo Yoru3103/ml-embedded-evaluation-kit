@@ -17,6 +17,8 @@ MAGIC = 0x41554431
 EOS = 1
 DISCONTINUITY = 2
 ERROR = 4
+AUTO_UTTERANCES = 8
+WAITING = 16
 AUTHKEY = b"fvp_audio_demo"
 REQUEST = b"NEXT"
 HEADER = struct.Struct("<IQIII")
@@ -47,14 +49,16 @@ class AudioBlock:
             raise ValueError("flags must be a representable uint32")
         if len(self.pcm) % 2 or len(self.pcm) > BLOCK_BYTES:
             raise ValueError("PCM must contain at most 320 complete PCM16 samples")
-        if self.flags & ~(EOS | DISCONTINUITY | ERROR):
+        if self.flags & ~(EOS | DISCONTINUITY | ERROR | AUTO_UTTERANCES | WAITING):
             raise ValueError("Unknown audio flags")
         if self.flags & ERROR and not self.flags & EOS:
             raise ValueError("ERROR requires EOS")
         if self.first_sample + self.samples >= 1 << 64:
             raise ValueError("Audio interval exceeds uint64 sample positions")
-        if not self.samples and not self.flags & EOS:
-            raise ValueError("Empty block requires EOS")
+        if self.flags & WAITING and (self.samples or self.flags != WAITING):
+            raise ValueError("WAITING requires an empty standalone status block")
+        if not self.samples and not self.flags & (EOS | WAITING):
+            raise ValueError("Empty block requires EOS or WAITING")
         return HEADER.pack(MAGIC, self.first_sample, self.samples, self.flags,
                            self.backlog_samples) + self.pcm.ljust(BLOCK_BYTES, b"\0")
 

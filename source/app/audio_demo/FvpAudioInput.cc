@@ -35,9 +35,11 @@ bool Read(Block& block)
     block.samples        = ARM_VSI0->Regs[4];
     block.flags          = ARM_VSI0->Regs[5];
     block.backlogSamples = ARM_VSI0->Regs[6];
-    if (block.samples > kBlockSamples || (block.flags & ~(EOS | DISCONTINUITY)) ||
+    if (block.samples > kBlockSamples ||
+        (block.flags & ~(EOS | DISCONTINUITY | AUTO_UTTERANCES | WAITING)) ||
         block.firstSample > std::numeric_limits<uint64_t>::max() - block.samples ||
-        (block.samples == 0 && !(block.flags & EOS))) {
+        (block.samples == 0 && !(block.flags & (EOS | WAITING))) ||
+        ((block.flags & WAITING) && (block.samples != 0 || block.flags != WAITING))) {
         return false;
     }
     if (block.samples == 0) {

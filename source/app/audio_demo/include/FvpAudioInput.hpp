@@ -10,10 +10,12 @@
 #include <cstdint>
 
 namespace arm::app::fvp_audio {
-constexpr size_t kBlockSamples   = 320;
-constexpr uint32_t EOS           = 1;
-constexpr uint32_t DISCONTINUITY = 2;
-constexpr uint32_t ERROR         = 4;
+constexpr size_t kBlockSamples     = 320;
+constexpr uint32_t EOS             = 1;
+constexpr uint32_t DISCONTINUITY   = 2;
+constexpr uint32_t ERROR           = 4;
+constexpr uint32_t AUTO_UTTERANCES = 8;
+constexpr uint32_t WAITING         = 16;
 
 struct Block {
     uint64_t firstSample{0};

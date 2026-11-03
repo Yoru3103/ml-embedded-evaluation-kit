@@ -13,7 +13,7 @@ import wave
 from audio_level_gate import LevelGate
 
 from fvp_audio_demo_vsi.protocol import (
-    AudioBlock, BLOCK_SAMPLES, DISCONTINUITY, EOS, ERROR, SAMPLE_RATE,
+    AudioBlock, AUTO_UTTERANCES, BLOCK_SAMPLES, DISCONTINUITY, EOS, ERROR, SAMPLE_RATE, WAITING,
 )
 
 
@@ -122,10 +122,17 @@ class AudioSource:
 
     def pull(self) -> AudioBlock:
         """Start acquisition exactly once and block until the next source interval."""
+        if (getattr(self.options, "record_utterance", False)
+                and getattr(self.options, "recorded_pcm", None) is None):
+            self.stop.wait(0.02)
+            return AudioBlock(self.position, flags=WAITING)
         if self.thread is None:
             self.thread = threading.Thread(target=self._produce, name="audio-source", daemon=True)
             self.thread.start()
-        return self.queue.get()
+        block = self.queue.get()
+        if getattr(self.options, "auto_utterances", False):
+            block = replace(block, flags=block.flags | AUTO_UTTERANCES)
+        return block
 
     def close(self):
         """Stop acquisition and wake a WAV producer blocked by queue backpressure."""

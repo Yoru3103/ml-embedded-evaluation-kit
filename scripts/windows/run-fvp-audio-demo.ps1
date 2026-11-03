@@ -9,6 +9,7 @@ param(
     [Parameter(ParameterSetName='Microphone')][int]$Device,
     [Parameter(ParameterSetName='Microphone')][ValidateRange(-90, -1)][double]$VadDbfs,
     [Parameter(ParameterSetName='Microphone')][switch]$LevelMeter,
+    [Parameter(ParameterSetName='Microphone')][switch]$AutoVad,
     [Parameter(ParameterSetName='Wav')][switch]$Realtime,
     [ValidateRange(1, 65535)][int]$Port = 6010,
     [ValidateRange(20, 60000)][int]$QueueMs,
@@ -75,7 +76,10 @@ $bridge = Resolve-DemoPath 'scripts/py/fvp_audio_demo_vsi'
 $hostArguments = @($hostScript, '--port', "$Port", '--queue-ms', "$QueueMs")
 if ($Microphone) {
     $hostArguments += '--microphone'
-    if ($UseCase -eq 'asr_zh') { $hostArguments += '--record-utterance' }
+    if ($AutoVad -and $UseCase -ne 'asr_zh') { throw '-AutoVad applies only to Chinese ASR.' }
+    if ($UseCase -eq 'asr_zh') {
+        $hostArguments += $(if ($AutoVad) { '--auto-utterances' } else { '--record-utterance' })
+    }
     if ($UseCase -eq 'asr' -and $PSBoundParameters.ContainsKey('VadDbfs')) {
         $hostArguments += @('--vad-dbfs', $VadDbfs.ToString([Globalization.CultureInfo]::InvariantCulture))
     } elseif ($PSBoundParameters.ContainsKey('VadDbfs')) {

@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 使用当前 INT8 状态 Zipformer、U85-1024、Dedicated SRAM 768 KiB。
 沿用已有模型及数值表现；替换兼容 PTE 后重新构建即可。
 
-## FVP：WAV 或按键录音
+## FVP：WAV、按键录音或自动分句
 
 ```powershell
 .\scripts\windows\build-fvp-audio-demo.ps1 -UseCase asr_zh
@@ -26,9 +26,21 @@ SPDX-License-Identifier: Apache-2.0
 整句录音通过已有 VSI0＋DMA 链路送入 FVP；不使用能量门控、降噪或额外滤波。
 需要指定麦克风时加 `-Device <编号>`。每次录音最长 30 秒。
 
+自动收音分句（可选，识别后继续收听）：
+
+```powershell
+.\scripts\windows\run-fvp-audio-demo.ps1 -UseCase asr_zh -Microphone -AutoVad
+```
+
+自动模式复用英文 ASR 的原始 PCM 能量检测：RMS 800 起句、400 延续，
+连续 120 ms 启动，保留 600 ms 前缓存，1 秒静音断句，至少 250 ms 有效语音。
+不置零、不降噪或额外滤波。推理期间继续采集，默认缓存 30 秒；
+若缓存溢出或采集丢块，会丢弃不完整句段并重新积累上下文。
+按键模式仍为不带 `-AutoVad` 的命令，WAV 仍整文件处理。
+
 WAV 必须为 16 kHz、单声道、PCM16，最长 30 秒。识别结果在终端的
 `ASR_ZH_TEXT ... text=...` 行显示中文；LCD 显示处理状态和结果提示。
-结果保持到按 Q／Ctrl+C 退出，再次运行命令可识别另一句。
+结果保持到按 Q／Ctrl+C 退出；自动模式识别完继续接收下一句，按键／WAV 模式重新运行识别另一句。
 这是完整句子输入、内部增量推理的演示，尚非边录音边输出文字。
 
 ## FPGA：文件上传

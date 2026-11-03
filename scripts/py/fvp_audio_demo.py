@@ -17,6 +17,7 @@ import math
 from multiprocessing.connection import Connection, Listener
 from pathlib import Path
 import sys
+import threading
 from typing import Optional
 
 from fvp_audio_demo_sources import AudioSource, list_devices, sounddevice_module
@@ -39,6 +40,8 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--device", type=int, help="sounddevice input device index")
     parser.add_argument("--record-utterance", action="store_true",
                         help="record one sentence with Start/Stop buttons before sending")
+    parser.add_argument("--auto-utterances", action="store_true",
+                        help="Chinese ASR continuous raw microphone with target-side VAD")
     parser.add_argument("--vad-dbfs", type=float, help="microphone start energy gate in dBFS")
     parser.add_argument("--level-meter", action="store_true",
                         help="print microphone RMS once a second")
@@ -48,6 +51,9 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                         help="bounded audio queue; >=20 ms, rounded down to 20 ms blocks")
     parser.add_argument("--duration", type=float, help="maximum acquired audio seconds")
     options = parser.parse_args(argv)
+    if options.auto_utterances and (not options.microphone or options.record_utterance
+                                    or options.vad_dbfs is not None):
+        parser.error("--auto-utterances requires raw microphone without button recording")
     if options.record_utterance and not options.microphone:
         parser.error("--record-utterance requires --microphone")
     if options.vad_dbfs is not None and (
@@ -114,12 +120,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             with Listener(("127.0.0.1", options.port), authkey=AUTHKEY) as listener:
                 print(f"Audio listening on 127.0.0.1:{options.port}; capture starts on NEXT",
                       flush=True)
-                if options.record_utterance:
-                    # Tk and all recording controls remain on the main thread.
-                    options.recorded_pcm = record_utterance(
-                        sounddevice_module(), options.device,
-                        min(options.duration or 30, 30), source.stop)
                 with listener.accept() as connection:
+                    if options.record_utterance:
+                        # Service idle pulls while Tk remains on the main thread.
+                        result = []
+                        worker = threading.Thread(
+                            target=lambda: result.append(serve_connection(connection, source)),
+                            name="audio-button-server", daemon=True)
+                        worker.start()
+                        try:
+                            options.recorded_pcm = record_utterance(
+                                sounddevice_module(), options.device,
+                                min(options.duration or 30, 30), source.stop)
+                            while worker.is_alive():
+                                worker.join(timeout=0.1)
+                            return 0 if result and result[0] else 1
+                        finally:
+                            source.close()
                     return 0 if serve_connection(connection, source) else 1
         finally:
             source.close()
