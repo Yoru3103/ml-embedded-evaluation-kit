@@ -27,7 +27,9 @@ namespace {
     Window s_window;
     KaldiFbank s_streamFbank;
     static uint8_t s_wave[300 * 75 * 3] IFM_BUF_ATTRIBUTE;
-    const char* s_status = nullptr;
+    const char* s_status     = nullptr;
+    bool s_greeting          = false;
+    uint32_t s_greetingStart = 0;
 
     void Text(const char* text, uint32_t y, uint16_t color = COLOR_WHITE)
     {
@@ -82,10 +84,21 @@ namespace {
 
     void ShowGreeting(const char* eventText)
     {
-        /* Render only on a new detection. Waveform and gap updates leave this intact. */
+        s_greeting      = true;
+        s_greetingStart = fvp_audio::HostTimeMs();
         hal_display_show_box(0, 120, 320, 60, COLOR_BLACK);
         Text("NI HAO! ^_^", 120, COLOR_YELLOW);
         Text(eventText, 165, COLOR_YELLOW);
+    }
+
+    void UpdateGreeting()
+    {
+        if (s_greeting && uint32_t(fvp_audio::HostTimeMs() - s_greetingStart) >= 2000U) {
+            s_greeting = false;
+            // Keep the last trigger and timestamp on the separate row below.
+            hal_display_show_box(0, 120, 320, 45, COLOR_BLACK);
+            Text("Say Nihao Wenwen", 150);
+        }
     }
 } // namespace
 
@@ -111,7 +124,8 @@ bool ProcessVsi(fwk::et::EtModel& model, const std::vector<std::string>& labels)
     char eventText[80] = "Listening - warming up...";
     s_window.Reset(0);
     hal_display_clear(COLOR_BLACK);
-    s_status = nullptr;
+    s_status   = nullptr;
+    s_greeting = false;
     hal_display_show_box(0, 0, 320, 15, COLOR_BLACK);
     Text("Chinese KWS | live VSI", 0);
     Text("Timestamp = detector trigger", 215);
@@ -120,6 +134,7 @@ bool ProcessVsi(fwk::et::EtModel& model, const std::vector<std::string>& labels)
     ShowWave(s_window, 0, false, 0);
     info("KWS_VSI_READY sample_rate=16000 block=320 hop=%zu\n", hopSamples);
     while (fvp_audio::Read(block)) {
+        UpdateGreeting();
         const bool gap             = (block.flags & fvp_audio::DISCONTINUITY) ||
                                      (started && block.firstSample != expectedSample);
         const bool enteredRecovery = recovery.Observe(gap, block.samples);
@@ -184,7 +199,12 @@ bool ProcessVsi(fwk::et::EtModel& model, const std::vector<std::string>& labels)
             ShowWave(s_window, lastEventSample, hasEvent, block.backlogSamples);
             lastDisplaySample = expectedSample;
         }
+        UpdateGreeting();
         if (eos) {
+            // A final WAV event must also expire after EOF, without new audio pulls.
+            while (s_greeting) {
+                UpdateGreeting();
+            }
             info("AUDIO_EOS sample=%" PRIu64 "\n", expectedSample);
             fvp_audio::Close();
             return true;

@@ -71,6 +71,9 @@ connection after EOS. The bridge caches terminal state for further target pulls.
    `Regs[7]=1` immediately before returning the payload to the model.
 5. Poll register 7, then stop timer and DMA and consume only `samples` PCM values.
 
+Register 8 exposes host monotonic milliseconds modulo 2^32, independent of FVP
+simulation speed. KWS uses it for the two-second greeting timeout.
+
 Further DMA reads without a new pull return zero padding, never replayed audio.
 Network failures print an actionable host-start command and publish ERROR|EOS
 with zero valid samples. Source failures propagate ERROR|EOS and print their

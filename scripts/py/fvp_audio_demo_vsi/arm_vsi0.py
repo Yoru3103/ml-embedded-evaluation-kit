@@ -15,6 +15,7 @@ from multiprocessing import AuthenticationError
 from multiprocessing.connection import Client, Connection
 import os
 import sys
+import time
 from typing import Optional
 
 if __package__:
@@ -118,6 +119,8 @@ def wrDataDMA(unused_data: bytearray, unused_size: int):
 
 def rdRegs(index: int) -> int:
     """Read model user-register state, including DMA completion."""
+    if index == 8:
+        return int(time.monotonic() * 1000) & 0xFFFFFFFF
     return Regs[index]
 
 

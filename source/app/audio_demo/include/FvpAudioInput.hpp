@@ -33,5 +33,7 @@ bool Read(Block& block);
 void Close();
 /** Keep the last LCD result alive after EOS until the host stops FVP. */
 void HoldResult();
+/** Host monotonic milliseconds, modulo 2^32; independent of simulation speed. */
+uint32_t HostTimeMs();
 } // namespace arm::app::fvp_audio
 #endif

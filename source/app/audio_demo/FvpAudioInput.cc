@@ -72,6 +72,9 @@ void Close()
     ARM_VSI0->Regs[0]       = 0;
 }
 
+uint32_t HostTimeMs()
+{ return ARM_VSI0->Regs[8]; }
+
 void HoldResult()
 {
     for (;;) {

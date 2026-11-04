@@ -56,7 +56,7 @@ Set-Location C:\Users\MC\Documents\mlek-client\ml-embedded-evaluation-kit
 看到 `KWS_VSI_READY` 后，对着麦克风说“你好问问”；等待检测结果，再进行下一次输入。
 现场提示只显示 `Say Nihao Wenwen`。
 终端的 `WAKE` 行包含关键词、分数、触发时间和队列时长。时间按源音频采样位置换算，
-表示检测器触发时刻。LCD 的问候与最近结果保持到下一次检测成功。
+表示检测器触发时刻。FVP 的 LCD 问候显示约 2 秒后恢复 `Say Nihao Wenwen`，最近触发时间保留；再次检测成功时重新显示问候。
 
 WAV 要求单声道、16 kHz、PCM16。麦克风由主机直接按该格式采集。
 KWS 使用约 1.995 秒上下文，每前进 1 秒做一次推理，主机队列默认 5 秒。
