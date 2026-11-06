@@ -1,5 +1,10 @@
 # Model export tooling
 
+For a copyable trainer-facing QR `.pt → quantized.pt2` bundle, see
+[`trainer_pt2/`](trainer_pt2/README.md). It packages the native OBB adapter,
+calibration, validation, cache report and pinned Linux/WSL requirements without
+the PTE compiler command.
+
 Run commands from the repository root. The supported unified entry point stays at
 `scripts/export_model.py`; the implementation is grouped by responsibility below.
 
