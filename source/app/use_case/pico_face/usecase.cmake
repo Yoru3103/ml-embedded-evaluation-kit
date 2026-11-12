@@ -26,6 +26,11 @@ USER_OPTION(pico_face_CLASS_ID "Class 0..3, unconditional 4" 1 STRING)
 USER_OPTION(pico_face_GUIDANCE "Classifier-free guidance scale" 4.0 STRING)
 USER_OPTION(pico_face_SAVE_IMAGE "Save RGB via C stdio; enable only with semihosting" OFF BOOL)
 USER_OPTION(pico_face_UART_IMAGE "Serve RGB frames over the FPGA UART after generation" OFF BOOL)
+USER_OPTION(pico_face_PREVIEW "Export the eight-step FVP preview sequence" OFF BOOL)
+if (pico_face_PREVIEW AND (NOT pico_face_SAVE_IMAGE OR FPGA_PLATFORM_SSE_320 OR
+    NOT pico_face_STEPS STREQUAL "8"))
+    message(FATAL_ERROR "pico_face_PREVIEW requires eight-step FVP image output")
+endif()
 if (pico_face_UART_IMAGE AND (SEMIHOSTING_ENABLED OR NOT FPGA_PLATFORM_SSE_320))
     message(FATAL_ERROR "pico_face_UART_IMAGE requires FPGA with semihosting OFF")
 endif()
@@ -49,6 +54,7 @@ set(${use_case}_COMPILE_DEFS
     "PICO_FACE_CLASS_ID=${pico_face_CLASS_ID}"
     "PICO_FACE_GUIDANCE=${pico_face_GUIDANCE}"
     "PICO_FACE_SAVE_IMAGE=$<BOOL:${pico_face_SAVE_IMAGE}>"
+    "PICO_FACE_PREVIEW=$<BOOL:${pico_face_PREVIEW}>"
     "PICO_FACE_UART_IMAGE=$<BOOL:${pico_face_UART_IMAGE}>"
     "PICO_FACE_TEMP_BASE=${ML_FWK_TMP_MEM_BASE}"
     "PICO_FACE_TEMP_SIZE=${ML_FWK_TMP_MEM_SIZE}")

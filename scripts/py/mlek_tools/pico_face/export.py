@@ -9,6 +9,8 @@ import os
 import struct
 from pathlib import Path
 
+from mlek_tools.pico_face.checkpoints import PICO_FACES_FILES
+
 
 def scratch_sizes(data: bytes) -> dict[str, int]:
     """Read per-method scratch sizes from the serialized Vela blocks."""
@@ -39,14 +41,15 @@ def main():
     """Export U85 Z1024 with the requested SRAM memory mode."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoints", type=Path, required=True,
-                        help="Directory containing m3_long_cfg checkpoint files")
+                        help="Parent directory of the model variant checkpoint directory")
+    parser.add_argument("--variant", choices=PICO_FACES_FILES, default="m3_long_cfg")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--vela-config", type=Path, required=True)
     parser.add_argument("--memory-mode", choices=("Dedicated_Sram", "Shared_Sram"),
                         default="Dedicated_Sram")
     args = parser.parse_args()
     os.environ["PICO_FACES_CHECKPOINTS"] = str(args.checkpoints.resolve())
-    os.environ["PICO_FACES_VARIANT"] = "m3_long_cfg"
+    os.environ["PICO_FACES_VARIANT"] = args.variant
     os.environ["PICO_FACES_QUANT"] = "a16w8"
     os.environ["PICO_FACES_DECODE_QUANT"] = "a8w8"
     os.environ["PICO_FACES_CALIB_SEEDS"] = "16"

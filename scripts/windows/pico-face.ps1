@@ -7,14 +7,19 @@ param(
     [ValidateSet('ATFE', 'GNU')][string]$Toolchain = 'ATFE',
     [ValidateSet('FVP', 'FPGA')][string]$Target = 'FVP',
     [ValidateSet('Dedicated_Sram', 'Shared_Sram')][string]$MemoryMode = 'Dedicated_Sram',
+    [ValidateSet('m3_long_cfg', 'm3_decD_deep_full')][string]$Variant = 'm3_long_cfg',
     [string]$CompilerBin,
     [string]$ExportPython,
     [string]$Checkpoints,
     [string]$BuildDirectory,
     [string]$FvpExecutable,
     [switch]$UartImage,
+    [switch]$Preview,
+    [switch]$Headless,
+    [string]$PreviewPython = 'python',
+    [ValidateRange(1, 3600)][int]$TimeoutSeconds = 180,
     [int]$Jobs = 4,
-    [int]$Seed = 3,
+    [uint32]$Seed = 3,
     [ValidateSet(1, 2, 4, 8)][int]$Steps = 4,
     [ValidateRange(0, 4)][int]$ClassId = 1,
     [ValidateRange(0, 100)][double]$Guidance = 4.0
@@ -24,6 +29,16 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
 if ($UartImage -and $Target -ne 'FPGA') {
     throw '-UartImage requires -Target FPGA.'
 }
+if ($Preview) {
+    if ($Target -ne 'FVP' -or $Action -notin @('Build', 'Run', 'All')) {
+        throw '-Preview requires FVP Build, Run or All.'
+    }
+    if ($PSBoundParameters.ContainsKey('Steps') -and $Steps -ne 8) {
+        throw '-Preview uses eight Euler steps.'
+    }
+    $Steps = 8
+}
+if ($Headless -and -not $Preview) { throw '-Headless requires -Preview.' }
 $sourceClone = Join-Path $repoRoot '../arm-pico-face/CMSIS-Executorch'
 if ($Target -eq 'FPGA' -and $Action -in @('Run', 'All')) {
     throw 'Use Export, Build or Package for FPGA. This script does not flash or run a board.'
@@ -36,16 +51,24 @@ if (-not $FvpExecutable) {
         '.tools/fvp-11.32.23/windows_x86/bin/FVP_Corstone_SSE-320.exe'
 }
 $shared = $MemoryMode -eq 'Shared_Sram'
-$variant = if ($shared) { 'shared' } else { 'dedicated-384k' }
+$memoryTag = if ($shared) { 'shared' } else { 'dedicated-384k' }
 $cacheTag = if ($shared) { 'no-cache' } else { '384k' }
 $cacheBytes = if ($shared) { 0 } else { 393216 }
-$modelDir = Join-Path $repoRoot "resources_downloaded/pico_face/u85-1024-$variant"
+$modelDir = Join-Path $repoRoot "resources_downloaded/pico_face/u85-1024-$memoryTag"
+$quality = $Variant -eq 'm3_decD_deep_full'
+if ($quality) { $modelDir = Join-Path $modelDir $Variant }
+$artifactTag = if ($quality) { "$memoryTag-$Variant" } else { $memoryTag }
 if (-not $ExportPython) { $ExportPython = Join-Path $sourceClone '.venv/Scripts/python.exe' }
-if (-not $Checkpoints) { $Checkpoints = Join-Path $sourceClone 'model/pico_faces' }
+if (-not $Checkpoints) {
+    $Checkpoints = if ($quality) { Join-Path $repoRoot 'resources_downloaded/pico_face/checkpoints' }
+                   else { Join-Path $sourceClone 'model/pico_faces' }
+}
 if (-not $BuildDirectory) {
     $relative = 'build/pico_face/pte/{0}/{1}/{2}/{3}-release-default-pmu' -f `
         $Toolchain.ToLowerInvariant(), $Target.ToLowerInvariant(), `
         $MemoryMode.ToLowerInvariant(), $cacheTag
+    if ($quality) { $relative += "-$Variant" }
+    if ($Preview) { $relative += '-preview' }
     $BuildDirectory = Join-Path $repoRoot $relative
 } elseif (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot $BuildDirectory
@@ -55,7 +78,7 @@ $logRoot = Join-Path $repoRoot 'build/logs/pico_face_logs'
 $buildLogDirectory = Join-Path $logRoot 'build'
 $fvpLogDirectory = Join-Path $logRoot 'fvp'
 New-Item -ItemType Directory -Path $buildLogDirectory, $fvpLogDirectory -Force | Out-Null
-$logTag = '{0}-{1}-seed{2}-steps{3}-{4}' -f $Target.ToLowerInvariant(), $variant, `
+$logTag = '{0}-{1}-seed{2}-steps{3}-{4}' -f $Target.ToLowerInvariant(), $artifactTag, `
     $Seed, $Steps, [DateTime]::Now.ToString('yyyyMMdd_HHmmss_fff')
 $savedPythonPath = $env:PYTHONPATH
 $savedUnbuffered = $env:PYTHONUNBUFFERED
@@ -69,7 +92,7 @@ try {
         }
         & $ExportPython -m mlek_tools.pico_face.export --checkpoints $Checkpoints `
             --output $modelDir --vela-config (Join-Path $repoRoot 'scripts/vela/default_vela.ini') `
-            --memory-mode $MemoryMode 2>&1 |
+            --memory-mode $MemoryMode --variant $Variant 2>&1 |
             Tee-Object -FilePath (Join-Path $buildLogDirectory "export-$logTag.log")
         if ($LASTEXITCODE -ne 0) { throw 'Pico-face export failed.' }
     }
@@ -77,21 +100,23 @@ try {
         $manifest = Get-Content (Join-Path $modelDir 'manifest.json') -Raw | ConvertFrom-Json
         $pte = Join-Path $modelDir 'pico_face.pte'
         $params = Join-Path $modelDir 'PicoFaceParams.hpp'
-        if ($manifest.target -ne 'ethos-u85-1024' -or
+        if ($manifest.variant -ne $Variant -or $manifest.target -ne 'ethos-u85-1024' -or
             $manifest.memory_mode -ne $MemoryMode -or $manifest.cache_bytes -ne $cacheBytes -or
             (Get-FileHash $pte -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.pte_sha256 -or
             (Get-FileHash $params -Algorithm SHA256).Hash.ToLowerInvariant() -ne $manifest.params_sha256) {
             throw 'Model configuration or model/conditioning hashes do not match.'
         }
         $semihosting = if ($Target -eq 'FVP') { 'ON' } else { 'OFF' }
+        $previewOption = if ($Preview) { 'ON' } else { 'OFF' }
         $uartImageOption = if ($UartImage) { 'ON' } else { 'OFF' }
         $tempBase = if ($shared) { '0x31000000' }
                     elseif ($Target -eq 'FPGA') { '0x72000000' } else { '0x94000000' }
         $tempSize = if ($shared) { '0x00200000' } else { '0x00400000' }
-        if ($shared -and (-not $manifest.scratch_bytes -or
-            $manifest.scratch_bytes.dit_step -gt 2097152 -or
-            $manifest.scratch_bytes.decode -gt 2097152)) {
-            throw 'Shared model scratch is missing or exceeds the 2 MiB SRAM budget.'
+        $tempCapacity = if ($shared) { 2MB } else { 4MB }
+        if ((($shared -or $quality) -and -not $manifest.scratch_bytes) -or
+            $manifest.scratch_bytes.dit_step -gt $tempCapacity -or
+            $manifest.scratch_bytes.decode -gt $tempCapacity) {
+            throw "Model scratch is missing or exceeds the temporary pool budget of $tempCapacity bytes."
         }
         $buildOptions = @{
             Action='Build'; Toolchain=$Toolchain; Target=$Target; UseCase='pico_face';
@@ -101,10 +126,11 @@ try {
             CMakeArgs=@('-DMPS4_DISPLAY_ENABLED=OFF', "-DSEMIHOSTING_ENABLED=$semihosting",
                 "-DML_FWK_TMP_MEM_BASE=$tempBase", "-DML_FWK_TMP_MEM_SIZE=$tempSize",
                 "-DETHOS_U_NPU_CACHE_SIZE=$cacheBytes", "-Dpico_face_SAVE_IMAGE=$semihosting",
-                "-Dpico_face_UART_IMAGE=$uartImageOption",
+                "-Dpico_face_UART_IMAGE=$uartImageOption", "-Dpico_face_PREVIEW:BOOL=$previewOption",
                 "-Dpico_face_SEED=$Seed", "-Dpico_face_STEPS=$Steps", "-Dpico_face_CLASS_ID=$ClassId",
                 "-Dpico_face_GUIDANCE=$($Guidance.ToString([Globalization.CultureInfo]::InvariantCulture))")
         }
+        if ($Preview) { $buildOptions.CMakeArgs += '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF' }
         if ($CompilerBin) { $buildOptions.CompilerBin = $CompilerBin }
         if ($Action -ne 'Package') {
             $buildLog = Join-Path $buildLogDirectory "build-$logTag.log"
@@ -151,7 +177,7 @@ try {
             Copy-Item -LiteralPath (Join-Path $modelDir 'manifest.json') `
                 -Destination (Join-Path $package 'model-manifest.json') -Force
             @"
-Pico-face / Corstone-320 FPGA / U85 Z1024 / $MemoryMode
+Pico-face $Variant / Corstone-320 FPGA / U85 Z1024 / $MemoryMode
 NPU cache bytes: $cacheBytes
 Method pool: DDR, 4 MiB capacity. Temporary pool: $tempBase, $tempSize bytes.
 UART: 115200 8N1, no flow control. No semihosting and no display.
@@ -181,7 +207,7 @@ This package is built and inspected only; physical board inference is not valida
             $sampleTag = if ($Seed -ne 3 -or $Steps -ne 4 -or $ClassId -ne 1 -or $Guidance -ne 4) {
                 "-seed$Seed-steps$Steps-class$ClassId-guidance$Guidance"
             } else { '' }
-            $archive = Join-Path $BuildDirectory "pico-face-fpga-$variant$sampleTag$uartTag.zip"
+            $archive = Join-Path $BuildDirectory "pico-face-fpga-$artifactTag$sampleTag$uartTag.zip"
             Compress-Archive -Path (Join-Path $package '*') -DestinationPath $archive -Force
             Write-Host "FPGA package: $package"
             Write-Host "FPGA archive: $archive"
@@ -193,7 +219,6 @@ This package is built and inspected only; physical board inference is not valida
         if (-not (Test-Path -LiteralPath $FvpExecutable)) { throw "Missing $FvpExecutable" }
         Push-Location $BuildDirectory
         try {
-            Remove-Item -LiteralPath 'pico_face.rgb' -Force -ErrorAction SilentlyContinue
             $arguments = @('-a', $firmware,
                 '-C', 'mps4_board.subsystem.ethosu.num_macs=1024',
                 '-C', 'mps4_board.subsystem.cpu0.semihosting-enable=1',
@@ -204,9 +229,42 @@ This package is built and inspected only; physical board inference is not valida
                 '-C', 'mps4_board.uart0.shutdown_on_eot=1',
                 '-C', 'mps4_board.visualisation.disable-visualisation=1',
                 '-C', 'vis_hdlcd.disable_visualisation=1', '--simlimit', '120', '--stat')
-            $runConfiguration = (Get-Content (Join-Path $BuildDirectory 'build-info.json') `
-                -Raw | ConvertFrom-Json).configuration
-            $runTag = '{0}-seed{1}-steps{2}-{3}' -f $variant, `
+            $firmwareInfo = Get-Content (Join-Path $BuildDirectory 'build-info.json') -Raw |
+                ConvertFrom-Json
+            $runConfiguration = $firmwareInfo.configuration
+            if ($quality) {
+                $manifest = Get-Content (Join-Path $modelDir 'manifest.json') -Raw | ConvertFrom-Json
+                if ($firmwareInfo.status -ne 'built' -or $manifest.variant -ne $Variant -or
+                    $firmwareInfo.model_sha256 -ne $manifest.pte_sha256) {
+                    throw 'FVP firmware does not match the requested model variant.'
+                }
+            }
+            if ($Preview) {
+                $cache = Join-Path $BuildDirectory 'CMakeCache.txt'
+                if (-not (Select-String -LiteralPath $cache -Pattern '^pico_face_PREVIEW:BOOL=ON$' -Quiet)) {
+                    throw 'Build the FVP preview firmware with -Action Build -Preview first.'
+                }
+                $arguments += @('-C', 'mps4_board.subsystem.ethosu.extra_args=--fast')
+                $hostOptions = @()
+                if ($Headless) { $hostOptions += '--headless' }
+                $runSeed = if ($PSBoundParameters.ContainsKey('Seed') -or $Action -eq 'All') {
+                    $Seed
+                } else {
+                    $runConfiguration.pico_face_SEED
+                }
+                $runClass = if ($PSBoundParameters.ContainsKey('ClassId') -or $Action -eq 'All') {
+                    $ClassId
+                } else {
+                    $runConfiguration.pico_face_CLASS_ID
+                }
+                $runRoot = Join-Path $fvpLogDirectory 'preview'
+                & $PreviewPython -m mlek_tools.pico_face.preview @hostOptions --timeout $TimeoutSeconds `
+                    --seed $runSeed --class-id $runClass $runRoot -- (Resolve-Path -LiteralPath $FvpExecutable).ProviderPath @arguments
+                if ($LASTEXITCODE -ne 0) { throw "Pico-face preview failed: $LASTEXITCODE" }
+                return
+            }
+            Remove-Item -LiteralPath 'pico_face.rgb' -Force -ErrorAction SilentlyContinue
+            $runTag = '{0}-seed{1}-steps{2}-{3}' -f $artifactTag, `
                 $runConfiguration.pico_face_SEED, $runConfiguration.pico_face_STEPS, `
                 [DateTime]::Now.ToString('yyyyMMdd_HHmmss_fff')
             $fvpLog = Join-Path $fvpLogDirectory "fvp-$runTag.log"

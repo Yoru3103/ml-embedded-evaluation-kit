@@ -6,19 +6,24 @@ import json
 import os
 from pathlib import Path
 
+from mlek_tools.pico_face.checkpoints import PICO_FACES_FILES
+
 
 def main():
     """Generate labeled host references; these are not FPGA measurements."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoints", type=Path, required=True)
     parser.add_argument("--vela-config", type=Path, required=True)
-    parser.add_argument("--output", type=Path,
-                        default=Path("build/logs/pico_face_logs/out/comparison"))
+    parser.add_argument("--variant", choices=PICO_FACES_FILES, default="m3_long_cfg")
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 7, 11])
     parser.add_argument("--steps", type=int, nargs="+", choices=[1, 2, 4, 8], default=[4, 8])
     args = parser.parse_args()
+    if args.output is None:
+        name = "comparison" if args.variant == "m3_long_cfg" else f"comparison-{args.variant}"
+        args.output = Path("build/logs/pico_face_logs/out") / name
     os.environ["PICO_FACES_CHECKPOINTS"] = str(args.checkpoints.resolve())
-    os.environ["PICO_FACES_VARIANT"] = "m3_long_cfg"
+    os.environ["PICO_FACES_VARIANT"] = args.variant
     os.environ["PICO_FACES_QUANT"] = "a16w8"
     os.environ["PICO_FACES_DECODE_QUANT"] = "a8w8"
     os.environ["PICO_FACES_CALIB_SEEDS"] = "16"
@@ -78,7 +83,7 @@ def main():
         float_sheet.save(args.output / "seed3_float_quantized_comparison.png")
     (args.output / "comparison.json").write_text(
         json.dumps({"note": "Host references, not FPGA measurements or NPU execution",
-                    "calibration_seeds": 16, "images": records}, indent=2) + "\n",
+                    "variant": args.variant, "calibration_seeds": 16, "images": records}, indent=2) + "\n",
         encoding="utf-8")
 
 

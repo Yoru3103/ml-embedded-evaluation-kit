@@ -110,19 +110,21 @@ public:
                                                  : nullptr;
     }
 
-    void PrintStatistics()
+    void PrintStatistics(const GenerationConfig& config)
     {
         m_program.LogMemoryUsage();
-        info("Euler steps: %u\n", PICO_FACE_STEPS);
+        info("Euler steps: %u\n", config.steps);
         info("DiT calls: %u\n", m_ditCalls);
         info("Decode calls: %u\n", m_decodeCalls);
-        unsigned ditCall      = 0;
-        constexpr bool guided = PICO_FACE_CLASS_ID != 4 && PICO_FACE_GUIDANCE > 0;
+        unsigned ditCall  = 0;
+        const bool guided = config.classId != 4 && config.guidance > 0;
         for (size_t i = 0; i < m_recordCount; ++i) {
             const auto& record = m_records[i];
             if (std::strcmp(record.name, "dit_step") == 0) {
                 const unsigned step = guided ? ditCall / 2 + 1 : ditCall + 1;
-                const char* branch  = guided && ditCall % 2 ? "unconditional" : "conditional";
+                const char* branch  = config.classId == 4 || (guided && ditCall % 2)
+                                          ? "unconditional"
+                                          : "conditional";
                 info("Profile for dit_step, step %u, %s:\n", step, branch);
                 ++ditCall;
             } else {
@@ -186,8 +188,8 @@ private:
         const char* name{nullptr};
         pmu_counters counters{};
     };
-    /* At most 8 guided steps plus one decode. Print after timing has stopped. */
-    std::array<MethodRecord, 17> m_records{};
+    /* Eight guided steps, the final decode and up to eight preview decodes. */
+    std::array<MethodRecord, PICO_FACE_PREVIEW ? 25 : 17> m_records{};
     size_t m_recordCount{0};
     uint64_t m_ditCycles{0};
     uint64_t m_decodeCycles{0};
@@ -198,6 +200,73 @@ private:
     std::array<executorch::aten::SizesType, 2> m_condSizes{1, 128};
     std::array<executorch::aten::DimOrderType, 2> m_condOrder{0, 1};
 };
+#if PICO_FACE_SAVE_IMAGE
+static bool SaveRgb(const char* path)
+{
+    FILE* image = std::fopen(path, "wb");
+    if (!image) {
+        printf_err("Cannot open %s\n", path);
+        return false;
+    }
+    const size_t written = std::fwrite(g_image, 1, sizeof(g_image), image);
+    const int closed     = std::fclose(image);
+    if (written != sizeof(g_image) || closed != 0) {
+        printf_err("Cannot save %s\n", path);
+        return false;
+    }
+    return true;
+}
+#endif
+
+#if PICO_FACE_PREVIEW
+static bool ReadPreviewConfig(GenerationConfig& config)
+{
+    FILE* input = std::fopen("pico_face_preview.bin", "rb");
+    if (!input) {
+        printf_err("Cannot open pico_face_preview.bin\n");
+        return false;
+    }
+    uint8_t bytes[5];
+    const size_t count = std::fread(bytes, 1, sizeof(bytes), input);
+    const bool exactSize =
+        count == sizeof(bytes) && std::fgetc(input) == EOF && !std::ferror(input);
+    const int closed = std::fclose(input);
+    if (!exactSize || closed != 0 || bytes[4] > 4) {
+        printf_err("Invalid pico_face_preview.bin\n");
+        return false;
+    }
+    config.seed = static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+                  (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
+    config.classId = bytes[4];
+    return true;
+}
+
+static void PublishFrame(unsigned step)
+{
+    info("PICO_FACE_FRAME step=%u crc=%08x\n",
+         step,
+         static_cast<unsigned>(ImageCrc32(g_image, sizeof(g_image))));
+    std::fflush(stdout);
+}
+
+static bool PreviewStep(PicoFaceModel& model, const float* latent, unsigned step)
+{
+    static float s_previewLatent[kLatentElements] MAKE_ATTRIBUTE(section("activation_buf_dram"));
+    std::memcpy(s_previewLatent, latent, sizeof(s_previewLatent));
+    const float* image = model.Decode(s_previewLatent);
+    if (!image) {
+        return false;
+    }
+    ConvertToRgb(image, g_image, kImageWidth * kImageWidth);
+    char path[24];
+    std::snprintf(path, sizeof(path), "pico_face_%u.rgb", step);
+    if (!SaveRgb(path)) {
+        return false;
+    }
+    PublishFrame(step);
+    return true;
+}
+#endif
 } // namespace arm::app::pico_face
 
 void MainLoop()
@@ -214,13 +283,23 @@ void MainLoop()
                             PICO_FACE_STEPS,
                             PICO_FACE_CLASS_ID,
                             static_cast<float>(PICO_FACE_GUIDANCE)};
+#if PICO_FACE_PREVIEW
+    if (!ReadPreviewConfig(config)) {
+        return;
+    }
+#endif
     info("Generating seed=%u steps=%u class=%u guidance=%.1f\n",
          config.seed,
          config.steps,
          config.classId,
          static_cast<double>(config.guidance));
     const uint64_t generationStart = ReadCycles();
-    if (!s_sampler.Generate(model, config, &pf_cond[0][0][0], pf_schedule, g_image)) {
+#if PICO_FACE_PREVIEW
+    constexpr auto kObserve = PreviewStep;
+#else
+    constexpr auto kObserve = nullptr;
+#endif
+    if (!s_sampler.Generate(model, config, &pf_cond[0][0][0], pf_schedule, g_image, kObserve)) {
         printf_err("pico_face generation failed\n");
         return;
     }
@@ -231,7 +310,8 @@ void MainLoop()
     info("CPU TOTAL: %" PRIu64 " cycles\n", initEnd - firstStart);
     info("DURATION: %.3f milliseconds\n",
          static_cast<double>(Microseconds(initEnd - firstStart)) / 1000.0);
-    info("Profile for image generation (noise to RGB):\n");
+    info("Profile for image generation (%s):\n",
+         PICO_FACE_PREVIEW ? "including intermediate previews" : "noise to RGB");
     info("CPU TOTAL: %" PRIu64 " cycles\n", generationEnd - generationStart);
     info("DURATION: %.3f milliseconds\n", static_cast<double>(generationUs) / 1000.0);
     info("Profile for first image (including model initialization):\n");
@@ -244,19 +324,14 @@ void MainLoop()
          static_cast<unsigned>(crc),
          g_image);
 #if PICO_FACE_SAVE_IMAGE
-    FILE* image = std::fopen("pico_face.rgb", "wb");
-    if (!image) {
-        printf_err("Cannot open pico_face.rgb\n");
-        return;
-    }
-    const size_t written = std::fwrite(g_image, 1, sizeof(g_image), image);
-    const int closed     = std::fclose(image);
-    if (written != sizeof(g_image) || closed != 0) {
-        printf_err("Cannot save pico_face.rgb\n");
+    if (!SaveRgb("pico_face.rgb")) {
         return;
     }
 #endif
-    model.PrintStatistics();
+#if PICO_FACE_PREVIEW
+    PublishFrame(config.steps);
+#endif
+    model.PrintStatistics(config);
     info("PICO_FACE_PASS\n");
 #if PICO_FACE_UART_IMAGE
     info("SERIAL_IMAGE_READY: send I to retrieve RGB, Q to exit\n");

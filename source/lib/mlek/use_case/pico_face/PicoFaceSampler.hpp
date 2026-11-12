@@ -45,12 +45,15 @@ private:
 /** Rectified-flow Euler sampler. Own outside the stack on embedded targets. */
 class PicoFaceSampler {
 public:
+    using StepObserver = bool (*)(PicoFaceModel&, const float*, unsigned);
+
     /** Conditions are [5][8][128], schedule is [8], both owned by the caller. */
     bool Generate(PicoFaceModel& model,
                   const GenerationConfig& config,
                   const float* conditions,
                   const float* schedule,
-                  uint8_t* rgb);
+                  uint8_t* rgb,
+                  StepObserver observe = nullptr);
 
 private:
     std::array<float, kLatentElements> m_latent{};

@@ -43,7 +43,8 @@ bool PicoFaceSampler::Generate(PicoFaceModel& model,
                                const GenerationConfig& config,
                                const float* conditions,
                                const float* schedule,
-                               uint8_t* rgb)
+                               uint8_t* rgb,
+                               StepObserver observe)
 {
     if (!conditions || !schedule || !rgb || config.classId >= 5 ||
         !std::isfinite(config.guidance) || config.guidance < 0.0f ||
@@ -53,6 +54,9 @@ bool PicoFaceSampler::Generate(PicoFaceModel& model,
     NoiseGenerator noise(config.seed);
     for (auto& value : m_latent) {
         value = noise.Gaussian();
+    }
+    if (observe && !observe(model, m_latent.data(), 0)) {
+        return false;
     }
     const unsigned stride = 8 / config.steps;
     for (unsigned i = 0; i < config.steps; ++i) {
@@ -75,6 +79,9 @@ bool PicoFaceSampler::Generate(PicoFaceModel& model,
         }
         for (size_t j = 0; j < kLatentElements; ++j) {
             m_latent[j] -= dt * m_velocity[j];
+        }
+        if (observe && i + 1 < config.steps && !observe(model, m_latent.data(), i + 1)) {
+            return false;
         }
     }
     const float* image = model.Decode(m_latent.data());

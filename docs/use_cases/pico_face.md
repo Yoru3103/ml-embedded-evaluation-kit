@@ -53,8 +53,9 @@ The checkpoint directory must contain `m3_long_cfg/{dit_qat.pt,vae_final.pt,late
 The export environment needs the Arm backend dependencies used by the pinned
 CMSIS-ExecuTorch 1.5.1 example (including TOSA tools and Vela).
 
-Change `-Seed`, `-Steps` (1/2/4/8), `-ClassId` (0..3 or unconditional 4) and
-`-Guidance` on **Build** or **All**. Run executes the existing compiled settings.
+Set the firmware defaults with `-Seed`, `-Steps` (1/2/4/8), `-ClassId` (0..3 or
+unconditional 4) and `-Guidance` on **Build** or **All**. FVP **Run -Preview**
+also accepts runtime `-Seed` and `-ClassId` overrides.
 Default output directory:
 
 ```text
@@ -103,8 +104,9 @@ Each guided step evaluates the same DiT twice with the same latent and timestep:
 once with the requested class, and once with the null class. The CPU combines
 their velocities as `v = v_uncond + guidance * (v_cond - v_uncond)` before making
 one Euler update. These are two evaluations of one model, not two sampling steps.
-Intermediate decoding and runtime changes to generation parameters are not
-implemented. The UART service can retrieve the stored image or exit.
+The optional eight-step FVP preview also decodes the intermediate latents.
+The FVP preview accepts a runtime seed and class. Steps and guidance are set at
+build time. The UART service can retrieve the stored image or exit.
 
 ## Memory and platform constraints
 
@@ -465,7 +467,7 @@ Dedicated 384 KiB 和 Shared 模式均已通过 FPGA 实板推理。GNU 仅提�
 * FVP 默认使用同级工程的 MDK FVP 11.32.23。更换工作站时通过 `-ExportPython`、
   `-Checkpoints`、`-CompilerBin`、`-FvpExecutable` 指定实际位置。
 
-当前工程的准备与迁移边界如下（temp，待完善）：
+当前工程的准备与迁移边界如下：
 
 | 阶段 | 位置与已完成的工作 |
 |---|---|
@@ -508,6 +510,74 @@ build/pico_face/pte/atfe/fvp/dedicated_sram/384k-release-default-pmu/
 ```
 
 FVP 用于验证功能和数值；当前 MDK FVP 的时钟寄存器读数存在差异，性能时间以实板为准。
+
+### FVP 八步逐帧演示
+
+复用 Dedicated 384 KiB PTE。预览固件默认单独构建到带 `-preview` 后缀的目录。
+运行使用 FVP 的 functional fast 模式，预览固件禁用 timing adapter。
+主机界面使用支持 Tkinter 的 Python 3，可通过 `-PreviewPython` 指定解释器。
+
+```powershell
+.\scripts\windows\pico-face.ps1 -Action Build -Preview
+.\scripts\windows\pico-face.ps1 -Action Run -Preview
+.\scripts\windows\pico-face.ps1 -Action Run -Preview -Seed 7 -ClassId 3
+
+# 无界面执行一轮，检查九帧、CRC 和 FVP 正常退出。
+.\scripts\windows\pico-face.ps1 -Action Run -Preview -Headless
+```
+
+`-Action Run -Preview -Seed` 可在运行时选择 0 到 4294967295 的 seed，
+`-ClassId` 可在运行时选择 0（女性、中性）、1（女性、微笑）、2（男性、中性）、
+3（男性、微笑）或 4（无条件）。省略任一参数时使用构建时的默认值。
+运行时更换 seed 或 class 无需重建或重新导出。
+点击 **Generate** 后，窗口从初始 latent 解码画面 `0/8` 开始，
+依次显示同一条采样轨迹，最后停在 `8/8`。点击 **Replay** 可重播。
+每次运行的 RGB 帧和 FVP 日志保存在 `build/logs/pico_face_logs/fvp/preview/run-*/`。
+预览会额外执行八次中间解码，预览运行耗时包含这些调用和中间帧导出。
+
+### 画质版 FVP 演示和 FPGA 单张测试
+
+从 [Pico-Faces 固定提交](https://github.com/cpldcpu/pico-faces/tree/ee15d9d183d8428efaeb3078edf47669cfc23994/checkpoints/m3_decD_deep_full)
+获取 `dit_qat.pt`、`vae_final.pt`、`latent_stats.npz`，放在
+`resources_downloaded/pico_face/checkpoints/m3_decD_deep_full/`，或通过
+`-Checkpoints` 指定其父目录。导出时会核对 checkpoint 的 SHA-256。
+画质版使用独立的模型和构建目录。以下两种固件共用 Dedicated SRAM 384 KiB PTE。
+
+```powershell
+$variant = 'm3_decD_deep_full'
+.\scripts\windows\pico-face.ps1 -Action Export -Variant $variant
+.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Preview
+.\scripts\windows\pico-face.ps1 -Action Run -Variant $variant -Preview -Seed 3
+
+# 8 步主测固件，支持计时结束后通过 UART 取图。
+.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Target FPGA -Steps 8 -UartImage
+
+# 4 步独立构建目录，保留两套可部署包。
+.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Target FPGA -Steps 4 -UartImage `
+    -BuildDirectory build/pico_face/quality-fpga-4steps
+```
+
+FVP 预览检查 `0/8` 至 `8/8` 的九帧和最终 RGB。FPGA 上每次完整启动生成一张，
+8 步应报告 16 次 DiT 和 1 次 decode，4 步应报告 8 次 DiT 和 1 次 decode。
+要统计重复性，每档完整启动 5 次，记录 `Timing core clock`、`Image generation (noise to RGB)`、
+`First image`、每次调用的 NPU cycles、内存池峰值和 CRC，汇报耗时中位数及范围。
+速度版用相同参数复测。UART 传输在生成计时结束后进行。
+比较最终图时，先确认两端的模型哈希、seed、步数、class 和 guidance 相同。
+
+2026-11-12 在同一台 MPS4 FI101 上取得如下单次样本。四组均为 seed 3、
+class 1、guidance 4、Dedicated 384 KiB，毫秒按日志的 50 MHz 回退时钟换算。
+
+| 模型 | 步数 | 噪声到 RGB | 含初始化的首图 | DiT 平均 NPU cycles | Decoder NPU cycles | RGB CRC32 |
+|---|---:|---:|---:|---:|---:|---|
+| 速度版 | 4 | 432.978 ms | 471.498 ms | 1,890,516.63 | 314,909 | `5557eceb` |
+| 画质版 | 4 | 606.858 ms | 645.356 ms | 2,802,873.13 | 748,073 | `57913c38` |
+| 速度版 | 8 | 799.396 ms | 837.913 ms | 1,890,523.69 | 316,828 | `0223caac` |
+| 画质版 | 8 | 1,136.712 ms | 1,175.220 ms | 2,803,087.25 | 748,341 | `92277e03` |
+
+四组 method pool 峰值都是 263,724 字节。临时池峰值为速度版 524,288 字节、
+画质版 786,432 字节。画质版 8 步最终 RGB 在 FVP 预览、FVP 单次解码和
+FPGA UART 取图三条路径中逐字节一致。当前 MCC `RESET` 未重新触发应用输出，
+表中每档来自一次 MCC `REBOOT` 后的有效样本。
 
 ### 构建 FPGA：Dedicated 或 Shared、8 步
 
@@ -572,7 +642,7 @@ build/logs/pico_face_logs/
 
 ### 参数选择、计时与验证结果
 
-`-Seed`、`-Steps`、`-ClassId`、`-Guidance` 都是构建参数。修改后重新执行 `Build`；
+普通 FVP 和 FPGA 的 `-Seed`、`-Steps`、`-ClassId`、`-Guidance` 都是构建参数。修改后重新执行 `Build`；
 只给 `Run` 或接收脚本传参数不会改变已编译的采样设置。步数支持 1、2、4、8，
 改变这些步数不需要重新导出 PTE。建议固定 class 和 guidance，先比较相同 seed 的
 4/8 步，再改变 seed。更多步数不保证所有图片都更清晰。
