@@ -65,12 +65,11 @@ static void create_rw_vector_table(void);
 /** Enable debug access on the Corstone-320 FPGA, as done by the FI101 selftest. */
 static void enable_fpga_debug(void)
 {
-    volatile uint32_t* force_disable =
-        (volatile uint32_t*)(CORSTONE320_SYSCTRL_BASE_S + 0x25CU);
-    volatile uint32_t* dcu_enable = (volatile uint32_t*)(LCM_BASE_S + 0x100U);
+    volatile uint32_t* force_disable = (volatile uint32_t*)(CORSTONE320_SYSCTRL_BASE_S + 0x25CU);
+    volatile uint32_t* dcu_enable    = (volatile uint32_t*)(LCM_BASE_S + 0x100U);
 
     *force_disable = 0xAAAAAAAAU;
-    *dcu_enable = 0x00005555U;
+    *dcu_enable    = 0x00005555U;
 }
 #endif /* defined(FPGA) */
 
@@ -138,6 +137,9 @@ void platform_release(void)
 
 const char* platform_name(void)
 { return s_platform_name; }
+
+uint32_t platform_get_user_buttons(void)
+{ return MPS4_PLATFORM_FPGAIO->BUTTON & 0x3U; }
 
 #define CREATE_MASK(msb, lsb)       (int)(((1U << ((msb) - (lsb) + 1)) - 1) << (lsb))
 #define MASK_BITS(arg, msb, lsb)    (int)((arg) & CREATE_MASK(msb, lsb))

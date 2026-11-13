@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,20 +17,21 @@
  */
 #include "UseCaseHandler.hpp"
 
-#include "mlek/common/Classifier.hpp"
-#include "mlek/common/ImageUtils.hpp"
-#include "mlek/use_case/img_class/ImgClassProcessing.hpp"
 #include "UseCaseCommonUtils.hpp"
 #include "hal.h"
+#include "mlek/common/Classifier.hpp"
+#include "mlek/common/ImageUtils.hpp"
 #include "mlek/log/log_macros.h"
+#include "mlek/use_case/img_class/ImgClassProcessing.hpp"
 
 #if defined(MLEK_FWK_TFLM)
-#include "mlek/fwk/tflm/MobileNetModel.hpp"
+#    include "mlek/fwk/tflm/MobileNetModel.hpp"
 #elif defined(MLEK_FWK_EXECUTORCH)
-#include "mlek/fwk/executorch/MobileNetModel.hpp"
+#    include "mlek/fwk/executorch/MobileNetModel.hpp"
 #endif
 
 #include <cinttypes>
+#include <cstdio>
 
 using ImgClassClassifier = arm::app::Classifier;
 
@@ -48,6 +49,24 @@ namespace app {
         extern const float g_normStddev[];
     } /* namespace img_class */
 #endif /** MLEK_FWK_TFLM or MLEK_FWK_EXECUTORCH */
+
+#if defined(IMG_CLASS_BUTTON_CAPTURE)
+    /** Wait for a fresh KEY0 press, ignoring a button held from the last capture. */
+    static void WaitForCaptureButton()
+    {
+        constexpr uint32_t kCaptureButtonMask = 1U;
+        info("Press KEY0 to capture and classify an image...\n");
+        std::fflush(stdout);
+
+        while ((platform_get_user_buttons() & kCaptureButtonMask) != 0U) {
+            /* Require release before accepting another press. */
+        }
+        while ((platform_get_user_buttons() & kCaptureButtonMask) == 0U) {
+            /* Poll the FPGAIO button register; LCD contents remain unchanged. */
+        }
+        info("KEY0 pressed: capturing one frame\n");
+    }
+#endif /* IMG_CLASS_BUTTON_CAPTURE */
 
     /* Image classification inference handler. */
     bool ClassifyImageHandler(ApplicationContext& ctx)
@@ -106,7 +125,7 @@ namespace app {
 
             /* Assign values. */
             for (size_t i = 0; i < ImgClassPreProcess::kNumChannels; ++i) {
-                normMean[i] = img_class::g_normMean[i];
+                normMean[i]   = img_class::g_normMean[i];
                 normStddev[i] = img_class::g_normStddev[i];
 
                 if (0.f == normStddev[i]) {
@@ -116,7 +135,7 @@ namespace app {
             }
         }
         auto preProcess = ImgClassPreProcess(inputTensor, normMean, normStddev);
-#else /* defined(MLEK_FWK_EXECUTORCH) */
+#else  /* defined(MLEK_FWK_EXECUTORCH) */
         auto preProcess = ImgClassPreProcess(inputTensor);
 #endif /* defined(MLEK_FWK_EXECUTORCH) */
 
@@ -126,29 +145,35 @@ namespace app {
                                 ctx.Get<ImgClassClassifier&>("classifier"),
                                 ctx.Get<std::vector<std::string>&>("labels"),
                                 results);
-        hal_camera_init();
-        auto bCamera = hal_camera_configure(nCols,
-            nRows,
-            HAL_CAMERA_MODE_SINGLE_FRAME,
-            HAL_CAMERA_COLOUR_FORMAT_RGB888);
+        if (!hal_camera_init()) {
+            printf_err("Failed to initialise camera.\n");
+            return false;
+        }
+        auto bCamera = hal_camera_configure(
+            nCols, nRows, HAL_CAMERA_MODE_SINGLE_FRAME, HAL_CAMERA_COLOUR_FORMAT_RGB888);
         if (!bCamera) {
             printf_err("Failed to configure camera.\n");
             return false;
         }
 
-        while(true) {
-#ifdef INTERACTIVE_MODE
+        while (true) {
+#if defined(IMG_CLASS_BUTTON_CAPTURE)
+            WaitForCaptureButton();
+#elif defined(INTERACTIVE_MODE)
             AwaitUserInput(); // Wait for user input before moving forward.
-#endif /* INTERACTIVE_MODE */
+#endif /* IMG_CLASS_BUTTON_CAPTURE / INTERACTIVE_MODE */
 
             hal_display_clear(COLOR_BLACK);
-            hal_camera_start();
+            if (!hal_camera_start()) {
+                printf_err("Failed to start camera.\n");
+                return false;
+            }
 
             /* Strings for presentation/logging. */
             std::string str_inf{"Running inference... "};
 
             uint32_t capturedFrameSize = 0;
-            const uint8_t* imgSrc = hal_camera_get_captured_frame(&capturedFrameSize);
+            const uint8_t* imgSrc      = hal_camera_get_captured_frame(&capturedFrameSize);
             if (!imgSrc || !capturedFrameSize) {
                 break;
             }
@@ -202,6 +227,7 @@ namespace app {
             }
 
             profiler.PrintProfilingResult();
+            hal_camera_stop();
         }
 
         return true;

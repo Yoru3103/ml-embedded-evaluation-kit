@@ -72,6 +72,19 @@ class ExportContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_io_contract(plan, 320, 10, "nchw")
 
+    def test_full_gesture_class_contract(self):
+        """Accept all 33 gesture classes while rejecting a stale ten-class firmware contract."""
+        tensors = [SimpleNamespace(sizes=[1, 320, 320, 3], dim_order=[0, 1, 2, 3],
+                                    scalar_type=ScalarType.FLOAT),
+                   SimpleNamespace(sizes=[1, 37, 2100], dim_order=[0, 1, 2],
+                                    scalar_type=ScalarType.FLOAT)]
+        plan = SimpleNamespace(inputs=[0], outputs=[1],
+                               values=[SimpleNamespace(val=tensor) for tensor in tensors])
+        self.assertEqual(check_io_contract(plan, 320, 33, "nhwc")["outputs"][0]["shape"],
+                         [1, 37, 2100])
+        with self.assertRaises(ValueError):
+            check_io_contract(plan, 320, 10, "nhwc")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,21 @@ endif ()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
 
+# Button capture is intended for interactive MPS4 VSI demonstrations.
+set(IMG_CLASS_BUTTON_CAPTURE_DEFAULT OFF)
+if (TARGET_PLATFORM STREQUAL "mps4" AND FVP_VSI_ENABLED AND NOT BUILD_FVP_TESTS)
+    set(IMG_CLASS_BUTTON_CAPTURE_DEFAULT ON)
+endif()
+USER_OPTION(${use_case}_BUTTON_CAPTURE "Wait for KEY0 before each image classification"
+    ${IMG_CLASS_BUTTON_CAPTURE_DEFAULT}
+    BOOL)
+if (${${use_case}_BUTTON_CAPTURE})
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR BUILD_FVP_TESTS)
+        message(FATAL_ERROR "img_class_BUTTON_CAPTURE requires interactive MPS4 deployment")
+    endif()
+    list(APPEND ${use_case}_COMPILE_DEFS IMG_CLASS_BUTTON_CAPTURE)
+endif()
+
 # Append the API to use for this use case
 list(APPEND ${use_case}_API_LIST "img_class")
 

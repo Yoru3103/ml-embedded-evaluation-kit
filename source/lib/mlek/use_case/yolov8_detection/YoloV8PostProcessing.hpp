@@ -17,6 +17,8 @@
 
 namespace arm::app {
 
+enum class BoxCoordinateFormat { AUTO, NORMALIZED, PIXELS };
+
 struct YoloV8PostProcessParams {
     uint32_t imageWidth{0};
     uint32_t imageHeight{0};
@@ -27,6 +29,7 @@ struct YoloV8PostProcessParams {
     bool angleIsLogits{true}; /**< Raw angles map to (sigmoid(value) - 0.25) * pi. */
     uint32_t dflBins{0};      /**< Zero derives the bin count from the feature-map channels. */
     bool orientedBoxes{true}; /**< False interprets the fourth output as objectness. */
+    BoxCoordinateFormat boxCoordinates{BoxCoordinateFormat::AUTO};
 };
 
 class YoloV8PostProcess : public BasePostProcess {

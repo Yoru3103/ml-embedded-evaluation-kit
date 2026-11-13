@@ -214,6 +214,60 @@ void CheckLimitAfterSuppression()
     Require(results.size() == 3, "candidate truncation or class-aware NMS is incorrect");
 }
 
+void CheckExplicitBoxCoordinates()
+{
+    auto tensor = std::make_shared<Tensor>(std::vector<size_t>{1, 6, 2}, TensorType::FP32);
+    // An out-of-image, low-confidence box must not change the coordinate units
+    // of the valid detection. The alif COCO model emits such normalized outliers.
+    const float values[] = {
+        0.5F, 2.01F, 0.4F, 0.4F, 0.2F, 0.1F, 0.2F, 0.1F, 0.9F, 0.01F, 0.01F, 0.01F};
+    std::memcpy(tensor->GetData(), values, sizeof(values));
+    std::vector<yolov8_detection::DetectionResult> results;
+    YoloV8PostProcessParams params{256, 256, 2, 20, 0.1F, 0.45F};
+    params.boxCoordinates = BoxCoordinateFormat::NORMALIZED;
+    YoloV8PostProcess normalized(tensor, results, params);
+    Require(normalized.DoPostProcess() && results.size() == 1,
+            "explicit normalized-coordinate decode failed");
+    Require(std::fabs(results[0].centerX - 128.0F) < 0.001F &&
+                std::fabs(results[0].width - 51.2F) < 0.001F,
+            "normalized outlier caused pixel-space decoding");
+
+    // Small pixel-space boxes must also obey an explicit model contract.
+    params.boxCoordinates = BoxCoordinateFormat::PIXELS;
+    YoloV8PostProcess pixels(tensor, results, params);
+    Require(pixels.DoPostProcess() && results.size() == 1,
+            "explicit pixel-coordinate decode failed");
+    Require(std::fabs(results[0].centerX - 0.5F) < 0.001F &&
+                std::fabs(results[0].width - 0.2F) < 0.001F,
+            "explicit pixel coordinates were scaled");
+}
+
+void CheckAllGestureClasses()
+{
+    // The full HaGRID model has 33 classes and a decoded [1, 37, anchors] output.
+    // Overlapping boxes in the first and last classes must survive class-aware NMS.
+    auto tensor  = std::make_shared<Tensor>(std::vector<size_t>{1, 37, 2}, TensorType::FP32);
+    auto* values = static_cast<float*>(tensor->GetData());
+    std::fill_n(values, 74, 0.0F);
+    for (size_t anchor = 0; anchor < 2; ++anchor) {
+        values[anchor]     = 0.5F;
+        values[2 + anchor] = 0.5F;
+        values[4 + anchor] = 0.2F;
+        values[6 + anchor] = 0.2F;
+    }
+    values[(4 + 32) * 2] = 0.9F;
+    values[4 * 2 + 1]    = 0.8F;
+    std::vector<yolov8_detection::DetectionResult> results;
+    YoloV8PostProcessParams params{320, 320, 33, 20, 0.25F, 0.45F};
+    params.boxCoordinates = BoxCoordinateFormat::NORMALIZED;
+    YoloV8PostProcess process(tensor, results, params);
+    Require(process.DoPostProcess(), "33-class gesture output decode failed");
+    Require(results.size() == 2 && results[0].classId == 32 && results[1].classId == 0,
+            "full gesture class range or class-aware NMS failed");
+    Require(std::abs(results[0].centerX - 160.0F) < 0.001F,
+            "full gesture normalized boxes were not converted to model pixels");
+}
+
 void CheckRotatedSuppressionAndClassTies()
 {
     auto heads   = MakeHeads(false);
@@ -257,6 +311,8 @@ int main()
         CheckRgbModelKeepsAllChannels();
         CheckMultipleRotatedDetections();
         CheckLimitAfterSuppression();
+        CheckExplicitBoxCoordinates();
+        CheckAllGestureClasses();
         CheckRotatedSuppressionAndClassTies();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

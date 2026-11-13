@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2024-2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2024-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,11 +19,13 @@
 #ifndef PLATFORM_DRIVERS_H
 #define PLATFORM_DRIVERS_H
 
-#include "hal_log.h"     /* Logging related helpers. */
+#include "hal_log.h" /* Logging related helpers. */
 
 /* Platform components */
 #include "RTE_Components.h" /* For CPU related defintiions */
 #include "timer_mps4.h"     /* Timer functions. */
+
+#include <stdint.h>
 
 /**
  * @brief   Initialises the platform components.
@@ -41,5 +43,11 @@ void platform_release(void);
  * @return  Pointer to the name
  */
 const char* platform_name(void);
+
+/**
+ * @brief   Reads the user buttons (bit 0: KEY0, bit 1: KEY1).
+ * @return  Bit mask with a set bit for each pressed button.
+ */
+uint32_t platform_get_user_buttons(void);
 
 #endif /* PLATFORM_DRIVERS_H */

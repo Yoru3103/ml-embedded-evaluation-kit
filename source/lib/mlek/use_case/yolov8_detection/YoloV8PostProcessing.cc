@@ -343,8 +343,10 @@ bool YoloV8PostProcess::DoPostProcess()
         }
     }
 
-    /* Normalized exports stay close to [0, 1]; pixel-space exports are much larger. */
-    const bool normalizedCoordinates = maximumCoordinate <= 2.0F;
+    /* Prefer an explicit model contract; retain magnitude inference for legacy profiles. */
+    const bool normalizedCoordinates =
+        m_params.boxCoordinates == BoxCoordinateFormat::NORMALIZED ||
+        (m_params.boxCoordinates == BoxCoordinateFormat::AUTO && maximumCoordinate <= 2.0F);
     std::vector<yolov8_detection::DetectionResult> candidates;
     candidates.reserve(
         std::min(description.boxCount, static_cast<size_t>(m_params.maxDetections) * 4U));

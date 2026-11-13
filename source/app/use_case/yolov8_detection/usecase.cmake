@@ -14,6 +14,40 @@ endif()
 
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
 
+USER_OPTION(${use_case}_BOX_COORDINATES
+    "Single-output box coordinates: auto, normalized, or pixels"
+    auto
+    STRING)
+set(YOLOV8_BOX_COORDINATE_FORMATS auto normalized pixels)
+if (NOT ${${use_case}_BOX_COORDINATES} IN_LIST YOLOV8_BOX_COORDINATE_FORMATS)
+    message(FATAL_ERROR "yolov8_detection_BOX_COORDINATES must be auto, normalized, or pixels")
+endif()
+string(TOUPPER "${${use_case}_BOX_COORDINATES}" YOLOV8_BOX_COORDINATE_FORMAT)
+
+set(YOLOV8_CAMERA_INPUT_DEFAULT OFF)
+if (FVP_VSI_ENABLED AND NOT BUILD_FVP_TESTS)
+    set(YOLOV8_CAMERA_INPUT_DEFAULT ON)
+endif()
+USER_OPTION(${use_case}_CAMERA_INPUT "Capture YOLOv8 input from the VSI camera"
+    ${YOLOV8_CAMERA_INPUT_DEFAULT}
+    BOOL)
+if (${${use_case}_CAMERA_INPUT} AND NOT FVP_VSI_ENABLED)
+    message(FATAL_ERROR "yolov8_detection_CAMERA_INPUT requires FVP_VSI_ENABLED")
+endif()
+
+set(YOLOV8_BUTTON_CAPTURE_DEFAULT OFF)
+if (TARGET_PLATFORM STREQUAL "mps4" AND ${${use_case}_CAMERA_INPUT} AND NOT BUILD_FVP_TESTS)
+    set(YOLOV8_BUTTON_CAPTURE_DEFAULT ON)
+endif()
+USER_OPTION(${use_case}_BUTTON_CAPTURE "Wait for KEY0 before each YOLOv8 camera capture"
+    ${YOLOV8_BUTTON_CAPTURE_DEFAULT}
+    BOOL)
+if (${${use_case}_BUTTON_CAPTURE})
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT ${${use_case}_CAMERA_INPUT} OR BUILD_FVP_TESTS)
+        message(FATAL_ERROR "yolov8_detection_BUTTON_CAPTURE requires MPS4 camera input")
+    endif()
+endif()
+
 # Link the platform-independent YOLOv8 API.
 list(APPEND ${use_case}_API_LIST "yolov8_detection")
 
@@ -242,6 +276,9 @@ generate_model_code(
     NAMESPACE "arm" "app" "yolov8_detection")
 
 set(${use_case}_COMPILE_DEFS
+    "YOLOV8_BOX_COORDINATES=BoxCoordinateFormat::${YOLOV8_BOX_COORDINATE_FORMAT}"
+    "YOLOV8_CAMERA_INPUT=$<BOOL:${${use_case}_CAMERA_INPUT}>"
+    "YOLOV8_BUTTON_CAPTURE=$<BOOL:${${use_case}_BUTTON_CAPTURE}>"
     "YOLOV8_INPUT_IS_GRAYSCALE=$<BOOL:${${use_case}_INPUT_IS_GRAYSCALE}>"
     "YOLOV8_INFER_LAYOUT_FROM_SHAPE=$<BOOL:${${use_case}_INFER_LAYOUT_FROM_SHAPE}>"
     "YOLOV8_DFL_BINS=${${use_case}_DFL_BINS}"
