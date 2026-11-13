@@ -94,8 +94,16 @@ generate_model_code(
     NAMESPACE   "arm" "app" "rnn")
 
 
-# For MPS3, allow dumping of output data to memory, based on these parameters:
-if (TARGET_PLATFORM STREQUAL mps3)
+USER_OPTION(${use_case}_SAVE_WAV "Save denoised WAV files using the host C file system."
+    OFF BOOL)
+
+if (${use_case}_SAVE_WAV)
+    if (NOT TARGET_PLATFORM STREQUAL native AND
+        (NOT SEMIHOSTING_ENABLED OR NOT TARGET_PLATFORM MATCHES "^mps[34]$"))
+        message(FATAL_ERROR "noise_reduction_SAVE_WAV requires native or MPS3/MPS4 with semihosting")
+    endif()
+    set(${use_case}_COMPILE_DEFS NOISE_REDUCTION_SAVE_WAV)
+elseif (TARGET_PLATFORM STREQUAL mps3)
     USER_OPTION(${use_case}_MEM_DUMP_BASE_ADDR
         "Inference output dump address for ${use_case}"
         0x80000000 # DDR bank 2
@@ -110,7 +118,9 @@ if (TARGET_PLATFORM STREQUAL mps3)
     set(${use_case}_COMPILE_DEFS
         "MEM_DUMP_BASE_ADDR=${${use_case}_MEM_DUMP_BASE_ADDR}"
         "MEM_DUMP_LEN=${${use_case}_MEM_DUMP_LEN}")
+endif()
 
+if (${use_case}_COMPILE_DEFS)
     file(GLOB_RECURSE SRC_FILES
         "${SRC_USE_CASE}/${use_case}/src/*.cpp"
         "${SRC_USE_CASE}/${use_case}/src/*.cc")
