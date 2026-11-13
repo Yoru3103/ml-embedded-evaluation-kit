@@ -1,0 +1,32 @@
+/*
+ * SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include <cstddef>
+#include <cstdint>
+
+asm(
+    ".section nn_model,\"a\",%progbits\n"
+    ".balign 16\n"
+    ".global minimind_model_data_start\n"
+    "minimind_model_data_start:\n"
+    ".incbin \"@MINIMIND_MODEL_INC_PATH@\"\n"
+    ".global minimind_model_data_end\n"
+    "minimind_model_data_end:\n");
+
+namespace arm::app::minimind2_small {
+extern "C" const uint8_t minimind_model_data_start[];
+extern "C" const uint8_t minimind_model_data_end[];
+
+uint8_t* GetModelPointer()
+{
+    // The PTE is read-only for the runtime; MemoryRegion stores a byte pointer.
+    return const_cast<uint8_t*>(minimind_model_data_start);
+}
+
+size_t GetModelLen()
+{
+    return static_cast<size_t>(minimind_model_data_end - minimind_model_data_start);
+}
+} // namespace arm::app::minimind2_small
