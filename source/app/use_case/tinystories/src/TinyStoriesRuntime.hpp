@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 #pragma once
 #include "TinyStoriesProfiler.hpp"
+#include "TokenSampler.hpp"
 #include "mlek/fwk/executorch/EtModel.hpp"
 
 namespace arm::app::tinystories {
@@ -16,6 +17,11 @@ struct InferenceRecord {
     Timing timing{};
     TinyStoriesProfiler::Snapshot stages{};
 };
+/** Decode-time selection state; a null pointer keeps greedy argmax. */
+struct DecodeContext {
+    SamplingConfig sampling{};
+    XorShift32 rng{1};
+};
 extern TinyStoriesProfiler* s_profiler;
 uint64_t CpuCycles();
 double Milliseconds(uint64_t cycles, uint32_t frequency);
@@ -26,6 +32,7 @@ bool Infer(fwk::et::EtModel& model,
            int32_t& nextToken,
            Timing& total,
            const char* phase,
-           InferenceRecord* deferred = nullptr);
+           InferenceRecord* deferred = nullptr,
+           DecodeContext* decode     = nullptr);
 void RunDemo(fwk::et::EtModel& model);
 } // namespace arm::app::tinystories

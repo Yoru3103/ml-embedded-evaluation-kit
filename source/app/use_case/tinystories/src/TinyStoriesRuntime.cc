@@ -70,6 +70,73 @@ static bool GetTopToken(const fwk::et::EtModel& model, int32_t& token)
     token = static_cast<int32_t>(topIndex);
     return true;
 }
+static bool SampleToken(const fwk::et::EtModel& model, DecodeContext& decode, int32_t& token)
+{
+    const auto tensor = model.GetOutputTensor(0);
+    if (!tensor || tensor->Type() != fwk::iface::TensorType::FP32 ||
+        tensor->GetNumElements() != kVocabularySize || tensor->GetData<float>() == nullptr) {
+        printf_err("TinyStories output must be a 32000-element FP32 logits tensor\n");
+        return false;
+    }
+    if (!SelectToken(tensor->GetData<float>(),
+                     tensor->GetNumElements(),
+                     decode.sampling,
+                     decode.rng,
+                     token)) {
+        printf_err("TinyStories sampling rejected the FP32 logits\n");
+        return false;
+    }
+    return true;
+}
+
+#ifdef TINYSTORIES_LOGIT_DUMP
+static void DumpLogits(const fwk::et::EtModel& model, size_t position)
+{
+    const auto tensor = model.GetOutputTensor(0);
+    if (!tensor || tensor->Type() != fwk::iface::TensorType::FP32 ||
+        tensor->GetNumElements() != kVocabularySize || tensor->GetData<float>() == nullptr) {
+        printf_err("TinyStories logit dump requires the FP32 logits tensor\n");
+        return;
+    }
+    const float* logits = tensor->GetData<float>();
+    float value[5];
+    int32_t id[5];
+    for (size_t rank = 0; rank < 5; ++rank) {
+        value[rank] = -std::numeric_limits<float>::infinity();
+        id[rank]    = -1;
+    }
+    for (size_t index = 0; index < kVocabularySize; ++index) {
+        const float candidate = logits[index];
+        if (!std::isfinite(candidate) || candidate <= value[4]) {
+            continue;
+        }
+        size_t slot = 4;
+        while (slot > 0 && candidate > value[slot - 1]) {
+            value[slot] = value[slot - 1];
+            id[slot]    = id[slot - 1];
+            --slot;
+        }
+        value[slot] = candidate;
+        id[slot]    = static_cast<int32_t>(index);
+    }
+    info("TINYSTORIES_LOGITS position=%zu id0=%" PRId32 " v0=%.6f id1=%" PRId32
+         " v1=%.6f id2=%" PRId32 " v2=%.6f id3=%" PRId32 " v3=%.6f id4=%" PRId32
+         " v4=%.6f margin=%.6f\n",
+         position,
+         id[0],
+         value[0],
+         id[1],
+         value[1],
+         id[2],
+         value[2],
+         id[3],
+         value[3],
+         id[4],
+         value[4],
+         value[0] - value[1]);
+}
+#endif
+
 static uint64_t Counter(const pmu_counters& counters, const char* name)
 {
     for (uint32_t i = 0; i < counters.num_counters; ++i) {
@@ -114,9 +181,10 @@ bool Infer(fwk::et::EtModel& model,
            int32_t& nextToken,
            Timing& total,
            const char* phase,
-           InferenceRecord* deferred)
+           InferenceRecord* deferred,
+           DecodeContext* decode)
 {
-    // PMU setup and UART are excluded; token input, inference and argmax are included.
+    // PMU setup and UART are excluded; token input, inference and token selection are included.
 #ifdef TINYSTORIES_DEMO
     // Keep the request's SysTick clock continuous for the final wall interval.
     // NPU counters remain per-invocation, as in TEST mode.
@@ -135,12 +203,21 @@ bool Infer(fwk::et::EtModel& model,
     const bool invoked         = model.RunInference();
     const uint64_t invokeEnd   = CpuCycles();
     s_profiler->Stop();
-    const bool valid   = invoked && GetTopToken(model, nextToken);
+    bool valid = invoked;
+    if (valid) {
+        const bool sampled = decode != nullptr && !decode->sampling.greedy;
+        valid = sampled ? SampleToken(model, *decode, nextToken) : GetTopToken(model, nextToken);
+    }
     const uint64_t end = CpuCycles();
     pmu_counters counters{};
     hal_pmu_get_counters(&counters);
     hal_pmu_final();
     Timing timing{Counter(counters, "NPU TOTAL"), invokeEnd - invokeBegin, end - begin, 1};
+#ifdef TINYSTORIES_LOGIT_DUMP
+    if (valid) {
+        DumpLogits(model, position);
+    }
+#endif
     if (deferred) {
         deferred->timing = timing;
         deferred->stages = s_profiler->GetSnapshot();
