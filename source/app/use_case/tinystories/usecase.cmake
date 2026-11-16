@@ -38,18 +38,21 @@ endif()
 if (NOT FPGA_PLATFORM_SSE_320)
     list(APPEND ${use_case}_COMPILE_DEFS TINYSTORIES_FVP)
 endif()
-string(CONCAT DEFAULT_MODEL_PATH
-    "${MLEK_ROOT}/resources_downloaded/tinystories42m/"
-    "npu_full_16a8w_embedding8_dedicated_terminalkv_1200/"
-    "tinystories42m_u85_1024_ctx64_kv_full_w8a16_embedding8_dedicated_terminalkv_1200.pte")
-if (${use_case}_MODE STREQUAL "DEMO")
-    string(CONCAT DEFAULT_MODEL_PATH "${MLEK_ROOT}/resources_downloaded/tinystories42m/"
-        "npu_int16_kv_1200/tinystories42m_u85_1024_ctx64_int16_kv_1200.pte")
-endif()
+string(CONCAT DEFAULT_MODEL_PATH "${MLEK_ROOT}/resources_downloaded/tinystories42m/"
+    "npu_int16_kv_ctx128_1200/"
+    "tinystories42m_u85_1024_ctx128_int16_kv_1200.pte")
 USER_OPTION(${use_case}_MODEL_PATH "U85 Z1024 Dedicated SRAM TinyStories PTE."
     "${DEFAULT_MODEL_PATH}" FILEPATH)
+USER_OPTION(${use_case}_CONTEXT "Exported KV context length; must match the PTE."
+    128 INT)
+list(APPEND ${use_case}_COMPILE_DEFS TINYSTORIES_CONTEXT=${${use_case}_CONTEXT})
+USER_OPTION(${use_case}_LOGIT_DUMP "Print the top five logits for every inference."
+    OFF BOOL)
+if (${${use_case}_LOGIT_DUMP})
+    list(APPEND ${use_case}_COMPILE_DEFS TINYSTORIES_LOGIT_DUMP)
+endif()
 USER_OPTION(${use_case}_ACTIVATION_BUF_SZ "ExecuTorch method pool in DDR."
-    0x00800000 STRING)
+    0x00700000 STRING)
 
 if (NOT EXISTS "${${use_case}_MODEL_PATH}")
     message(FATAL_ERROR "TinyStories PTE not found: ${${use_case}_MODEL_PATH}")
@@ -75,6 +78,7 @@ if (${use_case}_MODE STREQUAL "DEMO")
     execute_process(COMMAND ${CMAKE_COMMAND} -E env "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
         "${PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/tools/demo_cache_contract.py"
         "${${use_case}_MODEL_PATH}" "${INC_GEN_DIR}/TinyStoriesCacheContract.hpp"
+        --context "${${use_case}_CONTEXT}"
         RESULT_VARIABLE _tinystories_demo_contract_result)
     if (NOT _tinystories_demo_contract_result EQUAL "0")
         message(FATAL_ERROR "TinyStories DEMO requires the validated INT16 KV model")
@@ -189,7 +193,7 @@ execute_process(
     COMMAND ${CMAKE_COMMAND} -E env
         "PYTHONPATH=${MLEK_GENERATOR_PYTHONPATH}"
         "${PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/tools/validate_delegate_io.py"
-        "${${use_case}_MODEL_PATH}"
+        "${${use_case}_MODEL_PATH}" --context "${${use_case}_CONTEXT}"
     RESULT_VARIABLE _tinystories_io_validation_result
 )
 if (NOT _tinystories_io_validation_result EQUAL "0")

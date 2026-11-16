@@ -40,7 +40,9 @@ void TinyStoriesProfiler::DelegateBegin()
     m_delegateBegin = Now();
 }
 void TinyStoriesProfiler::DelegateEnd()
-{ Record(Stage::DELEGATE, Now() - m_delegateBegin); }
+{
+    Record(Stage::DELEGATE, Now() - m_delegateBegin);
+}
 void TinyStoriesProfiler::Record(Stage stage, uint64_t cycles, size_t bytes)
 {
     auto& item = m_measurements[static_cast<size_t>(stage)];
@@ -131,12 +133,18 @@ bool TinyStoriesProfiler::Print(size_t position,
     const uint64_t children = driver.cycles +
                               m_measurements[static_cast<size_t>(Stage::INPUT_COPY)].cycles +
                               m_measurements[static_cast<size_t>(Stage::OUTPUT_COPY)].cycles;
-    if (accounted > invoke || children > delegate.cycles || driver.calls != 1 ||
-        delegate.calls != 1) {
-        printf_err("TINYSTORIES_STAGE invalid position=%zu driver_calls=%u delegate_calls=%u\n",
+    if (accounted > invoke || children > delegate.cycles || driver.calls < 1 ||
+        delegate.calls != driver.calls) {
+        printf_err("TINYSTORIES_STAGE invalid position=%zu driver_calls=%u delegate_calls=%u "
+                   "accounted=%" PRIu64 " invoke=%" PRIu64 " children=%" PRIu64 " delegate=%" PRIu64
+                   "\n",
                    position,
                    driver.calls,
-                   delegate.calls);
+                   delegate.calls,
+                   accounted,
+                   invoke,
+                   children,
+                   delegate.cycles);
         return false;
     }
     if (!verbose) {

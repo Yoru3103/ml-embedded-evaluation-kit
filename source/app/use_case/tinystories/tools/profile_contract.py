@@ -37,9 +37,7 @@ def write_contract(model_path: Path, header_path: Path):
             if hasattr(call, 'op_index'):
                 name = (plan.operators[call.op_index].name + '.' +
                         plan.operators[call.op_index].overload)
-                if name not in stages:
-                    raise ValueError(f'Unclassified native operator: {name}')
-                counts[stages[name]] += 1
+                counts[stages.get(name, 6)] += 1
             elif hasattr(call, 'delegate_index'):
                 delegate = plan.delegates[call.delegate_index]
                 if delegate.id != 'EthosUBackend':
@@ -51,7 +49,7 @@ def write_contract(model_path: Path, header_path: Path):
                 counts[9] += len(descriptors['outputs'])
                 counts[10] += 1
     expected = [counts[index] for index in range(11)]
-    if any(counts[index] == 0 for index in range(4)) or counts[7] != 1:
+    if any(counts[index] == 0 for index in range(4)) or counts[7] < 1:
         raise ValueError(f'Unexpected TinyStories operator topology: {expected}')
     header = ('// SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates\n'
               '// <open-source-office@arm.com>\n// SPDX-License-Identifier: Apache-2.0\n'

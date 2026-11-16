@@ -21,6 +21,10 @@
 #include <iterator>
 #include <limits>
 
+#ifndef TINYSTORIES_CONTEXT
+#    define TINYSTORIES_CONTEXT 64
+#endif
+
 namespace arm::app::tinystories {
 extern uint8_t* GetModelPointer();
 extern size_t GetModelLen();
@@ -32,6 +36,7 @@ static uint8_t s_methodPool[ACTIVATION_BUF_SZ] ACTIVATION_BUF_ATTRIBUTE;
 void MainLoop()
 {
     using namespace arm::app;
+    setvbuf(stdout, nullptr, _IONBF, 0);
     fwk::et::EtModel model;
     fwk::et::EtBackendData backend;
     backend.m_logTensorDetails = false;
@@ -63,8 +68,9 @@ void MainLoop()
     tinystories::RunDemo(model);
     return;
 #else
-    info("TinyStories PTE bytes=%zu; greedy generation, context=64, max_new_tokens=16\n",
-         program.size);
+    info("TinyStories PTE bytes=%zu; greedy regression, context=%d, max_new_tokens=16\n",
+         program.size,
+         TINYSTORIES_CONTEXT);
     info("TINYSTORIES_CLOCK cpu_hz=%" PRIu32 " npu_hz=%u "
          "npu_clock_source=configured_FPGA_assumption\n",
          get_mps4_core_clock(),
@@ -76,11 +82,13 @@ void MainLoop()
     info("TinyStories stages: CPU kernels + Delegate.Total + Runtime.Other = invoke; "
          "Delegate.Total contains InputCopy + NPU.Driver + OutputCopy + Delegate.Other; "
          "Driver uses CPU elapsed cycles, NPU TOTAL uses hardware cycles\n");
+    fflush(stdout);
     tinystories::Timing promptTiming{}, decodeTiming{};
     size_t promptMatches = 0;
     int32_t nextToken    = -1;
     for (size_t position = 0; position < std::size(tinystories::kPromptTokens); ++position) {
         const int32_t token = tinystories::kPromptTokens[position];
+        info("TINYSTORIES_LOOP position=%zu token=%" PRId32 "\n", position, token);
         if (!tinystories::Infer(model, token, position, nextToken, promptTiming, "prompt")) {
             return;
         }
@@ -102,31 +110,36 @@ void MainLoop()
          tinystories::kPromptExpected[std::size(tinystories::kPromptTokens) - 1],
          nextToken);
 
-    int32_t generated[std::size(tinystories::kGeneratedExpected)]{};
+    constexpr size_t kGeneratedTokens = TINYSTORIES_CONTEXT - std::size(tinystories::kPromptTokens);
+    constexpr size_t kReferenceTokens = std::size(tinystories::kGeneratedExpected);
+    int32_t generated[kGeneratedTokens]{};
     size_t generatedCount    = 0;
     size_t generationMatches = 0;
     for (size_t index = 0; index < std::size(generated); ++index) {
         generated[generatedCount++] = nextToken;
-        const int32_t expected      = tinystories::kGeneratedExpected[index];
-        generationMatches += nextToken == expected;
+        const int32_t expected      = index < kReferenceTokens ? tinystories::kGeneratedExpected[index] : -1;
+        const bool match            = expected >= 0 && nextToken == expected;
+        generationMatches += match;
         info("TINYSTORIES_GENERATED index=%zu token=%" PRId32 " expected=%" PRId32 " match=%d\n",
              index,
              nextToken,
              expected,
-             nextToken == expected);
+             match);
         if (nextToken == 2 || index + 1 == std::size(generated)) {
             break;
         }
         const size_t position = std::size(tinystories::kPromptTokens) + index;
-        if (position >= 64 ||
+        if (position >= TINYSTORIES_CONTEXT ||
             !tinystories::Infer(model, nextToken, position, nextToken, decodeTiming, "decode")) {
             return;
         }
     }
-    info("TINYSTORIES_GENERATION matches=%zu count=%zu success=%d\n",
+    const size_t referenceCount = kGeneratedTokens < kReferenceTokens ? kGeneratedTokens : kReferenceTokens;
+    info("TINYSTORIES_GENERATION matches=%zu count=%zu reference_count=%zu success=%d\n",
          generationMatches,
          generatedCount,
-         generatedCount == std::size(generated) && generationMatches == generatedCount);
+         referenceCount,
+         generatedCount >= referenceCount && generationMatches == referenceCount);
     tinystories::PrintTiming("prompt_sum", 0, promptTiming);
     tinystories::PrintTiming("decode_sum", 0, decodeTiming);
     int32_t textTokens[std::size(tinystories::kPromptTokens) + std::size(generated)]{};

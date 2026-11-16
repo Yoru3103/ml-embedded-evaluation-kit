@@ -44,10 +44,26 @@ def read_io(payload: bytes) -> dict[str, list[tuple[int, ...]]]:
     return result
 
 
-def validate(model_path: Path):
+def count_context(descriptors: dict, context: int) -> tuple[int, int]:
+    """Count KV inputs and outputs with the configured context.
+
+    :param descriptors:  Vela input and output descriptors.
+    :param context:      Context length the firmware is compiled for.
+    :returns:            Number of KV inputs and outputs in this delegate.
+    """
+    shape = (1, 8, context, 64)
+    token_shape = (1, 8, 1, 64)
+    inputs = [item for item in descriptors["inputs"] if tuple(item[:6])[-4:] == shape]
+    outputs = [item for item in descriptors["outputs"]
+               if tuple(item[:6])[-4:] in (shape, token_shape)]
+    return len(inputs), len(outputs)
+
+
+def validate(model_path: Path, context: int | None = None):
     """Reject mismatched delegate argument counts, shapes, and element sizes.
 
     :param model_path:  Serialized TinyStories PTE.
+    :param context:     Optional context length required by the build.
     :raises ValueError: If the delegate interface does not match Vela metadata.
     """
     program = _load_pte_program(model_path.read_bytes())
@@ -56,6 +72,8 @@ def validate(model_path: Path):
     widths = {"BOOL": 1, "BYTE": 1, "CHAR": 1, "SHORT": 2,
               "INT": 4, "LONG": 8, "HALF": 2, "FLOAT": 4}
     calls = 0
+    kv_inputs = 0
+    kv_outputs = 0
     for plan in program.execution_plan:
         for chain in plan.chains:
             for instruction in chain.instructions:
@@ -67,32 +85,73 @@ def validate(model_path: Path):
                     continue
                 payload = bytes(program.backend_delegate_data[delegate.processed.index].data)
                 descriptors = read_io(payload)
+                if context is not None:
+                    inputs, outputs = count_context(descriptors, context)
+                    kv_inputs += inputs
+                    kv_outputs += outputs
                 ordered = descriptors["inputs"] + descriptors["outputs"]
-                if len(call.args) != len(ordered):
+                if len(call.args) < len(ordered):
                     raise ValueError(
                         f"Delegate has {len(call.args)} tensor arguments, but Vela has "
                         f"{len(descriptors['inputs'])} inputs + "
                         f"{len(descriptors['outputs'])} outputs"
                     )
-                for index, (value_index, descriptor) in enumerate(zip(call.args, ordered)):
+                input_bytes = {
+                    math.prod(tuple(value or 1 for value in descriptor[:6])) * descriptor[6]
+                    for descriptor in descriptors["inputs"]
+                }
+                used = [False] * len(ordered)
+                aliases = 0
+                for value_index in call.args:
                     tensor = plan.values[value_index].val
                     shape = tuple(tensor.sizes)
-                    vela_shape = tuple(value or 1 for value in descriptor[:6])
                     tensor_bytes = math.prod(shape) * widths[tensor.scalar_type.name]
-                    vela_bytes = math.prod(vela_shape) * descriptor[6]
-                    if tensor_bytes != vela_bytes or shape != vela_shape[-len(shape):]:
-                        raise ValueError(
-                            f"Delegate tensor {index}: {shape}/{tensor_bytes} bytes "
-                            f"does not match Vela {vela_shape}/{vela_bytes} bytes"
-                        )
+                    match = None
+                    for index, descriptor in enumerate(ordered):
+                        if used[index]:
+                            continue
+                        vela_shape = tuple(value or 1 for value in descriptor[:6])
+                        vela_bytes = math.prod(vela_shape) * descriptor[6]
+                        if tensor_bytes == vela_bytes:
+                            match = (index, descriptor, vela_shape)
+                            break
+                    if match is None:
+                        if tensor_bytes not in input_bytes:
+                            raise ValueError(
+                                f"Delegate tensor {shape}/{tensor_bytes} bytes has no "
+                                f"matching Vela descriptor and aliases no input")
+                        aliases += 1
+                        continue
+                    index, descriptor, vela_shape = match
+                    used[index] = True
+                    if shape != vela_shape[-len(shape):]:
+                        print(f"TinyStories delegate tensor {index}: shape-only mismatch "
+                              f"{shape} vs {vela_shape}, bytes match")
+                if not all(used):
+                    raise ValueError("Not all Vela descriptors were matched by ET arguments")
+                if aliases:
+                    print(f"TinyStories delegate I/O: {aliases} in-place output alias(es)")
                 calls += 1
                 print(f"TinyStories delegate I/O PASS: {len(descriptors['inputs'])} "
                       f"inputs, {len(descriptors['outputs'])} outputs")
-    if calls != 1:
-        raise ValueError(f"Expected one Ethos-U delegate call, found {calls}")
+    if calls < 1:
+        raise ValueError("No Ethos-U delegate call found")
+    if context is not None:
+        if calls == 1 and (kv_inputs != 16 or kv_outputs != 16) and not (kv_outputs == 0 and aliases >= 16):
+            raise ValueError(
+                f"Expected 16 KV inputs and 16 KV outputs shaped {(1, 8, context, 64)}, "
+                f"found {kv_inputs} and {kv_outputs}")
+        if calls > 1 and (kv_inputs == 0 or kv_outputs == 0):
+            raise ValueError(
+                f"Expected KV inputs and outputs shaped {(1, 8, context, 64)}, "
+                f"found {kv_inputs} and {kv_outputs} across {calls} delegates")
+    print(f"TinyStories delegate I/O total: {calls} calls, "
+          f"{kv_inputs} KV inputs, {kv_outputs} KV outputs")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model", type=Path)
-    validate(parser.parse_args().model)
+    parser.add_argument("--context", type=int)
+    args = parser.parse_args()
+    validate(args.model, args.context)

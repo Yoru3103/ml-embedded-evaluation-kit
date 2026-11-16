@@ -189,21 +189,23 @@ def compare_inputs(reference: CpuPlan, candidate: CpuPlan, token: int,
     return original_inputs
 
 
-def simulated_outputs(inputs: list[np.ndarray], position: int,
-                      rng: np.random.Generator) -> list[np.ndarray]:
+def simulated_outputs(inputs: list[np.ndarray], position: int, rng: np.random.Generator,
+                      cache_shape: tuple[int, ...]) -> list[np.ndarray]:
     """Update cache rows with arbitrary INT16 results, including signed-min values.
 
-    :param inputs:      Current delegate input snapshots.
-    :param position:    Cache position to update.
-    :param rng:         Deterministic random source.
-    :returns:           Sixteen cache outputs and one logits output.
+    :param inputs:       Current delegate input snapshots.
+    :param position:     Cache position to update.
+    :param rng:          Deterministic random source.
+    :param cache_shape:  Exported KV tensor shape.
+    :returns:            Sixteen cache outputs and one logits output.
     """
-    states = [value for value in inputs if value.shape == (1, 8, 64, 64)]
+    states = [value for value in inputs if tuple(value.shape) == cache_shape]
     assert len(states) == 16
     outputs = []
     for state in states:
         result = state.copy()
-        result[:, :, position, :] = rng.integers(-32768, 32768, (1, 8, 64), dtype=np.int16)
+        row = (1, cache_shape[1], cache_shape[3])
+        result[:, :, position, :] = rng.integers(-32768, 32768, row, dtype=np.int16)
         result[:, :, position, 0] = -32768
         outputs.append(result)
     outputs.append(rng.integers(-32768, 32768, (1, 32000), dtype=np.int16))
@@ -238,23 +240,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('baseline', type=Path)
     parser.add_argument('candidate', type=Path)
+    parser.add_argument('--cache-shape', default='1,8,64,64')
     args = parser.parse_args()
+    cache_shape = tuple(int(value) for value in args.cache_shape.split(','))
     baseline, candidate = CpuPlan(args.baseline), CpuPlan(args.candidate)
     check_memory_aliases(candidate)
     rng = np.random.default_rng(42)
     input_checks = 0
-    for position in range(64):
+    context = cache_shape[2]
+    for position in range(context):
         token = 1 if position == 0 else int(rng.integers(3, 32000))
         inputs = compare_inputs(baseline, candidate, token, position)
         input_checks += len(inputs)
-        outputs = simulated_outputs(inputs, position, rng)
+        outputs = simulated_outputs(inputs, position, rng, cache_shape)
         baseline.finish(outputs)
         candidate.finish(outputs)
         assert np.array_equal(baseline.value(baseline.plan.outputs[0]),
                               candidate.value(candidate.plan.outputs[0]))
     check_negative_control(args.baseline, args.candidate, outputs)
     print(json.dumps({'delegate_input_comparisons': input_checks,
-                      'context_positions': 64, 'mismatches': 0,
+                      'context_positions': context, 'mismatches': 0,
                       'initial_state_preserved': True,
                       'planned_memory_alias_check': 'PASS',
                       'signed_min_boundary_exercised': True,

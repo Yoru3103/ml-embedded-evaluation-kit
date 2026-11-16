@@ -9,8 +9,8 @@
       min_opt->isIntegral(false) && max_opt->isIntegral(false) &&
       min_opt->to<int64_t>() == -32767 && max_opt->to<int64_t>() == 32767 &&
       in.dim() == 4 && out.dim() == 4 &&
-      in.size(0) == 1 && in.size(1) == 8 && in.size(2) == 64 && in.size(3) == 64 &&
-      out.size(0) == 1 && out.size(1) == 8 && out.size(2) == 64 && out.size(3) == 64 &&
+      in.size(0) == 1 && in.size(1) == 8 && in.size(2) >= 1 && in.size(3) == 64 &&
+      out.size(0) == 1 && out.size(1) == 8 && out.size(2) >= 1 && out.size(3) == 64 &&
       tensors_have_same_dim_order(in, out) &&
       in.const_data_ptr<int16_t>() == out.mutable_data_ptr<int16_t>()) {
     arm::app::tinystories::ClampCache(out.mutable_data_ptr<int16_t>(), out.numel());

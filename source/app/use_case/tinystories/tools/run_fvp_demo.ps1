@@ -15,7 +15,7 @@ if (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
 $cache = Get-Content -LiteralPath (Join-Path $BuildDirectory 'CMakeCache.txt')
 foreach ($setting in @('tinystories_MODE=DEMO', 'FPGA_PLATFORM_SSE_320=OFF',
         'SEMIHOSTING_ENABLED=OFF', 'ETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF',
-        'ML_FWK_TMP_MEM_BASE=0x73E00000', 'UART0_BASE=0x58203000')) {
+        'ML_FWK_TMP_MEM_BASE=0x73DC0000', 'UART0_BASE=0x58203000')) {
     $key, $value = $setting.Split('=')
     if (-not ($cache -match "^${key}:[^=]+=$value`$")) {
         throw "Expected FVP demo setting: $setting"
