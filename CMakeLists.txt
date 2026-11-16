@@ -52,8 +52,29 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+option(ASR_STAGE_PROFILING "Enable optional wav2letter processing-stage timing" OFF)
+option(ASR_SIMPLE_STAGE_PROFILING "Enable wav2letter six-stage timing" OFF)
+option(ASR_ET_STAGE_PROFILING "Enable Conformer ExecuTorch six-stage timing" OFF)
+if (ASR_STAGE_PROFILING AND ASR_SIMPLE_STAGE_PROFILING)
+    message(FATAL_ERROR "Select either simple or detailed wav2letter timing, not both")
+endif()
+if (ASR_SIMPLE_STAGE_PROFILING)
+    add_compile_definitions(ASR_SIMPLE_STAGE_PROFILING)
+endif()
+if (ASR_STAGE_PROFILING)
+    add_compile_definitions(ASR_STAGE_PROFILING)
+endif()
+
 # Add hal target
 add_subdirectory(source/hal ${CMAKE_BINARY_DIR}/mlek-hal)
+
+if (ASR_ET_STAGE_PROFILING AND NOT CPU_PROFILE_ENABLED)
+    message(FATAL_ERROR "ASR_ET_STAGE_PROFILING requires CPU_PROFILE_ENABLED=ON")
+endif()
+
+if ((ASR_STAGE_PROFILING OR ASR_SIMPLE_STAGE_PROFILING) AND NOT CPU_PROFILE_ENABLED)
+    message(FATAL_ERROR "ASR stage profiling requires CPU_PROFILE_ENABLED=ON")
+endif()
 
 # Add platform agnostic lib
 add_subdirectory(source/lib ${CMAKE_BINARY_DIR}/mlek-lib)
@@ -62,9 +83,17 @@ add_subdirectory(source/lib ${CMAKE_BINARY_DIR}/mlek-lib)
 add_subdirectory(source/app ${CMAKE_BINARY_DIR}/mlek-app)
 
 if (TARGET_PLATFORM STREQUAL "native")
+    add_subdirectory(tests/processing/asr ${CMAKE_BINARY_DIR}/asr-processing-tests)
+    add_subdirectory(tests/processing/asr_zh ${CMAKE_BINARY_DIR}/asr-zh-processing-tests)
+    add_subdirectory(tests/processing/kws_zh ${CMAKE_BINARY_DIR}/kws-zh-processing-tests)
+    add_subdirectory(tests/processing/asr_vsi ${CMAKE_BINARY_DIR}/asr_vsi-tests)
+    add_subdirectory(tests/processing/fvp_audio ${CMAKE_BINARY_DIR}/fvp_audio-tests)
+    add_subdirectory(tests/processing/file_demo ${CMAKE_BINARY_DIR}/file_demo-tests)
+    add_subdirectory(tests/processing/qrcode_demo ${CMAKE_BINARY_DIR}/qrcode_demo-tests)
     add_subdirectory(tests/hal/timer ${CMAKE_BINARY_DIR}/mps4-timer-tests)
     add_subdirectory(tests/hal/display ${CMAKE_BINARY_DIR}/mps4-display-tests)
     add_subdirectory(tests/processing/yolov8_detection ${CMAKE_BINARY_DIR}/yolov8-processing-tests)
+    add_subdirectory(tests/processing/pico_face ${CMAKE_BINARY_DIR}/pico-face-processing-tests)
 endif()
 
 print_useroptions()

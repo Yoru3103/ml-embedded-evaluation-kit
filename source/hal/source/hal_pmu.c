@@ -29,6 +29,13 @@ void hal_pmu_init(void)
 void hal_pmu_reset(void)
 { platform_reset_counters(); }
 
+void hal_pmu_reset_npu(void)
+{
+#if defined(ARM_NPU)
+    ethosu_pmu_init();
+#endif
+}
+
 void hal_pmu_final(void)
 {
 #if defined(ARM_NPU)

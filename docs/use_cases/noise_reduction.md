@@ -4,6 +4,10 @@
   - [Introduction](./noise_reduction.md#introduction)
   - [How the default neural network model works](./noise_reduction.md#how-the-default-neural-network-model-works)
   - [Post-processing](./noise_reduction.md#post_processing)
+    - [Windows FVP demo and listening report](#windows-fvp-demo-and-listening-report)
+    - [Saving WAV files directly from an FVP](#saving-wav-files-directly-from-an-fvp)
+    - [Processing longer inputs](#processing-longer-inputs)
+    - [Extracting WAV files from an MPS3 memory dump](#extracting-wav-files-from-an-mps3-memory-dump)
     - [Dumping of memory contents from the Fixed Virtual Platform](./noise_reduction.md#dumping-of-memory-contents-from-the-fixed-virtual-platform)
     - [Dumping post processed results for all inferences](./noise_reduction.md#dumping-post_processed-results-for-all-inferences)
   - [Prerequisites](./noise_reduction.md#prerequisites)
@@ -69,14 +73,116 @@ For more information please refer to the original paper:
 After each inference the output of the model is passed to post-processing code which uses the gain values the model
 produced to generate audio with the noise removed from it.
 
-For you to verify the outputs of the model after post-processing, you will have manually use an [offline script](../../scripts/py/rnnoise_dump_extractor.py)
-to convert the post-processed outputs into a wav file.
-This offline script takes a dump file as the input and saves the denoised WAV file to disk. The following is an example
-of how to call the script from the command line after running the use-case and
-[selecting to dump memory contents](./noise_reduction.md#dumping-post_processed-results-for-all-inferences).
+### Windows FVP demo and listening report
+
+Run these commands from the repository root. The build wrapper uses the existing
+Windows TFLM toolchain and the SSE-320 U85-1024 Dedicated SRAM configuration.
+Use `-Action Setup` once if the Windows build tools and default model are missing.
+If you already have a matching Vela model, pass it as `-ModelPath`.
+
+```powershell
+$inputWav = 'resources/noise_reduction/samples/p232_113.wav'
+.\scripts\windows\build-noise-reduction-fvp-demo.ps1 -InputPath $inputWav
+.\scripts\windows\run-noise-reduction-fvp-demo.ps1 -Headless -OutputDirectory build/rnnoise-listening
+python scripts/py/noise_reduction_report.py --noisy $inputWav `
+    --denoised build/rnnoise-listening/denoised_loop0.wav `
+    --output-dir build/rnnoise-listening
+Invoke-Item build/rnnoise-listening/report.html
+```
+
+The run script creates a fresh timestamped directory by default and saves the FVP
+log beside its WAV files. An explicit `-OutputDirectory` must be new. Use the same
+`-BuildDirectory` for both scripts if you override it.
+
+The Python program uses the standard library and requires 48 kHz mono PCM16
+inputs. The firmware build can resample other inputs. For the report, provide
+the corresponding 48 kHz mono version of the same input. The report embeds the
+aligned audio for same-position A/B switching and shows the waveform, short-time
+RMS, overall RMS, peak and PCM rail hits. With `--clean clean.wav` it also reports
+SI-SDR before and after and the improvement in `metrics.json`. The clean file
+must already be aligned to the noisy input.
+
+The default delay correction is 512 samples. RNNoise analysis places the previous
+block in the first half of its window, and synthesis emits that half first.
+Use `--denoised-delay-samples 0` for files that have already been aligned, or pass
+a measured delay for another implementation. Measurements and playback use the
+common interval. For long recordings the self-contained HTML grows with audio length.
+
+### Evaluating a VoiceBank-DEMAND test directory
+
+The dataset evaluator pairs files by sorted filename. Build the noisy test
+directory as one firmware input set so each utterance starts with a fresh
+recurrent state and exports as `denoised_loopN.wav` in the same sorted order.
+Build and FVP output together contain hundreds of megabytes of generated audio
+and artifacts for the full 824-utterance test set.
+
+```powershell
+$dataset = 'resources_downloaded/noise_reduction'
+$build = 'build/fvp-noise-reduction-voicebank'
+$out = 'build/fvp-noise-reduction-voicebank/results'
+.\scripts\windows\build-noise-reduction-fvp-demo.ps1 `
+    -InputPath "$dataset/noisy_testset_wav" `
+    -ModelPath 'resources_downloaded/linux-batch/dedicated/noise_reduction/rnnoise_INT8_vela_Z1024_Dedicated_Sram.tflite' `
+    -BuildDirectory $build
+.\scripts\windows\run-noise-reduction-fvp-demo.ps1 -BuildDirectory $build -Headless -Quiet -OutputDirectory $out
+python scripts/py/noise_reduction_dataset_report.py `
+    --noisy-dir "$dataset/noisy_testset_wav" `
+    --clean-dir "$dataset/clean_testset_wav" `
+    --denoised-dir $out --output-dir $out/report
+Invoke-Item "$out/report/dataset_report.html"
+```
+
+The evaluator verifies that all three sets have matching counts and that noisy
+and clean filenames match. It reports per-utterance CSV scores and a summary
+JSON and HTML histogram. The current implementation averages SI-SDR and
+improvement per utterance rather than weighting longer clips more heavily.
+
+### Saving WAV files directly from an FVP
+
+Add these options to your MPS3 or MPS4 build configuration.
+
+```text
+-DUSE_CASE_BUILD=noise_reduction
+-DML_FRAMEWORK=tflm
+-DSEMIHOSTING_ENABLED=ON
+-Dnoise_reduction_SAVE_WAV=ON
+-Dnoise_reduction_FILE_PATH=/path/to/noisy.wav
+-Dnoise_reduction_AUDIO_DURATION=0
+-DINTERACTIVE_MODE=OFF
+-DHAL_AUDIO_LOOP=OFF
+```
+
+Launch the rebuilt AXF from the desired host output directory. Pass
+`-C cpu0.semihosting-enable=1` for MPS3 or
+`-C mps4_board.subsystem.cpu0.semihosting-enable=1` for MPS4.
+See [Semihosting](../sections/deployment.md#semihosting) for stack parameters.
+
+The application writes `denoised_loop0.wav`, then increments the index for
+each subsequent clip in the order shown by the `Using sample audio` logs.
+It logs success after closing each file. The output is 48 kHz mono PCM16.
+Files with the same names are overwritten on subsequent runs.
+
+### Processing longer inputs
+
+With `noise_reduction_AUDIO_DURATION=0`, the build embeds the whole WAV
+after applying the configured offset and resampling. Keep the 48 kHz and
+mono settings. The recurrent state persists within a clip and resets between
+clips. Each inference consumes 512 samples (about 10.67 ms). The final
+partial frame of up to 511 samples is discarded.
+
+Direct WAV export writes one frame at a time. Longer clips still require
+about 96 kB per second for the embedded input and take longer to simulate.
+For listening tests, compare at matched playback levels. With a clean
+reference, convert it to the same sample rate and align it with the output
+before measuring the common interval.
+
+### Extracting WAV files from an MPS3 memory dump
+
+With `noise_reduction_SAVE_WAV=OFF`, MPS3 writes output to memory. After the
+FVP exits and creates the dump file, extract it with Python.
 
 ```commandline
-python scripts/py/rnnoise_dump_extractor.py --dump_file <path_to_dump_file.bin> --output_dir <path_to_output_folder>
+python scripts/py/rnnoise_dump_extractor.py --dump_file output.bin --output_dir denoised
 ```
 
 The application for this use case has been written to dump the post-processed output to the address pointed to by
@@ -101,35 +207,10 @@ The Noise Reduction application uses the memory address specified by
 The maximum size of this buffer is set by the parameter
 `noise_reduction_MEM_DUMP_LEN` which defaults to 1 MiB.
 
-Logging information is generated for every inference run performed. Each line corresponds to the post-processed
-result of that inference being written to a certain location in memory.
-
-For example:
-
-```log
-INFO - Audio Clip dump header info (20 bytes) written to 0x80000000
-INFO - Inference 1/136
-INFO - Copied 960 bytes to 0x80000014
-...
-INFO - Inference 136/136
-INFO - Copied 960 bytes to 0x8001fa54
-```
-
-In the preceding output we can see that it starts at the default address of
-`0x80000000` where some header information is dumped. Then, after the first inference 960 bytes
-(480 INT16 values) are written to the first address after the dumped header `0x80000014`.
-Each inference afterward will then write another 960 bytes to the next address and so on until all inferences
-are complete.
-
-When consolidating all inference outputs for an entire audio clip, the application output should report:
-
-```log
-INFO - Output memory dump of 130580 bytes written at address 0x80000000
-```
-
-The application output log states that there are 130580 bytes worth of valid data ready to be read
-from `0x80000000`. If the FVP was started with the `--dump` option, then the output file is created
-when the FVP instance exits.
+Each frame uses 1024 PCM bytes. The default 1 MiB buffer holds just under
+10.93 seconds of output across all clips, including headers and the end marker.
+To capture more, increase both `noise_reduction_MEM_DUMP_LEN` and the length
+in the FVP `--dump` argument. Ensure that the entire range is mapped and reserved.
 
 ## Prerequisites
 
@@ -355,18 +436,9 @@ After the application has started inferences are executed on inputs from `noise_
 
 ### Running Noise Reduction
 
-The following example illustrates an application output:
+The following example illustrates profiling output:
 
 ```log
-INFO - Audio Clip dump header info (20 bytes) written to 0x80000000
-INFO - Inference 1/136
-INFO - Copied 960 bytes to 0x80000014
-INFO - Inference 2/136
-INFO - Copied 960 bytes to 0x800003d4
-...
-INFO - Inference 136/136
-INFO - Copied 960 bytes to 0x8001fa54
-INFO - Output memory dump of 130580 bytes written at address 0x80000000
 INFO - Final results:
 INFO - Profile for Inference:
 INFO - NPU AXI0_RD_DATA_BEAT_RECEIVED beats: 530

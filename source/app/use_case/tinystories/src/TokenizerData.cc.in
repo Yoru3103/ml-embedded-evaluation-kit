@@ -1,0 +1,18 @@
+/* SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0 */
+#include "TokenDecoder.hpp"
+asm(".section tinystories_tokenizer,\"a\",%progbits\n"
+    ".balign 16\n"
+    ".global tinystories_tokenizer_start\n"
+    "tinystories_tokenizer_start:\n"
+    ".incbin \"@TINYSTORIES_TOKENIZER_INC_PATH@\"\n"
+    ".global tinystories_tokenizer_end\n"
+    "tinystories_tokenizer_end:\n");
+namespace arm::app::tinystories {
+extern "C" const uint8_t tinystories_tokenizer_start[];
+extern "C" const uint8_t tinystories_tokenizer_end[];
+const uint8_t* GetTokenizerData() { return tinystories_tokenizer_start; }
+size_t GetTokenizerSize()
+{ return static_cast<size_t>(tinystories_tokenizer_end - tinystories_tokenizer_start); }
+} // namespace arm::app::tinystories

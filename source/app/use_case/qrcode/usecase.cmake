@@ -8,6 +8,16 @@ if (NOT ${ML_FRAMEWORK} IN_LIST ${use_case}_ML_FRAMEWORK)
     return()
 endif()
 set(${use_case}_supports_${ML_FRAMEWORK} ON)
+USER_OPTION(${use_case}_INPUT_MODE "QR input source: STATIC, SEMIHOST or UART" STATIC STRING)
+set_property(CACHE ${use_case}_INPUT_MODE PROPERTY STRINGS STATIC SEMIHOST UART)
+if (NOT ${use_case}_INPUT_MODE MATCHES "^(STATIC|SEMIHOST|UART)$")
+    message(FATAL_ERROR "qrcode_INPUT_MODE must be STATIC, SEMIHOST or UART")
+endif()
+if (${use_case}_INPUT_MODE STREQUAL "SEMIHOST" AND
+    (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR
+     FPGA_PLATFORM_SSE_320 OR NOT SEMIHOSTING_ENABLED OR NOT MPS4_DISPLAY_ENABLED))
+    message(FATAL_ERROR "QR semihost demo requires SSE-320 FVP, semihosting and LCD")
+endif()
 
 if ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_TFLM}")
     set(DEFAULT_MODEL_PATH
@@ -61,6 +71,13 @@ endif()
 
 USER_OPTION(${use_case}_IMAGE_WIDTH "QR-code input width." 256 STRING)
 USER_OPTION(${use_case}_IMAGE_HEIGHT "QR-code input height." 256 STRING)
+if (${use_case}_INPUT_MODE STREQUAL "SEMIHOST")
+    add_library(qrcode_semihost_mode INTERFACE)
+    target_compile_definitions(qrcode_semihost_mode INTERFACE QRCODE_INPUT_SEMIHOST
+        QRCODE_INPUT_WIDTH=${${use_case}_IMAGE_WIDTH}
+        QRCODE_INPUT_HEIGHT=${${use_case}_IMAGE_HEIGHT})
+    list(APPEND ${use_case}_LINK_LIBS qrcode_semihost_mode)
+endif()
 USER_OPTION(${use_case}_IMAGE_RESIZE_MODE "QR-code image resize mode: crop or letterbox."
     letterbox STRING)
 
@@ -98,3 +115,14 @@ set(${use_case}_COMPILE_DEFS
     "QRCODE_SCORE_THRESHOLD=${${use_case}_SCORE_THRESHOLD}F"
     "QRCODE_NMS_THRESHOLD=${${use_case}_NMS_THRESHOLD}F"
     "QRCODE_DISPLAY_DOWNSCALE=${${use_case}_DISPLAY_DOWNSCALE}")
+
+if (${use_case}_INPUT_MODE STREQUAL "UART")
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR SEMIHOSTING_ENABLED)
+        message(FATAL_ERROR "File UART input requires SSE-320 and UART stdout")
+    endif()
+    add_library(qrcode_uart_file_mode INTERFACE)
+    target_compile_definitions(qrcode_uart_file_mode INTERFACE QRCODE_INPUT_UART
+        QRCODE_INPUT_WIDTH=${${use_case}_IMAGE_WIDTH}
+        QRCODE_INPUT_HEIGHT=${${use_case}_IMAGE_HEIGHT})
+    list(APPEND ${use_case}_LINK_LIBS qrcode_uart_file_mode)
+endif()

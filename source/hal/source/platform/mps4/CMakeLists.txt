@@ -26,6 +26,8 @@ project(${PLATFORM_DRIVERS_TARGET}
     DESCRIPTION     "Platform drivers library for MPS4 FPGA/FVP targets"
     LANGUAGES       C CXX ASM)
 
+option(MPS4_DISPLAY_ENABLED "Initialize the MPS4 display and framebuffer" ON)
+
 # 1. We should be cross-compiling (MPS4 target only runs Cortex-M targets)
 if (NOT ${CMAKE_CROSSCOMPILING})
     message(FATAL_ERROR "No ${PLATFORM_DRIVERS_TARGET} support for this target.")
@@ -115,6 +117,7 @@ target_include_directories(${PLATFORM_DRIVERS_TARGET}
 
 ## Compile definitions
 target_compile_definitions(${PLATFORM_DRIVERS_TARGET} PRIVATE
+    MPS4_DISPLAY_ENABLED=$<BOOL:${MPS4_DISPLAY_ENABLED}>
     HDLCD_FRAME_BUFFER_BASE_ADDRESS=${HDLCD_FRAME_BUFFER_BASE_ADDRESS}
     HDLCD_BYTES_PER_PIXEL=${HDLCD_BYTES_PER_PIXEL}
     HDLCD_RES_WIDTH=${HDLCD_RES_WIDTH}
@@ -173,7 +176,7 @@ target_link_libraries(${PLATFORM_DRIVERS_TARGET} PUBLIC
     hal_log
     cmsis_device
     platform_pmu
-    hal_display_mps4
+    $<IF:$<BOOL:${MPS4_DISPLAY_ENABLED}>,hal_display_mps4,hal_display_stubs>
     hal_audio_static_streams
     $<IF:$<BOOL:${FVP_VSI_ENABLED}>,hal_camera_vsi,hal_camera_static_images>
     $<$<NOT:$<BOOL:${SEMIHOSTING_ENABLED}>>:stdout_retarget_cmsdk>)

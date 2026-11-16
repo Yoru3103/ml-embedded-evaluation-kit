@@ -41,6 +41,7 @@ struct EtBackendData {
     std::shared_ptr<Result<Program>> m_program{nullptr};
     std::string m_methodName{};
     executorch::runtime::EventTracer* m_eventTracer{nullptr}; /**< Caller-owned operator tracer. */
+    bool m_logTensorDetails{true}; /**< Print every tensor's shape/type during initialisation. */
 };
 
 /**

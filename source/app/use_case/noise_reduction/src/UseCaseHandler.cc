@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2021-2022, 2024-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -25,8 +25,34 @@
 #include "hal.h"
 #include "mlek/log/log_macros.h"
 
+#include <cstring>
+#include <limits>
+#include <memory>
+
+#ifdef NOISE_REDUCTION_SAVE_WAV
+#include <cstdio>
+#endif
+
 namespace arm {
 namespace app {
+
+#ifdef NOISE_REDUCTION_SAVE_WAV
+    static bool WriteWavHeader(std::FILE* file, uint32_t pcmBytes)
+    {
+        // RIFF PCM, mono, 48 kHz, 16 bits. Sizes are stored in little-endian order.
+        uint8_t header[] = {
+            'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E',
+            'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+            0x80, 0xbb, 0, 0, 0, 0x77, 1, 0, 2, 0, 16, 0,
+            'd', 'a', 't', 'a', 0, 0, 0, 0
+        };
+        for (size_t i = 0; i < sizeof(uint32_t); ++i) {
+            header[4 + i]  = static_cast<uint8_t>((pcmBytes + 36) >> (8 * i));
+            header[40 + i] = static_cast<uint8_t>(pcmBytes >> (8 * i));
+        }
+        return std::fwrite(header, 1, sizeof(header), file) == sizeof(header);
+    }
+#endif
 
     /* Noise reduction inference handler. */
     bool NoiseReductionHandler(ApplicationContext& ctx)
@@ -99,20 +125,49 @@ namespace app {
 
             hal_display_clear(COLOR_BLACK);
 
-            auto startDumpAddress = memDumpBaseAddr + memDumpBytesWritten;
-
             /* Creating a sliding window through the audio. */
             auto audioDataSlider =
                 audio::SlidingWindow<const int16_t>(audioData,
                                                     nElements,
                                                     audioFrameLen,
                                                     audioFrameStride);
-            std::string audioFileName = "loop" + std::to_string(loopCount++);
-            memDumpBytesWritten +=
-                DumpDenoisedAudioHeader(audioFileName.c_str(),
-                                        (audioDataSlider.TotalStrides() + 1) * audioFrameLen,
-                                        memDumpBaseAddr + memDumpBytesWritten,
-                                        memDumpMaxLen - memDumpBytesWritten);
+            if (!audioDataSlider.HasNext()) {
+                printf_err("Audio clip is shorter than one inference frame.\n");
+                return false;
+            }
+
+            const size_t frameCount = audioDataSlider.TotalStrides() + 1;
+            const uint64_t pcmBytes = uint64_t{frameCount} * audioFrameLen * sizeof(int16_t);
+            const std::string audioFileName = "loop" + std::to_string(loopCount++);
+
+            const size_t dumpHeaderSize = 2 * sizeof(int32_t) + audioFileName.size();
+            size_t dumpWriteOffset = memDumpBytesWritten;
+            if (memDumpMaxLen > 0) {
+                const size_t overhead = dumpHeaderSize + sizeof(int32_t);
+                if (pcmBytes > std::numeric_limits<int32_t>::max() ||
+                    memDumpBytesWritten > memDumpMaxLen ||
+                    overhead + pcmBytes > memDumpMaxLen - memDumpBytesWritten) {
+                    printf_err("Denoised audio exceeds the configured memory dump size.\n");
+                    return false;
+                }
+
+                /* Leave the previous end marker in place until this clip is complete. */
+                dumpWriteOffset += dumpHeaderSize;
+            }
+
+#ifdef NOISE_REDUCTION_SAVE_WAV
+            if (pcmBytes > std::numeric_limits<uint32_t>::max() - 36) {
+                printf_err("Noise reduction output exceeds the RIFF WAV size limit.\n");
+                return false;
+            }
+            const std::string wavName = "denoised_" + audioFileName + ".wav";
+            std::unique_ptr<std::FILE, decltype(&std::fclose)> wav(
+                std::fopen(wavName.c_str(), "wb"), &std::fclose);
+            if (!wav || !WriteWavHeader(wav.get(), static_cast<uint32_t>(pcmBytes))) {
+                printf_err("Failed to open or write WAV header for %s.\n", wavName.c_str());
+                return false;
+            }
+#endif
 
             /* Set up pre and post-processing. */
             std::shared_ptr<rnn::RNNoiseFeatureProcessor> featureProcessor =
@@ -159,7 +214,7 @@ namespace app {
 
                 info("Inference %zu/%zu\n",
                      audioDataSlider.Index() + 1,
-                     audioDataSlider.TotalStrides() + 1);
+                     frameCount);
 
                 /* Run inference over this feature sliding window. */
                 if (!RunInference(model, profiler)) {
@@ -182,26 +237,42 @@ namespace app {
                                      dataPsnTxtInfStartY,
                                      false);
 
+#ifdef NOISE_REDUCTION_SAVE_WAV
+                const size_t samplesWritten = std::fwrite(
+                    denoisedAudioFrame.data(), sizeof(int16_t), denoisedAudioFrame.size(), wav.get());
+                if (samplesWritten != denoisedAudioFrame.size()) {
+                    printf_err("Failed to write PCM data to %s.\n", wavName.c_str());
+                    return false;
+                }
+#endif
+
                 if (memDumpMaxLen > 0) {
                     /* Dump final post processed output to memory. */
-                    memDumpBytesWritten +=
-                        DumpOutputDenoisedAudioFrame(denoisedAudioFrame,
-                                                     memDumpBaseAddr + memDumpBytesWritten,
-                                                     memDumpMaxLen - memDumpBytesWritten);
+                    dumpWriteOffset += DumpOutputDenoisedAudioFrame(
+                        denoisedAudioFrame, memDumpBaseAddr + dumpWriteOffset,
+                        memDumpMaxLen - dumpWriteOffset);
                 }
             }
 
-            if (memDumpMaxLen > 0) {
-                /* Needed to not let the compiler complain about type mismatch. */
-                size_t valMemDumpBytesWritten = memDumpBytesWritten;
-                info("Output memory dump of %zu bytes written at address 0x%p\n",
-                     valMemDumpBytesWritten,
-                     startDumpAddress);
+#ifdef NOISE_REDUCTION_SAVE_WAV
+            if (std::fclose(wav.release()) != 0) {
+                printf_err("Failed to close %s.\n", wavName.c_str());
+                return false;
             }
+            info("Wrote %s\n", wavName.c_str());
+#endif
 
-            /* Finish by dumping the footer. */
-            DumpDenoisedAudioFooter(memDumpBaseAddr + memDumpBytesWritten,
-                                    memDumpMaxLen - memDumpBytesWritten);
+            if (memDumpMaxLen > 0) {
+                DumpDenoisedAudioHeader(audioFileName.c_str(), pcmBytes / sizeof(int16_t),
+                                        memDumpBaseAddr + memDumpBytesWritten,
+                                        memDumpMaxLen - memDumpBytesWritten);
+                memDumpBytesWritten = dumpWriteOffset;
+                /* The next clip overwrites this marker if there is room for it. */
+                const size_t footerSize = DumpDenoisedAudioFooter(
+                    memDumpBaseAddr + memDumpBytesWritten, memDumpMaxLen - memDumpBytesWritten);
+                info("Output memory dump of %zu bytes written at address %p\n",
+                     memDumpBytesWritten + footerSize, memDumpBaseAddr);
+            }
 
             info("All inferences for audio clip complete.\n");
             profiler.PrintProfilingResult();
@@ -232,55 +303,21 @@ namespace app {
                                    size_t memSize)
     {
 
-        if (memAddress == nullptr) {
+        const size_t filenameSize = std::strlen(filename);
+        const size_t headerSize = 2 * sizeof(int32_t) + filenameSize;
+        if (!memAddress || memSize < headerSize ||
+            filenameSize > std::numeric_limits<int32_t>::max() ||
+            dumpSize > std::numeric_limits<int32_t>::max() / sizeof(int16_t)) {
             return 0;
         }
 
-        int32_t filenameLength = strlen(filename);
-        size_t numBytesWritten = 0;
-        size_t numBytesToWrite = 0;
-        int32_t dumpSizeByte   = dumpSize * sizeof(int16_t);
-        bool overflow          = false;
-
-        /* Write the filename length */
-        numBytesToWrite = sizeof(filenameLength);
-        if (memSize - numBytesToWrite > 0) {
-            std::memcpy(memAddress, &filenameLength, numBytesToWrite);
-            numBytesWritten += numBytesToWrite;
-            memSize -= numBytesWritten;
-        } else {
-            overflow = true;
-        }
-
-        /* Write file name */
-        numBytesToWrite = filenameLength;
-        if (memSize - numBytesToWrite > 0) {
-            std::memcpy(memAddress + numBytesWritten, filename, numBytesToWrite);
-            numBytesWritten += numBytesToWrite;
-            memSize -= numBytesWritten;
-        } else {
-            overflow = true;
-        }
-
-        /* Write dumpSize in byte */
-        numBytesToWrite = sizeof(dumpSizeByte);
-        if (memSize - numBytesToWrite > 0) {
-            std::memcpy(memAddress + numBytesWritten, &(dumpSizeByte), numBytesToWrite);
-            numBytesWritten += numBytesToWrite;
-            memSize -= numBytesWritten;
-        } else {
-            overflow = true;
-        }
-
-        if (false == overflow) {
-            info("Audio Clip dump header info (%zu bytes) written to %p\n",
-                 numBytesWritten,
-                 memAddress);
-        } else {
-            printf_err("Not enough memory to dump Audio Clip header.\n");
-        }
-
-        return numBytesWritten;
+        const auto filenameLength = static_cast<int32_t>(filenameSize);
+        const auto dumpSizeBytes = static_cast<int32_t>(dumpSize * sizeof(int16_t));
+        std::memcpy(memAddress, &filenameLength, sizeof(filenameLength));
+        std::memcpy(memAddress + sizeof(filenameLength), filename, filenameSize);
+        std::memcpy(memAddress + sizeof(filenameLength) + filenameSize,
+                    &dumpSizeBytes, sizeof(dumpSizeBytes));
+        return headerSize;
     }
 
     size_t DumpDenoisedAudioFooter(uint8_t* memAddress, size_t memSize)

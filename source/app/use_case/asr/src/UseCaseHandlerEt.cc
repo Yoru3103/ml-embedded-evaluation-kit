@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2025-2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,18 +17,21 @@
  */
 #if defined(MLEK_FWK_EXECUTORCH)
 
-#include "UseCaseHandler.hpp"
+#    include "UseCaseHandler.hpp"
 
-#include "mlek/common/AudioRenderUtils.hpp"
-#include "BufAttributes.hpp"
-#include "mlek/fwk/executorch/ConformerModel.hpp"
-#include "mlek/use_case/asr/ConformerProcessing.hpp"
-#include "mlek/common/ImageUtils.hpp"
-#include "UseCaseCommonUtils.hpp"
-#include "hal.h"
-#include "mlek/log/log_macros.h"
+#    include "BufAttributes.hpp"
+#    include "UseCaseCommonUtils.hpp"
+#    include "hal.h"
+#    include "mlek/common/AudioRenderUtils.hpp"
+#    include "mlek/common/ImageUtils.hpp"
+#    include "mlek/fwk/executorch/ConformerModel.hpp"
+#    include "mlek/log/log_macros.h"
+#    include "mlek/use_case/asr/ConformerProcessing.hpp"
 
-#include <cstring>
+#    include <cstring>
+#    if defined(ASR_ET_STAGE_PROFILING)
+#        include "ConformerOpProfiler.hpp"
+#    endif
 
 namespace arm {
 namespace app {
@@ -54,15 +57,20 @@ namespace app {
         auto melSpecWindowSize = ctx.Get<uint32_t>("melSpecWindowSize");
         auto melSpecHopSize    = ctx.Get<uint32_t>("melSpecHopSize");
         auto chunkSize         = ctx.Get<uint32_t>("chunkSize");
+#    if defined(ASR_ET_STAGE_PROFILING)
+        auto& opProfiler = ctx.Get<ConformerOpProfiler&>("opProfiler");
+        hal_pmu_reset();
+        hal_pmu_final();
+#    endif
 
         if (!model.IsInited()) {
             printf_err("Model is not initialised! Terminating processing.\n");
             return false;
         }
 
-        auto inputTensorMelSpec  = model.GetInputTensor(0);
-        auto inputTensorChunkSize = model.GetInputTensor(1);
-        auto outputTensorLogits  = model.GetOutputTensor(0);
+        auto inputTensorMelSpec    = model.GetInputTensor(0);
+        auto inputTensorChunkSize  = model.GetInputTensor(1);
+        auto outputTensorLogits    = model.GetOutputTensor(0);
         auto outputTensorChunkSize = model.GetOutputTensor(1);
 
         auto melShape = inputTensorMelSpec->Shape();
@@ -71,39 +79,35 @@ namespace app {
         constexpr uint32_t melAudioSpanFactor = 100;
         const uint32_t melRows = melShape[fwk::et::ConformerModel::ms_inputMelRowsIdx];
         const uint32_t melCols = melShape[fwk::et::ConformerModel::ms_inputMelColsIdx];
+        if (melRows == 0 || melSpecWindowSize == 0 || melSpecHopSize == 0) {
+            printf_err("Invalid Conformer input dimensions or window settings\n");
+            return false;
+        }
+        const size_t maxAudioSamples =
+            melSpecWindowSize + static_cast<size_t>(melRows - 1) * melSpecHopSize;
 
         const auto audioMode    = HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT;
         const auto samplingRate = GET_AUDIO_SAMPLING_RATE(audioMode);
 
         auto preProcess = ConformerPreProcess<int16_t>(
-            inputTensorMelSpec,
-            inputTensorChunkSize,
-            melSpecWindowSize,
-            melSpecHopSize,
-            chunkSize
-        );
+            inputTensorMelSpec, inputTensorChunkSize, melSpecWindowSize, melSpecHopSize, chunkSize);
 
         std::string decodedResult;
 
-        auto postProcess = ConformerPostProcess(
-            outputTensorLogits,
-            outputTensorChunkSize,
-            labels,
-            decodedResult
-        );
+        auto postProcess =
+            ConformerPostProcess(outputTensorLogits, outputTensorChunkSize, labels, decodedResult);
 
         hal_audio_init();
-        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST,
-                                 HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
+        if (!hal_audio_configure(HAL_AUDIO_MODE_SINGLE_BURST, HAL_AUDIO_FORMAT_16KHZ_MONO_16BIT)) {
             printf_err("Failed to configure audio\n");
             return false;
         }
 
         /* Loop to process audio clips. */
         while (true) {
-#ifdef INTERACTIVE_MODE
+#    ifdef INTERACTIVE_MODE
             AwaitUserInput(); // Wait for user input before moving forward.
-#endif /* INTERACTIVE_MODE */
+#    endif                    /* INTERACTIVE_MODE */
 
             hal_display_clear(COLOR_BLACK);
 
@@ -115,12 +119,22 @@ namespace app {
                 debug("End of stream\n");
                 break;
             }
+            if (audioArrSize > maxAudioSamples) {
+                warn("Audio exceeds model capacity; truncating to %zu samples\n", maxAudioSamples);
+                audioArrSize = static_cast<uint32_t>(maxAudioSamples);
+            }
 
             /* Run the pre-processing, inference and post-processing. */
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t preStart = ReadConformerCpuCycles();
+#    endif
             if (!preProcess.DoPreProcess(audioArr, audioArrSize)) {
                 printf_err("Pre-processing failed.");
                 return false;
             }
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t preCycles = ReadConformerCpuCycles() - preStart;
+#    endif
 
             info("Audio array size: %" PRIu32 "; sampling rate: %" PRIu32 "\n",
                  audioArrSize,
@@ -197,15 +211,39 @@ namespace app {
                                   dataPsnTxtInfStartY + (melImageHeight + fontYSpan) * 2,
                                   false);
 
+#    if defined(ASR_ET_STAGE_PROFILING)
+            pmu_counters countersStart{}, countersEnd{};
+            hal_pmu_reset_npu();
+            hal_pmu_get_counters(&countersStart);
+            opProfiler.Reset();
+            const uint64_t invokeStart  = ReadConformerCpuCycles();
+            const bool inferenceOk      = model.RunInference();
+            const uint64_t invokeCycles = ReadConformerCpuCycles() - invokeStart;
+            opProfiler.Stop();
+            hal_pmu_get_counters(&countersEnd);
+            hal_pmu_final();
+            if (!profiler.RecordProfiling(countersStart, countersEnd, "Inference") ||
+                !inferenceOk) {
+#    else
             if (!RunInference(model, profiler)) {
+#    endif
                 printf_err("Inference failed.");
                 return false;
             }
 
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t postStart = ReadConformerCpuCycles();
+#    endif
             if (!postProcess.DoPostProcess()) {
                 printf_err("Post-processing failed.");
                 return false;
             }
+#    if defined(ASR_ET_STAGE_PROFILING)
+            const uint64_t postCycles = ReadConformerCpuCycles() - postStart;
+            if (!opProfiler.Print(preCycles, invokeCycles, postCycles)) {
+                return false;
+            }
+#    endif
 
             /* Erase. */
             str_inf = std::string(str_inf.size(), ' ');

@@ -1,0 +1,31 @@
+/*
+ * SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
+ * <open-source-office@arm.com>
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include <cstddef>
+#include <cstdint>
+
+asm(
+    ".section minimind_tokenizer,\"a\",%progbits\n"
+    ".balign 16\n"
+    ".global minimind_tokenizer_data_start\n"
+    "minimind_tokenizer_data_start:\n"
+    ".incbin \"@MINIMIND_TOKENIZER_INC_PATH@\"\n"
+    ".global minimind_tokenizer_data_end\n"
+    "minimind_tokenizer_data_end:\n");
+
+namespace arm::app::minimind2_small {
+extern "C" const uint8_t minimind_tokenizer_data_start[];
+extern "C" const uint8_t minimind_tokenizer_data_end[];
+
+const uint8_t* GetTokenizerPointer()
+{
+    return minimind_tokenizer_data_start;
+}
+
+size_t GetTokenizerLen()
+{
+    return static_cast<size_t>(minimind_tokenizer_data_end - minimind_tokenizer_data_start);
+}
+} // namespace arm::app::minimind2_small

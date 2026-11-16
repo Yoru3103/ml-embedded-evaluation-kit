@@ -45,6 +45,7 @@ endif()
 # Create static library
 add_library(${ML_FWK_ET_TARGET} STATIC
     EtModelAllocator.cc
+    EtProgram.cc
     EtTensor.cc
     EtModel.cc)
 

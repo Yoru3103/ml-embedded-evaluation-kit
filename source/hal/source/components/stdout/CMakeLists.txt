@@ -1,5 +1,5 @@
 #----------------------------------------------------------------------------
-#  SPDX-FileCopyrightText: Copyright 2022, 2025 Arm Limited and/or
+#  SPDX-FileCopyrightText: Copyright 2022, 2025-2026 Arm Limited and/or
 #  its affiliates <open-source-office@arm.com>
 #  SPDX-License-Identifier: Apache-2.0
 #
@@ -75,6 +75,8 @@ else()
     target_sources(${STDOUT_COMPONENT_CMSDK}
         PUBLIC
         source/retarget.c)
+    target_sources(${STDOUT_COMPONENT_CMSDK} PRIVATE source/uart_raw_cmsdk.c)
+    target_include_directories(${STDOUT_COMPONENT_CMSDK} PUBLIC include)
 
     ## Component sources - public
     target_sources(${STDOUT_COMPONENT_PL011}

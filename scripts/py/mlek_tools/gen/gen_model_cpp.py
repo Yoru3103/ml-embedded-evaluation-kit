@@ -34,33 +34,24 @@ from mlek_tools.validation.pte_validator import validate_pte_model
 from mlek_tools.validation.tflite_validator import validate_tflite_model
 
 
-def get_model_data(model_path: str) -> list:
-    """
-    Reads a binary file and returns a C style array as a
-    list of strings.
+def get_model_data(model_path: str) -> list[str]:
+    """Read a binary model and format its C array without growing a large string.
 
-    Argument:
-        model_path:    path to the model.
-
-    Returns:
-        list of strings
+    :param model_path:  Path to the binary model.
+    :returns:           One C array initializer, retaining the existing byte/line format.
     """
     # Read raw bytes so we can emit a C array initializer.
     with open(model_path, 'rb') as model_file:
         data = model_file.read()
 
     bytes_per_line = 32
-    hex_digits_per_line = bytes_per_line * 2
-    hexstream = binascii.hexlify(data).decode('utf-8')
-    hexstring = '{'
-
-    for i in range(0, len(hexstream), 2):
-        if 0 == (i % hex_digits_per_line):
-            hexstring += "\n"
-        hexstring += '0x' + hexstream[i:i + 2] + ", "
-
-    hexstring += '};\n'
-    return [hexstring]
+    lines = []
+    for offset in range(0, len(data), bytes_per_line):
+        hexstream = binascii.hexlify(data[offset:offset + bytes_per_line]).decode('ascii')
+        lines.append("\n" + "".join(
+            '0x' + hexstream[index:index + 2] + ", "
+            for index in range(0, len(hexstream), 2)))
+    return ['{' + ''.join(lines) + '};\n']
 
 
 def main():

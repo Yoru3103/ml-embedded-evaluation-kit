@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright 2021, 2024 Arm Limited and/or its
+ * SPDX-FileCopyrightText: Copyright 2021, 2024, 2026 Arm Limited and/or its
  * affiliates <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -29,6 +29,16 @@ namespace app {
      * @return      true or false based on execution success.
      **/
     bool ClassifyAudioHandler(ApplicationContext& ctx);
+
+#if defined(ASR_INPUT_UART)
+    /** Run repeated UART-uploaded Conformer requests with a resident model. */
+    bool ClassifyUartAudioHandler(ApplicationContext& ctx);
+#endif
+
+#if defined(ASR_INPUT_VSI)
+    /** Segment continuous VSI PCM and decode completed Conformer utterances. */
+    bool ClassifyVsiAudioHandler(ApplicationContext& ctx);
+#endif
 
 } /* namespace app */
 } /* namespace arm */

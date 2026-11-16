@@ -174,6 +174,12 @@ static uint64_t Get_SysTick_Cycle_Count(void)
     if ((SCB->ICSR & SCB_ICSR_PENDSTSET_Msk) != 0U) {
         completed_cycles += SysTick->LOAD + 1U;
         systick_val = SysTick->VAL & SysTick_VAL_CURRENT_Msk;
+        /* The interrupt can be pending while VAL is still zero, before reload.
+         * The completed period then already accounts for the countdown to zero. */
+        if (systick_val == 0U) {
+            __set_PRIMASK(saved_primask);
+            return completed_cycles;
+        }
     }
     const uint64_t cycles = completed_cycles + (SysTick->LOAD - systick_val);
     __set_PRIMASK(saved_primask);

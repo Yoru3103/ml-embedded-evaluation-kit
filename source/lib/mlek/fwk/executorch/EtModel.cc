@@ -318,12 +318,16 @@ void EtModel::LogTensorInfo(std::shared_ptr<iface::TensorIface> tensor)
 void EtModel::LogInterpreterInfo()
 {
     info("Number of input tensors:  %zu\n", this->GetNumInputs());
-    for (auto i : this->m_input) {
-        this->LogTensorInfo(i);
+    if (this->m_backendData.m_logTensorDetails) {
+        for (auto i : this->m_input) {
+            this->LogTensorInfo(i);
+        }
     }
     info("Number of output tensors: %zu\n", this->GetNumOutputs());
-    for (auto o : this->m_output) {
-        this->LogTensorInfo(o);
+    if (this->m_backendData.m_logTensorDetails) {
+        for (auto o : this->m_output) {
+            this->LogTensorInfo(o);
+        }
     }
 
     this->LogOperatorInfo();
@@ -636,11 +640,13 @@ bool EtModel::ReadTensorQuantParams(executorch::aten::ScalarType scalarType,
         if (params.scale <= 0) {
             break;
         }
-        info("%s tensor %zu quantization: scale=%f, zero_point=%d\n",
+        if (this->m_backendData.m_logTensorDetails) {
+            info("%s tensor %zu quantization: scale=%f, zero_point=%d\n",
              tensorKind,
              index,
              static_cast<double>(params.scale),
              params.offset);
+        }
         return true;
     }
     printf_err("Missing or invalid %s tensor %zu quantization configuration\n", tensorKind, index);
