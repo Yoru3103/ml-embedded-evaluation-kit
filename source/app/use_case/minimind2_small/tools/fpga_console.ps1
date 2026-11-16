@@ -75,12 +75,17 @@ try {
         $acceptMs = $null
         $firstTextMs = $null
         $boardTiming = $null
+        $profileLines = @()
         $serial.WriteLine($tokens)
         $promptCount = ($tokens -split ' ').Count
         Write-Host "Sent $promptCount prompt tokens (context $contextLength). Waiting for reply..."
         $decoder = [Text.Encoding]::UTF8.GetDecoder()
         while ($true) {
-            $header = Read-Frame '^MINIMIND_DEMO (ACCEPT|START|CHUNK|TIMING|DONE|ERROR) ' $TimeoutSeconds
+            $header = Read-Frame '^(MINIMIND_DEMO (ACCEPT|START|CHUNK|TIMING|DONE|ERROR)|MINIMIND_(BREAKDOWN|PROFILE|QDQ|CLAMP)) ' $TimeoutSeconds
+            if ($header -match '^MINIMIND_(BREAKDOWN|PROFILE|QDQ|CLAMP) ') {
+                if ($Measure) { $profileLines += $header }
+                continue
+            }
             if ($header.StartsWith('MINIMIND_DEMO TIMING ')) {
                 $boardTiming = $header.Substring('MINIMIND_DEMO TIMING '.Length)
                 continue
@@ -125,6 +130,7 @@ try {
                 if ($charCount -gt 0) { [Console]::Write([string]::new($chars, 0, $charCount)) }
                 Write-Host "`n[$($Matches[2])]"
                 if ($Measure) {
+                    $profileLines | ForEach-Object { Write-Host $_ }
                     if ($null -ne $boardTiming) { Write-Host "[board] $boardTiming" }
                     $first = if ($null -eq $firstTextMs) { 'n/a' } else { '{0:F1}' -f $firstTextMs }
                     Write-Host ('[host] accept_ms={0:F1} first_text_ms={1} total_ms={2:F1} reply_tokens={3}' -f

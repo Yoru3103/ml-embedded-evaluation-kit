@@ -74,11 +74,14 @@ static void RunDemo(fwk::et::EtModel& model)
 
         std::printf("MINIMIND_DEMO ACCEPT prompt_tokens=%zu\n", promptCount);
         ResetCaches();
+#ifdef MINIMIND_PROFILE_STAGES
+        GetProfiler().Reset();
+#endif
         Timing timing{};
         int32_t next = 0;
         bool ok = true;
         for (size_t i = 0; i < promptCount && ok; ++i) {
-            ok = Infer(model, prompt[i], i, next, timing, "demo");
+            ok = Infer(model, prompt[i], i, next, timing, "prompt");
         }
         const Timing prefillTiming = timing;
         const size_t replyLimit = kContextLength - promptCount;
@@ -108,7 +111,7 @@ static void RunDemo(fwk::et::EtModel& model)
                            promptCount + emitted - 1,
                            next,
                            timing,
-                           "demo");
+                           "decode");
             }
         }
         if (!ok) {
@@ -127,6 +130,15 @@ static void RunDemo(fwk::et::EtModel& model)
                     decodeCalls,
                     decodeMs,
                     decodeCalls ? decodeMs / decodeCalls : 0.0);
+        std::printf("MINIMIND_BREAKDOWN npu_hz=%u cpu_hz=%" PRIu32
+                    " prompt_npu_cycles=%" PRIu64 " decode_npu_cycles=%" PRIu64
+                    " prompt_e2e_cycles=%" PRIu64 " decode_e2e_cycles=%" PRIu64 "\n",
+                    static_cast<unsigned>(MINIMIND_NPU_CLOCK_HZ),
+                    cpuHz, prefillTiming.npu, timing.npu - prefillTiming.npu,
+                    prefillTiming.endToEnd, timing.endToEnd - prefillTiming.endToEnd);
+#ifdef MINIMIND_PROFILE_STAGES
+        GetProfiler().Print(true);
+#endif
         std::printf("MINIMIND_DEMO DONE tokens=%zu reason=%s\n",
                     emitted,
                     next == 2 ? "eos" : "context_limit");

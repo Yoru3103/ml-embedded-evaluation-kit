@@ -90,6 +90,8 @@ Tensor& WrapCortexDequantize(KernelRuntimeContext& context, const Tensor& input,
 }
 
 #ifdef MINIMIND_INT16_KV
+void ClampCache(int16_t* data, size_t count);
+
 using ClampBound = std::optional<executorch::aten::Scalar>;
 
 Tensor& RealClamp(KernelRuntimeContext&, const Tensor&, const ClampBound&, const ClampBound&,
@@ -119,11 +121,7 @@ Tensor& WrapClamp(KernelRuntimeContext& context, const Tensor& input, const Clam
     auto* data = eligible ? output.mutable_data_ptr<int16_t>() : nullptr;
     const bool fast = data && data == input.const_data_ptr<int16_t>();
     if (fast) {
-        for (size_t i = 0; i < static_cast<size_t>(output.numel()); ++i) {
-            if (data[i] == INT16_MIN) {
-                data[i] = -32767;
-            }
-        }
+        ClampCache(data, output.numel());
     } else {
         RealClamp(context, input, min, max, output);
     }

@@ -172,6 +172,8 @@ configure_file(
     @ONLY)
 
 add_library(minimind2_options INTERFACE)
+set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/src/MiniMindCacheClamp.cc"
+    PROPERTIES COMPILE_OPTIONS "-O2")
 USER_OPTION(minimind2_small_CONTEXT_LENGTH
     "Static MiniMind2 PTE context length in tokens (64 or 128)."
     64 STRING)
