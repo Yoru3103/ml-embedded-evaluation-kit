@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-# Usage: bash scripts/build_gesture_sse320.sh [all|fvp|fpga] [variant|all]
+# Usage: bash scripts/build_gesture_sse320.sh [all|fvp|fpga] [variant|all] [--dry-run]
 # Variants: tflm-shared, tflm-dedicated, pte-dedicated, pte-shared
 # "all" retains the original three variants; request pte-shared explicitly.
 # BUILD_JOBS defaults to 8. Each configuration has its own build directory.
@@ -12,9 +12,11 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 target_selection="${1:-all}"
 variant_selection="${2:-all}"
 build_jobs="${BUILD_JOBS:-8}"
+dry_run=0
+if [[ "${3:-}" == --dry-run ]]; then dry_run=1; fi
 
-if (( $# > 2 )); then
-    printf 'Usage: bash %s [all|fvp|fpga] [all|tflm-shared|tflm-dedicated|pte-dedicated|pte-shared]\n' \
+if (( $# > 3 )) || { (( $# == 3 )) && (( ! dry_run )); }; then
+    printf 'Usage: bash %s [all|fvp|fpga] [variant|all] [--dry-run]\n' \
         "${BASH_SOURCE[0]}" >&2
     exit 1
 fi
@@ -36,11 +38,23 @@ if [[ ! "$build_jobs" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-venv_path="$repo_root/resources_downloaded/env"
+venv_path="${MLEK_VENV:-$repo_root/resources_downloaded/env}"
 cmake_exe="$venv_path/bin/cmake"
-model_root="$repo_root/resources_downloaded/gesture_detection"
+model_root="${GESTURE_MODEL_ROOT:-$repo_root/resources_downloaded/gesture_detection}"
+labels_file="${GESTURE_LABELS_FILE:-$repo_root/resources/gesture_detection/labels.txt}"
+samples_dir="${GESTURE_SAMPLES_DIR:-$repo_root/resources/gesture_detection/samples}"
+num_classes="${GESTURE_NUM_CLASSES:-10}"
+image_size="${GESTURE_IMAGE_SIZE:-320}"
+build_tag="${GESTURE_BUILD_TAG:-yolo}"
+layout_inference="${GESTURE_LAYOUT_INFERENCE:-}"
 
-if [[ ! -x "$cmake_exe" || ! -x "$venv_path/bin/python3" ]]; then
+if [[ ! "$num_classes" =~ ^[1-9][0-9]*$ || ! "$image_size" =~ ^[1-9][0-9]*$ ||
+      ! "$build_tag" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    printf 'Invalid gesture class count, image size or build tag.\n' >&2
+    exit 1
+fi
+
+if (( ! dry_run )) && [[ ! -x "$cmake_exe" || ! -x "$venv_path/bin/python3" ]]; then
     printf 'Project Python/CMake environment is missing: %s\n' "$venv_path" >&2
     exit 1
 fi
@@ -50,6 +64,7 @@ unset PYTHONHOME
 export PATH="$venv_path/bin:$PATH"
 
 for tool in arm-none-eabi-gcc arm-none-eabi-g++ arm-none-eabi-objcopy make; do
+    if (( dry_run )); then break; fi
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'Required tool is missing from PATH: %s\n' "$tool" >&2
         exit 1
@@ -72,11 +87,17 @@ common_options=(
     -DUSE_SINGLE_INPUT=ON
     -DINTERACTIVE_MODE=OFF
     -DCPU_PROFILE_ENABLED=ON
-    -Dyolov8_detection_IMAGE_SIZE=320
-    -Dyolov8_detection_NUM_CLASSES=10
-    "-Dyolov8_detection_FILE_PATH=$repo_root/resources/gesture_detection/samples"
-    "-Dyolov8_detection_LABELS_YAML_FILE=$repo_root/resources/gesture_detection/labels.txt"
+    "-Dyolov8_detection_IMAGE_SIZE=$image_size"
+    "-Dyolov8_detection_NUM_CLASSES=$num_classes"
+    "-Dyolov8_detection_FILE_PATH=$samples_dir"
+    "-Dyolov8_detection_LABELS_YAML_FILE=$labels_file"
 )
+if [[ -n "$layout_inference" ]]; then
+    common_options+=("-Dyolov8_detection_INFER_LAYOUT_FROM_SHAPE=$layout_inference")
+fi
+if [[ -n "${GESTURE_BOX_COORDINATES:-}" ]]; then
+    common_options+=("-Dyolov8_detection_BOX_COORDINATES=$GESTURE_BOX_COORDINATES")
+fi
 
 for deployment in "${deployments[@]}"; do
     fpga_option=OFF
@@ -130,23 +151,31 @@ for deployment in "${deployments[@]}"; do
                 ;;
         esac
 
-        if [[ ! -f "$model" ]]; then
+        if (( ! dry_run )) && [[ ! -f "$model" ]]; then
             printf 'Compiled model is missing: %s\n' "$model" >&2
             exit 1
         fi
 
-        build_dir="$repo_root/build-yolo-${deployment}-${variant}-z1024-ta-mid"
+        build_dir="$repo_root/build-${build_tag}-${deployment}-${variant}-z1024-ta-mid"
         printf '\nBuilding %s / %s with TA Mid\n' "$deployment" "$variant"
+        configure_command=(
+            "$cmake_exe" --fresh -S "$repo_root" -B "$build_dir" -G "Unix Makefiles"
+            "${common_options[@]}" "${memory_options[@]}"
+            "-DFPGA_PLATFORM_SSE_320=$fpga_option"
+            "-DML_FRAMEWORK=$framework"
+            "-DETHOS_U_NPU_MEMORY_MODE=$memory_mode"
+            "-Dyolov8_detection_MODEL_PATH=$model"
+            "-Dyolov8_detection_ACTIVATION_BUF_SZ=$arena_size"
+        )
+
+        if (( dry_run )); then
+            printf '%q ' "${configure_command[@]}"
+            printf '\n'
+            continue
+        fi
 
         # Refresh CMake configuration so cached TA register values cannot persist.
-        "$cmake_exe" --fresh -S "$repo_root" -B "$build_dir" -G "Unix Makefiles" \
-            "${common_options[@]}" \
-            "${memory_options[@]}" \
-            "-DFPGA_PLATFORM_SSE_320=$fpga_option" \
-            "-DML_FRAMEWORK=$framework" \
-            "-DETHOS_U_NPU_MEMORY_MODE=$memory_mode" \
-            "-Dyolov8_detection_MODEL_PATH=$model" \
-            "-Dyolov8_detection_ACTIVATION_BUF_SZ=$arena_size"
+        "${configure_command[@]}"
 
         "$cmake_exe" --build "$build_dir" \
             --target mlek_yolov8_detection --parallel "$build_jobs"

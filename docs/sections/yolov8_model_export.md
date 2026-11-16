@@ -13,6 +13,11 @@ The scripts support non-end-to-end Ultralytics detection checkpoints. The PTE ad
 requires a Detect head exposing `_get_decode_boxes` and checks its floating-point
 output against the original model before quantization.
 
+For full-class gesture models, use the same unified exporter and explicit firmware
+configuration described in [full gesture deployment](gesture_all_deployment.md).
+Calibration and validation directories, class order and input layout are explicit;
+no separate Python deployment entry point is required.
+
 ## Python environment
 
 Use a Python environment containing the project's model-validation dependencies.

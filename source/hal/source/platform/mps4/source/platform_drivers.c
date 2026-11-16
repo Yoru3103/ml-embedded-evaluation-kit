@@ -142,6 +142,9 @@ void platform_release(void)
 const char* platform_name(void)
 { return s_platform_name; }
 
+uint32_t platform_get_user_buttons(void)
+{ return MPS4_PLATFORM_FPGAIO->BUTTON & 0x3U; }
+
 #define CREATE_MASK(msb, lsb)       (int)(((1U << ((msb) - (lsb) + 1)) - 1) << (lsb))
 #define MASK_BITS(arg, msb, lsb)    (int)((arg) & CREATE_MASK(msb, lsb))
 #define EXTRACT_BITS(arg, msb, lsb) (int)(MASK_BITS(arg, msb, lsb) >> (lsb))

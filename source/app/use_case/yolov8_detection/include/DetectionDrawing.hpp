@@ -8,12 +8,16 @@
 
 #include "mlek/use_case/yolov8_detection/DetectionResult.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace arm::app {
 
-/** Draw four rotated edges, clipped to the displayed image and LCD. */
+/** Shared RGB565 colour for a frame-local result index. */
+uint16_t GetDetectionColor(size_t index);
+
+/** Draw coloured edges and nonoverlapping numbered tags where space permits. */
 void DrawDetectionBoxes(const std::vector<yolov8_detection::DetectionResult>& results,
                         uint32_t startX,
                         uint32_t startY,

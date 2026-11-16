@@ -81,7 +81,7 @@ namespace app {
     bool ImgClassPostProcess::DoPostProcess()
     {
         return this->m_imgClassifier.GetClassificationResults(
-            this->m_outputTensor, this->m_results, this->m_labels, 5, false);
+            this->m_outputTensor, this->m_results, this->m_labels, 2, false);
     }
 
 } /* namespace app */

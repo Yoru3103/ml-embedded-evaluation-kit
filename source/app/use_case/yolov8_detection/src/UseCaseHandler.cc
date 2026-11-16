@@ -28,6 +28,32 @@ namespace arm::app {
 
 namespace {
 
+#if YOLOV8_CAMERA_INPUT
+    /** Release the captured frame on loop completion or an inference error. */
+    struct CameraFrameRelease {
+        ~CameraFrameRelease()
+        { hal_camera_stop(); }
+    };
+#endif
+
+#if YOLOV8_BUTTON_CAPTURE
+    /** Wait for a new KEY0 press; a held button must first be released. */
+    void WaitForDetectionButton()
+    {
+        constexpr uint32_t kCaptureButtonMask = 1U;
+        info("Press KEY0 to capture and detect objects...\n");
+        std::fflush(stdout);
+
+        while ((platform_get_user_buttons() & kCaptureButtonMask) != 0U) {
+            /* Ignore a button held from the previous inference. */
+        }
+        while ((platform_get_user_buttons() & kCaptureButtonMask) == 0U) {
+            /* Keep the previous image, boxes and labels on the LCD. */
+        }
+        info("KEY0 pressed: capturing one frame\n");
+    }
+#endif
+
 #if YOLOV8_DUMP_RAW_OUTPUTS
     void DumpRawOutputs(fwk::iface::Model& model)
     {
@@ -183,6 +209,7 @@ namespace {
 
         const size_t displayedResults = std::min(results.size(), maxDisplayedResults);
         for (size_t index = 0; index < displayedResults; ++index) {
+            hal_display_set_text_color(GetDetectionColor(index));
             const auto& result   = results[index];
             const int lineLength = std::snprintf(line,
                                                  sizeof(line),
@@ -198,6 +225,7 @@ namespace {
                                       false);
             }
         }
+        hal_display_set_text_color(COLOR_GREEN);
     }
 
     bool GetInputImageDimensions(const std::vector<size_t>& shape,
@@ -278,10 +306,12 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         return false;
     }
 
+#if !YOLOV8_CAMERA_INPUT
     if (get_sample_img_width() != imageWidth || get_sample_img_height() != imageHeight) {
         printf_err("Generated image dimensions do not match model input\n");
         return false;
     }
+#endif
 
     /* Native NHWC logical axes can explicitly use shape inference. ExecuTorch's
      * dim_order otherwise describes physical storage of NCHW logical axes. */
@@ -306,7 +336,8 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
                                    YOLOV8_NMS_THRESHOLD,
                                    true,
                                    YOLOV8_DFL_BINS,
-                                   YOLOV8_OBB != 0};
+                                   YOLOV8_OBB != 0,
+                                   YOLOV8_BOX_COORDINATES};
     std::unique_ptr<BasePostProcess> postProcess;
     if (model.GetNumOutputs() == 1) {
         postProcess =
@@ -345,11 +376,40 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
     const uint32_t textPanelX         = textStartX / textCellWidth * textCellWidth;
     const uint32_t textPanelY         = textStartY / textCellHeight * textCellHeight;
 
-    for (uint32_t index = 0; index < get_sample_n_elements(); ++index) {
-#ifdef INTERACTIVE_MODE
+#if YOLOV8_CAMERA_INPUT
+    if (!hal_camera_init() || !hal_camera_configure(imageWidth,
+                                                    imageHeight,
+                                                    HAL_CAMERA_MODE_SINGLE_FRAME,
+                                                    HAL_CAMERA_COLOUR_FORMAT_RGB888)) {
+        printf_err("Failed to initialise YOLOv8 camera input\n");
+        return false;
+    }
+#endif
+
+    for (uint32_t index = 0; YOLOV8_CAMERA_INPUT || index < get_sample_n_elements(); ++index) {
+#if YOLOV8_BUTTON_CAPTURE
+        WaitForDetectionButton();
+#elif defined(INTERACTIVE_MODE)
         AwaitUserInput();
 #endif
 
+#if YOLOV8_CAMERA_INPUT
+        /* Clear only after the next capture has been requested. */
+        hal_display_clear(COLOR_BLACK);
+        if (!hal_camera_start()) {
+            printf_err("Failed to start YOLOv8 camera capture\n");
+            return false;
+        }
+        uint32_t imageBytes  = 0;
+        const uint8_t* image = hal_camera_get_captured_frame(&imageBytes);
+        if (image == nullptr || imageBytes != imageWidth * imageHeight * 3U) {
+            hal_camera_stop();
+            printf_err("Invalid YOLOv8 camera frame\n");
+            return false;
+        }
+        const CameraFrameRelease frameRelease{};
+        info("Running camera frame %" PRIu32 " (%" PRIu32 " bytes)\n", index, imageBytes);
+#else
         const uint8_t* image = get_sample_data_ptr(index);
         if (image == nullptr) {
             printf_err("Failed to get input image\n");
@@ -359,6 +419,8 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         info("Running image %" PRIu32 ": %s\n", index, get_sample_data_filename(index));
 
         hal_display_clear(COLOR_BLACK);
+        const uint32_t imageBytes = get_sample_img_total_bytes();
+#endif
         const std::string inferenceMessage{"Running inference"};
         hal_display_show_text(
             inferenceMessage.c_str(), inferenceMessage.size(), textStartX, textStartY, false);
@@ -374,7 +436,8 @@ bool YoloV8DetectionHandler(ApplicationContext& ctx)
         const uint64_t probeEnd   = ReadBenchmarkCpuCycles();
         hal_pmu_get_counters(&stageTimestamps[0]);
 #endif
-        if (!preProcess.DoPreProcess(image, get_sample_img_total_bytes())) {
+        const bool preProcessSuccessful = preProcess.DoPreProcess(image, imageBytes);
+        if (!preProcessSuccessful) {
 #if YOLOV8_PROFILE_STAGES
             hal_pmu_final();
             opProfiler.Stop();
