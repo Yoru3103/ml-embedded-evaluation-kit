@@ -9,6 +9,7 @@
 
 # Downloaded files
 resources_downloaded
+/resources/coco_detection/coco/
 
 # Logs
 *.log
@@ -31,6 +32,7 @@ __pycache__/
 .pytest_cache/
 
 # Virtual environments
+.venv*/
 scripts/py/env*
 scripts/py/venv*
 env
