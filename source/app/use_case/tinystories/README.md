@@ -1,15 +1,30 @@
 # TinyStories FPGA generation and timing
 
-The PTE uses INT8 embedding weights, a W8A16 delegated body, and context 64.
-`MainLoop.cc` consumes ten prompt tokens, compares every top1 with the matching
-host quantized PT2 reference, and generates at most sixteen new tokens using
-greedy argmax. The first generated token is produced by the last prompt call;
-a full run therefore has ten prompt calls and fifteen decode calls. EOS is token 2. After generation, the Cortex-M decodes the prompt and actual generated token IDs using the complete exported 32000-piece vocabulary and prints TINYSTORIES_TEXT.
+For the floor 1e-3 ctx128 milestone build and acceptance procedure, see the
+[UART demo guide](DEMO.md#build-and-run-the-ctx128-milestone).
+
+The PTE uses INT8 embedding weights, a W8A16 delegated body, an INT16 KV state
+and context 128. `MainLoop.cc` consumes ten prompt tokens, compares every top1
+with the matching host quantized PT2 reference, and generates at most sixteen
+new tokens using greedy argmax. The first generated token is produced by the
+last prompt call; a full run therefore has ten prompt calls and fifteen decode
+calls. EOS is token 2. After generation, the Cortex-M decodes the prompt and
+actual generated token IDs using the complete exported 32000-piece vocabulary
+and prints TINYSTORIES_TEXT.
+
+The DEMO build defaults to top-k / top-p sampling (`temperature=0.8`,
+`top_p=0.9`, `top_k=64`) and keeps greedy available at run time. `!greedy` and
+`!sample` switch the mode, `!seed N` selects the request seed base, and `!temp`,
+`!topp`, `!topk` tune the distribution. The same seed reproduces the same story;
+the seed is printed in DONE. TEST remains greedy so the fixed reference tokens
+stay a bit-exact regression signal.
 
 The existing board smoke log matches 7/10 host prompt top1 predictions (positions
 5, 6 and 7 differ). The final prompt prediction matches token 727. The reference
 is host PT2, not bit-exact Vela/NPU output. Prompt and generation matches are
-reported separately so those differences remain visible.
+reported separately so those differences remain visible. The current 128-context
+reference is generated from
+`npu_full_16a8w_embedding8_ctx128/quantized.pt2`.
 
 Each `TINYSTORIES_TIME` record reports:
 
@@ -32,7 +47,32 @@ Raw cycle counts remain available if either frequency needs correction.
 
 Build with the current corrected PTE, `CPU_PROFILE_ENABLED=ON`,
 `ETHOS_U_NPU_CACHE_SIZE=1258304`, display OFF, and the existing safe DDR layout.
-The default model path in `usecase.cmake` points to the corrected terminal-KV PTE.
+The default model path in `usecase.cmake` points to the INT16-context-128 PTE.
+The method pool is 7 MiB, the temporary pool is 2.25 MiB at `0x73DC0000`, and
+the static DDR total is 66,831,827 / 67,108,864 bytes. After changing the PTE or
+the context, configure a fresh build directory (or pass an explicit
+`-Dtinystories_MODEL_PATH` and `-Dtinystories_CONTEXT`); CMake keeps the old
+model path in an existing cache.
+
+Build with `-Dtinystories_LOGIT_DUMP=ON` to print
+`TINYSTORIES_LOGITS position=... id0..id4` for each inference. The matching host
+dump is `tools/host_logits.py`; both use the fixed TEST prompt so the first
+positions can be compared directly. The build helpers expose it as `-LogitDump`:
+
+```powershell
+# DEMO (default)
+.\source\app\use_case\tinystories\tools\build_fpga_demo.ps1
+.\source\app\use_case\tinystories\tools\build_fvp_demo.ps1
+
+# TEST (fixed 10+16 regression; optional logits dump)
+.\source\app\use_case\tinystories\tools\build_test.ps1 -Target FVP -LogitDump
+.\source\app\use_case\tinystories\tools\build_test.ps1 -Target FPGA
+```
+
+Both helpers pin the 128-context PTE and accept `-ModelPath`, `-BuildDirectory`
+and `-Jobs`; the default TEST directories are `build/tinystories42m/test/fpga`
+and `.../test/fvp`. Pinning the path avoids a stale CMake cache after a model
+change.
 
 Generate host reference data in the WSL export environment:
 

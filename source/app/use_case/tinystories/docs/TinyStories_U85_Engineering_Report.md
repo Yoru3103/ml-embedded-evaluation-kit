@@ -7,6 +7,8 @@
 
 本文回查了本次 TinyStories 对话的历次修改记录，并以实际脚本、生成报告、链接 map 和串口日志核对结论。历史调研附件提供背景；当前实现以工程产物为准。报告保留实验之间的继承关系，说明每项特殊处理解决了什么问题，以及收益落在哪个阶段。
 
+> **2026-11-10 更新**：上下文已从 64 扩到 128，DEMO 默认改为 top-k/top-p 采样。第 1、6、7、12 节中的 ctx64 与 greedy 数据保留为历史基线；当前产物、内存和运行结果以第 15 节为准。
+
 ## 当前结果
 
 目前使用 **INT8 Embedding + W8A16 主体 + INT16 持久 KV cache**。Transformer 主计算由一个 Ethos-U delegate 执行，CPU 完成查表、边界转换、索引和选词。最终 PTE 为 **55,136,256 B，52.582 MiB**。
@@ -67,7 +69,7 @@ flowchart TD
 | 对外输入 | token `INT64 [1,1]`；position `INT32 [1]` |
 | 对外输出 | logits `FP32 [1,32000]` |
 | 调用粒度 | batch 1，每次前向输入 1 token |
-| 上下文 | 固定 64 token，包含 BOS、提示词和生成内容 |
+| 上下文 | 2026-11-10 起为 128 token，包含 BOS、提示词和生成内容；第 15 节 |
 | KV 状态 | 8 层 × K/V，共 16 张 `[1,8,64,64]` INT16 张量 |
 | PTE 方法 | 8 个：1 个 forward，以及长度、层数、词表、KV 配置等查询方法 |
 | delegate 边界 | 45 个输入、17 个输出；输出为 16 张 KV 和 1 张 INT16 logits |
@@ -675,3 +677,112 @@ build/tinystories42m/demo/fvp/bin/mlek_tinystories.axf
 ---
 
 文档中的体积统一以 bytes 或 MiB / KiB 标注，MiB 为 1,048,576 bytes。性能表统一写明实测平台、调用数量和计时层级；优化前后使用相同固定 prompt 及 NPU 生成序列对照。
+
+## 15 2026-11-10 更新：128 上下文与采样解码
+
+本节记录 ctx64 greedy 版本之后的改动。模型权重、W8A16 主体、INT8 Embedding 和 NPU 命令流不变；变化集中在上文长度、KV 状态容量、方法池预算和 CPU 侧选词。
+
+### 15.1 新产物
+
+| 产物 | 字节数 | SHA256 |
+|---|---:|---|
+| protected PTE，FP32 KV | 58,298,528 | `e3b799c488e5f8778e7a227c88f5d49aad9ea12d27cc23d4256aa64e85c28699` |
+| terminal-KV PTE，17 输出 | 58,300,160 | `f7c38c909eac1c4c2666852f6a6a4bad0c61acf1d6c31089c122dd61ca14d956` |
+| INT16 KV PTE，最终固件 | 56,200,960 | `64de4b311d927d64affd401b1f8eae989418f25642fe278eb1809cb0cebc5e99` |
+
+Vela payload 为 37,499,888 B，45 输入 / 17 输出。`scratch_fast_size` 为 1,186,832 B，仍低于 1,258,304 B 的 Dedicated SRAM 容量；DDR 侧 `scratch_size` 为 2,161,152 B，因此临时池从 2 MiB 扩到 2.25 MiB。
+
+### 15.2 内存与 KV
+
+128 上下文下每张 KV 为 `[1,8,128,64]` INT16，共 131,072 B；16 张合计 2 MiB，是 ctx64 的两倍。PTE 重写脚本新增 `--compact-arena`：把原来的 FP32 状态块从 4 MiB 压到 2 MiB，并把其后的所有分配整体下移 2 MiB，避免保留 2 MiB 空洞。
+
+| 项目 | 容量或数值 |
+|---|---:|
+| planned arena | 6,486,528 B |
+| 16 个 cache 区间 | `[4194304, 6291456)`，每张 131,072 B |
+| Method pool | 7,340,032 B（7 MiB） |
+| Temp pool | 2,359,296 B（2.25 MiB），基址 `0x73DC0000` |
+| 静态 DDR | 66,831,827 / 67,108,864 B |
+
+`verify_int16_kv.py --cache-shape 1,8,128,64` 覆盖 128 个位置，共 5,760 组 delegate 输入比较，0 处不一致；状态别名、初始值保留、`-32768` 边界和去掉 clamp 的负对照均通过。
+
+### 15.3 采样实现
+
+CPU 选词由 `SelectToken` 完成：一次扫描 32,000 个 FP32 logits，保留 top-k=64，按温度缩放后做 softmax，再按 top-p 截断并用 xorshift32 的均匀随机数在 CDF 上取样。greedy 路径仍走原 `GetTopToken`，TEST 固定参考不受影响。
+
+DEMO 默认 `temperature=0.8, top_p=0.9, top_k=64`，seed 为 `0x5EED0000 + 请求序号`，并在 DONE 中打印。`!greedy`、`!sample`、`!seed`、`!temp`、`!topp`、`!topk` 可在运行期切换。选词发生在 delegate 返回之后，不改变 PTE、KV 更新或 NPU 调用次数；采样开销计入 E2E 的“输入填写与选词”区间。
+
+### 15.4 主机筛选
+
+固定 4 条 prompt、每条生成 128 token，比较重复 4-gram 比例（越低越好）：
+
+| 配置 | 平均 rep-4 | 最大 rep-4 |
+|---|---:|---:|
+| greedy | 0.0436 | 0.1121 |
+| T=1.0, p=0.9 | 0.0423 | 0.0636 |
+| T=0.8, p=0.9 | **0.0130** | 0.0431 |
+| T=1.0, p=0.9, rep=1.15 | 0.0045 | 0.0180 |
+| T=1.1, p=0.95, rep=1.15 | **0.0022** | 0.0088 |
+
+T=0.8 在语法和故事推进上最稳定，因此作为板端默认；重复惩罚效果更好，但需要额外的历史状态，留作后续。主机脚本为 `tools/host_generate.py`，结果位于 `build/tinystories42m/host-eval/`。
+
+### 15.5 板端 FVP 结果
+
+T=1.0 配置下（当时仍为默认），`Once upon a time,` 生成 122 token，`DONE success=1`、`reason=context_limit`，FVP 仿真总时长 581,063 ms。故事为：
+
+> Once upon a time, there was a poor family who lived in a small town. The family was very lonely and wanted to buy a new house, but their grandma lived far away. So, one day, the mommy, daddy and the children, wanted to take their old house home with a nice family. But the family had already, and they were feeling very poor. Soon, a little girl from the family came over with to all the kids from their house to go to the hospital. The family was very grateful for their mom and dad! But then, the little girl saw
+
+T=0.8 默认值由主机筛选确定。板端同一镜像重启后的复测在 prompt 之后未继续推进仿真，本轮没有取得完整故事；该默认值仍需在 FPGA 上补一次 A/B。已有的 122-token FVP 结果证明 128 上下文、采样路径和内存布局可以完整运行。
+
+### 15.6 结论与后续
+
+- 128 上下文在 64 MiB DDR 内可行：PTE 因 INT16 KV 从 1 MiB 增到 2 MiB；arena 若不压缩为 8.58 MiB，压缩后为 6.49 MiB；临时池从 2 MiB 增到 2.25 MiB。最终静态 DDR 为 66.83 MB。
+- 采样和更长上下文都不改变 NPU 图；`!greedy` 可随时回到确定性回归模式。
+- 仍需在 FPGA 上补测单 token 时间和 10+16 TEST 参考；FVP 只验证功能与内存。
+- 板端 greedy 与采样的 A/B 已完成（15.8）；重复惩罚（主机上 rep-4 可再降一个数量级）和低温采样（T≈0.6）是下一轮质量工作的候选。
+
+### 15.7 板端与主机 logits 对齐
+
+用 `tinystories_LOGIT_DUMP=ON` 构建 TEST 固件，在 FVP 上采集 25 个位置的 top-5 logits；主机用同一 `quantized.pt2` 和同一固定 prompt 运行 `tools/host_logits.py`。前 21 个位置输入历史相同（prompt 强制，生成 token 在 position 20 之前一致），可以直接比较：
+
+| 指标 | 数值 |
+|---|---:|
+| top-1 一致 | 16 / 21 |
+| top-5 平均重合 | 3.19 / 5 |
+| Δv0 均值 | -1.53 |
+| Δv0 最大绝对值 | 6.96 |
+
+关键位置：
+
+| 位置 | 板端 top1 | 主机 top1 | 板端 margin | 主机 margin | 说明 |
+|---:|---:|---:|---:|---:|---|
+| 0 | 9038 | 9038 | 1.95 | 2.06 | 单 token、无历史，Δv0=-1.18 |
+| 5 | 29915 | 263 | 1.46 | 4.20 | 主机高置信，不是 near-tie |
+| 6 | 931 | 2319 | 4.42 | 0.95 | 双方都较自信，排名翻转 |
+| 7 | 29892 | 4726 | 0.64 | 1.01 | 中等 margin |
+| 8 | 29889 | 29892 | 0.79 | 2.79 | 标点差异 |
+| 20 | 278 | 304 | 0.13 | 3.78 | 首个自由生成分叉，板端为 near-tie |
+
+position 0 已经出现约 1.2 的 logit 偏差，说明 W8A16 输出头/最终 RMSNorm 本身就与主机有数值差；position 5 的偏差扩大到约 7，且主机 margin 很大，属于系统性差异而不是随机 near-tie。position 20 的首次自由生成分叉则是板端 margin 0.13 的 near-tie，符合“小误差在接近并列处翻转”的预期。position 21 之后两侧输入历史不同，不再逐位置比较。
+
+TEST 结果为 `SMOKE 6/10`、`GENERATION 11/16`（ctx64 时分别为 7/10、14/16），板端解码文本为 `Once upon a time in a small village, there was a little girl named Lily. She loved the sunshine and`。对齐变差并不代表 128 量化更差：同一段 64-token 前缀上，ctx64 PT2 的 NLL/top1 为 0.7576/81.25%，ctx128 PT2 为 0.7587/82.81%，两者基本相当；差异来自 NPU 与主机执行路径，而不是 128 校准。
+
+### 15.8 板端 greedy 对照
+
+在同一 128 固件上执行 `!greedy`，再输入原来的 goat prompt，生成 114 token，`DONE success=1`、`reason=context_limit`：
+
+> once there was a goat who lived in a small town. The goat was very popular and everyone in town wanted to be friends with him. One day, the goat decided to go for a walk in the town. As he walked, he saw a big, strong man. He was carrying a big bag. The man said to the goat, "I need to carry this bag. It's my bag." The goat was so excited. He said, "I can carry it!" The man smiled and said, "Yes, I can carry it. It's a good man."
+
+与 ctx64 的原输出相比，句子数从一句半增加到七句，出现了对话和事件推进，不再原样重复 `He was walking in the forest`；逻辑仍有小模型特有的跳步（“It's a good man”）。
+
+同一 prompt 的 T=0.8 采样（seed=0x5EED0001）生成了 114 token，文本为：
+
+> once there was a goat who lived in a small town. The goat was very selfish. He didn't like it when he thought very badly. He was so angry that he started to yell loudly, and his friends got scared. They didn't know what to do. They all shouted and the sound of a bady, like a big, loud, and everyone was yelling. The other animals ran away and hid. The goat had to figure out what was wrong with it. The animals started to yell, but they were all scared. They all y
+
+这段比 T=1.0 的 `the people...` 好，但仍出现 `bady` 这类词形错误，并在“yelling / scared”上打转。
+
+同一配置换一个 seed（`!seed 12345`）后，故事明显更连贯：
+
+> once there was a goat who lived in a small town. He was a fast and strong lumber. Every day he liked to run and play in the meadow. One day, he asked his friends for help, he decided to race. He was very competitive and wanted to win. He practiced running as fast as he could. He was so excited for the race that he didn't know what to do. He was about to run the race, but he was sure he would not win. He was too slow and he felt embarrassed. But then, he remembered that he was really fast
+
+因此板端采样质量是 **seed 相关的**：两个 T=0.8 seed 一个退化、一个连贯，而 greedy 单次就是七句完整叙事。结合 15.7 的系统性 logit 偏差，一个合理解释是采样会走到概率尾部，而板端尾部 logits 的误差比头部大；greedy 停留在高概率主路径，更稳定。当前代码仍保留 T=0.8 采样默认值；如果演示更看重稳定性，建议现场用 `!greedy`，采样作为可选项，并在后续用更多 seed 评估是否把默认温度降到 0.6 左右。
