@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates
 # <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
-"""Send prompts to the TinyStories Raw TCP UART and display streamed responses."""
+"""Send prompts to the TinyStories Raw TCP UART and display streamed story text."""
 
 import argparse
 import codecs
@@ -10,66 +10,87 @@ import socket
 import sys
 import time
 
+_MARKERS = ('INFO - ', 'WARN - ', 'ERROR - ', 'E [', 'I [', 'TINYSTORIES_', 'Prompt> ')
+_SKIP_FRAGMENTS = ('Processor internal clock', 'Application Note', 'MPS4 build', 'MPS4 core clock', 'V2M-MPS4')
+_READY = b'TINYSTORIES_DEMO READY'
+_DONE = b'TINYSTORIES_DEMO DONE '
+_REJECTED = b'TINYSTORIES_DEMO rejected:'
+
+
+def clean_line(line: str) -> str:
+    """Remove firmware log text from one UART line.
+
+    :param line:  UART line without newline.
+    :returns:     Story text, or an empty string for a log-only line.
+    """
+    for marker in _MARKERS:
+        index = line.find(marker)
+        if index >= 0:
+            line = line[:index]
+    line = line.replace('Story:', '').strip('\r')
+    for fragment in _SKIP_FRAGMENTS:
+        if fragment in line:
+            return ''
+    return line
+
 
 class StoryOutput:
-    """Stream story fragments; replace the FVP summary time with host wall time."""
+    """Buffer complete UART lines and print only their story prefix."""
 
-    def __init__(self, started: float):
-        self.started = started
-        self.pending = ''
-        self.line_start = True
-        self.summary = False
+    def __init__(self, prompt: str = ''):
+        self.buffer = ''
+        self.skip_prompt = prompt.strip()
+        self.in_story = False
 
     def write(self, text: str):
-        """Write immediately except while recognizing or collecting a DONE line.
+        """Consume decoded UART text and print story lines.
 
         :param text:  Decoded UART fragment.
         """
-        prefix = 'INFO - TINYSTORIES_DEMO DONE'
-        output = []
-        for character in text:
-            if self.summary:
-                self.pending += character
-                if character == '\n':
-                    elapsed = (time.monotonic() - self.started) * 1000
-                    line = self.pending.rstrip('\r\n')
-                    line = re.sub(r' total_ms=[\d.]+', '', line)
-                    output.append(f'{line} total_ms={elapsed:.3f} time_source=host_wall\n')
-                    self.pending = ''
-                    self.summary = False
-                    self.line_start = True
-            elif self.line_start:
-                self.pending += character
-                if self.pending == prefix:
-                    self.summary = True
-                elif not prefix.startswith(self.pending):
-                    output.append(self.pending)
-                    self.pending = ''
-                    self.line_start = character == '\n'
-            else:
-                output.append(character)
-                self.line_start = character == '\n'
-        sys.stdout.write(''.join(output))
-        sys.stdout.flush()
+        self.buffer += text
+        while '\n' in self.buffer:
+            line, self.buffer = self.buffer.split('\n', 1)
+            if line.rstrip('\r') == 'Story:':
+                self.in_story = True
+                self.skip_prompt = ''
+                continue
+            cleaned = clean_line(line)
+            if self.skip_prompt and cleaned.strip() == self.skip_prompt:
+                self.skip_prompt = ''
+                continue
+            if cleaned.strip() or (self.in_story and not line.strip()):
+                sys.stdout.write(cleaned + '\n')
+                sys.stdout.flush()
+
+        # Firmware writes sentence fragments without adding a newline.
+        if self.in_story and not any(self.buffer.startswith(marker) for marker in _MARKERS):
+            boundary = max(self.buffer.rfind(mark) for mark in '.!?') + 1
+            if boundary:
+                sys.stdout.write(self.buffer[:boundary])
+                sys.stdout.flush()
+                self.buffer = self.buffer[boundary:]
 
     def finish(self):
-        """Flush any held prefix and separate the next local input prompt."""
-        sys.stdout.write(self.pending + '\n')
-        sys.stdout.flush()
-        self.pending = ''
+        """Flush the last partial line."""
+        cleaned = clean_line(self.buffer)
+        self.buffer = ''
+        if cleaned.strip():
+            sys.stdout.write(cleaned + '\n')
+            sys.stdout.flush()
 
 
-def receive_response(connection: socket.socket, timeout: float, started: float):
+def receive_response(connection: socket.socket, timeout: float, started: float, prompt: str = ''):
     """Stream a request through the next READY, excluding stale startup READY.
 
     :param connection:  Connected Raw TCP UART socket.
     :param timeout:     Maximum response wait in seconds.
     :param started:     Host monotonic timestamp before sending the prompt.
+    :param prompt:      Prompt to suppress if echoed by firmware.
     """
     decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-    output = StoryOutput(started)
+    output = StoryOutput(prompt)
     tail = b''
-    started = False
+    finished = None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -78,17 +99,49 @@ def receive_response(connection: socket.socket, timeout: float, started: float):
             continue
         if not data:
             raise ConnectionError('FVP closed the UART connection')
+        received = time.monotonic()
         output.write(decoder.decode(data))
         tail = (tail + data)[-8192:]
-        started |= b'TINYSTORIES_DEMO BUSY' in tail or b'TINYSTORIES_DEMO rejected:' in tail
         if b'DEMO stopped' in tail or b'HardFault' in tail:
             raise RuntimeError('Firmware stopped; see the UART output above')
-        if (started and b'TINYSTORIES_DEMO READY' in tail
-                and tail.rstrip().endswith(b'Prompt>')):
+        ready = tail.rfind(_READY)
+        done = tail.rfind(_DONE)
+        rejected = tail.rfind(_REJECTED)
+        if finished is None and done >= 0 and b'\n' in tail[done:]:
+            finished = received
+        if 0 <= max(done, rejected) < ready and tail.rstrip().endswith(b'Prompt>'):
             output.write(decoder.decode(b'', final=True))
             output.finish()
+            if rejected > done:
+                raise ValueError(tail[rejected:].splitlines()[0].decode('utf-8', 'replace'))
+            summary = tail[done:].splitlines()[0].decode('utf-8', 'replace')
+            elapsed_ms = ((finished if finished is not None else received) - started) * 1000
+            summary = re.sub(r'\btotal_ms=\S+', f'total_ms={elapsed_ms:.3f}', summary)
+            print(f'{summary} time_source=host_wall', flush=True)
             return
     raise TimeoutError('No completed response; inspect the FVP window and UART port')
+
+
+def wait_for_greedy(connection: socket.socket, timeout: float):
+    """Read until the firmware acknowledges greedy mode and returns to READY.
+
+    :param connection:  Connected Raw TCP UART socket.
+    :param timeout:     Maximum wait in seconds.
+    """
+    deadline = time.monotonic() + timeout
+    tail = b''
+    while time.monotonic() < deadline:
+        try:
+            data = connection.recv(65536)
+        except socket.timeout:
+            continue
+        if not data:
+            raise ConnectionError('FVP closed the UART connection')
+        tail = (tail + data)[-8192:]
+        ack = tail.rfind(b'TINYSTORIES_DEMO decode=greedy')
+        if 0 <= ack < tail.rfind(_READY) and tail.rstrip().endswith(b'Prompt>'):
+            return
+    raise TimeoutError('No READY from the firmware')
 
 
 def send_prompt(connection: socket.socket, prompt: str, timeout: float):
@@ -103,7 +156,7 @@ def send_prompt(connection: socket.socket, prompt: str, timeout: float):
         raise ValueError('Use one nonempty line, at most 256 UTF-8 bytes')
     started = time.monotonic()
     connection.sendall(encoded + b'\n')
-    receive_response(connection, timeout, started)
+    receive_response(connection, timeout, started, prompt)
 
 
 def main():
@@ -117,12 +170,16 @@ def main():
     parser.add_argument('--timeout', type=float, default=900)
     parser.add_argument('--prompt',
                         help='Send one prompt and exit; otherwise use interactive input')
+    parser.add_argument('--greedy', action='store_true',
+                        help='Send !greedy before the first prompt for deterministic output')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535 or args.timeout <= 0:
         parser.error('Port must be 1..65535 and timeout must be positive')
     with socket.create_connection((args.host, args.port), timeout=10) as connection:
         connection.settimeout(1)
-        print('Connected. FVP must have reached READY. Generation can take several minutes.')
+        if args.greedy:
+            connection.sendall(b'!greedy\n')
+            wait_for_greedy(connection, args.timeout)
         if args.prompt is not None:
             send_prompt(connection, args.prompt, args.timeout)
             return
@@ -145,6 +202,6 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         pass
-    except (OSError, RuntimeError, ValueError) as error:
+    except (OSError, RuntimeError, ValueError, TimeoutError, ConnectionError) as error:
         print(f'FVP console: {error}', file=sys.stderr)
         sys.exit(1)
