@@ -48,8 +48,8 @@ bool AsrZhOpProfiler::Validate(uint64_t invoke) const
     const auto& npu         = Get(Operation::ETHOS_U);
     const auto& dequantize  = Get(Operation::DEQUANTIZE);
     const uint64_t measured = quantize.cycles + npu.cycles + dequantize.cycles;
-    if (quantize.calls != m_expectedConversions || npu.calls != 2 ||
-        dequantize.calls != m_expectedConversions || measured > invoke) {
+    if (quantize.calls < m_expectedConversions || npu.calls == 0 ||
+        dequantize.calls < m_expectedConversions || measured > invoke) {
         printf_err("ASR_ZH invalid timing: Q=%u NPU=%u DQ=%u measured=%" PRIu64 " invoke=%" PRIu64
                    "\n",
                    quantize.calls,

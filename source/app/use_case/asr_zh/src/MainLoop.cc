@@ -31,7 +31,8 @@ void MainLoop()
     fwk::et::EtBackendData backend;
     backend.m_logTensorDetails = false;
 #if ASR_ZH_PROFILE
-    asr_zh::AsrZhOpProfiler profiler{asr_zh::ReadCycles, ASR_ZH_INT8_STATE ? 1U : 74U};
+    constexpr unsigned int conversions = (ASR_ZH_INT8_STATE || ASR_ZH_INT16_STATE) ? 1U : 74U;
+    asr_zh::AsrZhOpProfiler profiler{asr_zh::ReadCycles, conversions};
     backend.m_eventTracer = &profiler;
     asr_zh::g_profiler    = &profiler;
 #endif

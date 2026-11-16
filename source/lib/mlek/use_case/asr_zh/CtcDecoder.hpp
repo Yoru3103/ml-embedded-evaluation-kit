@@ -20,11 +20,13 @@ struct TokenBytes {
 /** Greedy CTC with cross-chunk repeats and sentence-end UTF-8 recovery. */
 class CtcDecoder {
 public:
-    CtcDecoder(const TokenBytes* tokens, size_t count) : m_tokens(tokens), m_count(count) {}
+    CtcDecoder(const TokenBytes* tokens, size_t count, bool preserveSpaces = false) :
+        m_tokens(tokens), m_count(count), m_preserveSpaces(preserveSpaces)
+    {}
     void Reset();
     bool Append(const float* scores, size_t frames, size_t classes);
     bool AppendToken(size_t token);
-    /** Recover maximal valid UTF-8 characters; compact Chinese display removes ASCII spaces. */
+    /** Recover maximal valid UTF-8 characters and optionally retain English word spaces. */
     std::string Text() const;
     const std::vector<uint32_t>& Path() const
     { return m_path; }
@@ -32,6 +34,7 @@ public:
 private:
     const TokenBytes* m_tokens;
     size_t m_count;
+    bool m_preserveSpaces;
     int32_t m_previous{-1};
     std::string m_bytes;
     std::vector<uint32_t> m_path;

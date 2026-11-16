@@ -108,9 +108,17 @@ std::string CtcDecoder::Text() const
     }
     std::string result;
     for (auto it = characters.rbegin(); it != characters.rend(); ++it) {
-        if (*it != " ") {
+        if (m_preserveSpaces || *it != " ") {
             result += *it;
         }
+    }
+    if (m_preserveSpaces) {
+        const auto first = result.find_first_not_of(' ');
+        if (first == std::string::npos) {
+            return {};
+        }
+        const auto last = result.find_last_not_of(' ');
+        result          = result.substr(first, last - first + 1);
     }
     return result;
 }

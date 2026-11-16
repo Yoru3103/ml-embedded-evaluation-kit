@@ -18,7 +18,7 @@ cache_value() {
 mode="$(cache_value ETHOS_U_NPU_MEMORY_MODE)"
 cache="$(cache_value ETHOS_U_NPU_CACHE_SIZE)"
 case "$mode:$cache" in
-    Dedicated_Sram:786432|Shared_Sram:0) ;;
+    Dedicated_Sram:786432|Dedicated_Sram:1048576|Shared_Sram:0) ;;
     *) echo "Unsupported ASR memory configuration: $mode, cache=$cache" >&2; exit 1 ;;
 esac
 input_mode="$(cache_value asr_zh_INPUT_MODE)"

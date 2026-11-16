@@ -3,7 +3,11 @@
  * <open-source-office@arm.com>
  * SPDX-License-Identifier: Apache-2.0
  */
-#include "TokenBytes.hpp"
+#if ASR_ZH_BILINGUAL
+#    include "TokenBytesBilingual.hpp"
+#else
+#    include "TokenBytes.hpp"
+#endif
 #include "UseCaseHandler.hpp"
 #include "Validation.hpp"
 #include "hal.h"
@@ -15,7 +19,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#if ASR_ZH_INT8_STATE
+#if ASR_ZH_INT8_STATE || ASR_ZH_INT16_STATE
 #    include "StateQuantization.hpp"
 #endif
 #if ASR_ZH_PROFILE
@@ -80,7 +84,7 @@ namespace {
         const auto out = model.GetOutputTensor(0);
         if (!in || !out || in->Type() != TensorType::FP32 || out->Type() != TensorType::FP32 ||
             in->Shape() != std::vector<size_t>{1, 77, 80} ||
-            out->Shape() != std::vector<size_t>{1, 16, 1000}) {
+            out->Shape() != std::vector<size_t>{1, 16, ASR_ZH_VOCAB_SIZE}) {
             return false;
         }
         for (size_t slot = 1; slot <= StreamingState::kCount; ++slot) {
@@ -89,12 +93,17 @@ namespace {
             if (!input || !output) {
                 return false;
             }
-            const bool quantized = ASR_ZH_INT8_STATE && slot != 74;
-            const auto type =
-                slot == 74 ? TensorType::INT32 : (quantized ? TensorType::INT8 : TensorType::FP32);
-            int32_t zeroPoint = 0;
+            const auto storage = slot == 74           ? StateStorage::FLOAT32
+                                 : ASR_ZH_INT16_STATE ? StateStorage::INT16
+                                 : ASR_ZH_INT8_STATE  ? StateStorage::INT8
+                                                      : StateStorage::FLOAT32;
+            const auto type    = slot == 74                       ? TensorType::INT32
+                                 : storage == StateStorage::INT16 ? TensorType::INT16
+                                 : storage == StateStorage::INT8  ? TensorType::INT8
+                                                                  : TensorType::FP32;
+            int32_t zeroPoint  = 0;
 #if ASR_ZH_INT8_STATE
-            if (quantized) {
+            if (storage == StateStorage::INT8) {
                 zeroPoint = state_quant::kZeroPoints[slot - 1];
                 if (input->GetQuantParams().offset != zeroPoint ||
                     output->GetQuantParams().offset != zeroPoint ||
@@ -105,15 +114,27 @@ namespace {
                 }
             }
 #endif
+#if ASR_ZH_INT16_STATE
+            if (storage == StateStorage::INT16 &&
+                ((input->GetQuantParams().scale > 0 &&
+                  input->GetQuantParams().scale != state_quant::kScales[slot - 1]) ||
+                 (output->GetQuantParams().scale > 0 &&
+                  output->GetQuantParams().scale != state_quant::kScales[slot - 1]))) {
+                printf_err("ASR_ZH state quantization metadata mismatch slot=%zu\n", slot);
+                return false;
+            }
+#endif
             if (!input || !output || input->Type() != type || output->Type() != type ||
-                input->Shape() != StateShape(slot) || output->Shape() != StateShape(slot) ||
+                input->Shape() != StateShape(slot, ASR_ZH_LEFT_CONTEXT) ||
+                output->Shape() != StateShape(slot, ASR_ZH_LEFT_CONTEXT) ||
                 !states.Bind(slot,
                              input->GetData(),
                              input->Bytes(),
                              output->GetData(),
                              output->Bytes(),
-                             quantized,
-                             zeroPoint)) {
+                             storage,
+                             zeroPoint,
+                             ASR_ZH_LEFT_CONTEXT)) {
                 printf_err("ASR_ZH invalid state slot=%zu\n", slot);
                 return false;
             }
@@ -121,6 +142,7 @@ namespace {
         return true;
     }
 
+#if ASR_ZH_VALIDATE && !ASR_ZH_BILINGUAL
     [[maybe_unused]] void PrintValidation(fwk::et::EtModel& model,
                                           size_t chunk,
                                           const float* features,
@@ -152,13 +174,13 @@ namespace {
             const size_t count     = tensor->GetNumElements();
             const size_t indices[] = {0, count / 2, count - 1};
             for (size_t i = 0; i < 3; ++i) {
-#if ASR_ZH_INT8_STATE
+#    if ASR_ZH_INT8_STATE
                 const float actual = (static_cast<int32_t>(tensor->GetData<int8_t>()[indices[i]]) -
                                       state_quant::kZeroPoints[slot - 1]) *
                                      state_quant::kScales[slot - 1];
-#else
+#    else
                 const float actual = tensor->GetData<float>()[indices[i]];
-#endif
+#    endif
                 maxStateError = std::max(
                     maxStateError, std::abs(actual - assets::kExpectedStates[chunk][slot - 1][i]));
             }
@@ -170,6 +192,7 @@ namespace {
              featureError,
              maxStateError);
     }
+#endif
 } // namespace
 
 bool ProcessAudio(fwk::et::EtModel& model)
@@ -207,7 +230,7 @@ bool ProcessAudio(fwk::et::EtModel& model)
             break;
         }
         const uint64_t setupBegin = Cycles();
-        CtcDecoder decoder{assets::kTokens, 1000};
+        CtcDecoder decoder{assets::kTokens, ASR_ZH_VOCAB_SIZE, ASR_ZH_BILINGUAL};
         if (!states.Reset() || !s_fbank.Begin(pcm, count)) {
             success = false;
 #if defined(ASR_ZH_INPUT_VSI) || defined(ASR_ZH_INPUT_UART)
@@ -284,7 +307,8 @@ bool ProcessAudio(fwk::et::EtModel& model)
                 break;
             }
             const uint64_t postBegin = Cycles();
-            if (!decoder.Append(model.GetOutputTensor(0)->GetData<float>(), 16, 1000)) {
+            if (!decoder.Append(
+                    model.GetOutputTensor(0)->GetData<float>(), 16, ASR_ZH_VOCAB_SIZE)) {
                 success = false;
                 break;
             }
@@ -295,7 +319,7 @@ bool ProcessAudio(fwk::et::EtModel& model)
                 success = false;
                 break;
             }
-#if ASR_ZH_VALIDATE
+#if ASR_ZH_VALIDATE && !ASR_ZH_BILINGUAL
             PrintValidation(model, chunk, features, decoder);
 #endif
             if (!DumpOutputs(model, clips, chunk)) {
@@ -386,7 +410,7 @@ bool ProcessAudio(fwk::et::EtModel& model)
              textCycles,
              s_fbank.ComputedFrames());
 #endif
-#if ASR_ZH_VALIDATE && !ASR_ZH_FIXED_FEATURES
+#if ASR_ZH_VALIDATE && !ASR_ZH_FIXED_FEATURES && !ASR_ZH_BILINGUAL
         info("ASR_ZH_TEXT_REFERENCE match=%d\n", text == assets::kExpectedText);
         success = success && text == assets::kExpectedText;
 #endif

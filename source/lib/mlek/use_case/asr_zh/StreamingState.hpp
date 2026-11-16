@@ -11,9 +11,14 @@
 #include <vector>
 
 namespace arm::app::asr_zh {
-/** Exact state shapes for the fixed chunk=32, left=256 checkpoint; slot is 1..74. */
-std::vector<size_t> StateShape(size_t slot);
-size_t StateBytes(size_t slot, bool quantized = false);
+enum class StateStorage { FLOAT32, INT8, INT16 };
+
+/** Exact state shapes for chunk=32; slot is 1..74. */
+std::vector<size_t> StateShape(size_t slot, size_t leftContext = 256);
+size_t
+StateBytes(size_t slot, StateStorage storage = StateStorage::FLOAT32, size_t leftContext = 256);
+inline size_t StateBytes(size_t slot, bool quantized)
+{ return StateBytes(slot, quantized ? StateStorage::INT8 : StateStorage::FLOAT32); }
 
 /** Bind separate persistent input and planned output buffers before processing audio. */
 class StreamingState {
@@ -24,8 +29,25 @@ public:
               size_t inputBytes,
               const void* output,
               size_t outputBytes,
-              bool quantized    = false,
-              int32_t zeroPoint = 0);
+              StateStorage storage = StateStorage::FLOAT32,
+              int32_t zeroPoint    = 0,
+              size_t leftContext   = 256);
+    bool Bind(size_t slot,
+              void* input,
+              size_t inputBytes,
+              const void* output,
+              size_t outputBytes,
+              bool quantized,
+              int32_t zeroPoint = 0)
+    {
+        return this->Bind(slot,
+                          input,
+                          inputBytes,
+                          output,
+                          outputBytes,
+                          quantized ? StateStorage::INT8 : StateStorage::FLOAT32,
+                          zeroPoint);
+    }
     bool Ready() const;
     bool Reset();
     bool Advance();
@@ -36,6 +58,7 @@ private:
         const void* output{nullptr};
         size_t bytes{0};
         int resetValue{0};
+        StateStorage storage{StateStorage::FLOAT32};
     };
     std::array<Buffer, kCount> m_buffers{};
 };
