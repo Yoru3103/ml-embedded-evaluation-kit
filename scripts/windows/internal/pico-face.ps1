@@ -25,7 +25,7 @@ param(
     [ValidateRange(0, 100)][double]$Guidance = 4.0
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if ($UartImage -and $Target -ne 'FPGA') {
     throw '-UartImage requires -Target FPGA.'
 }

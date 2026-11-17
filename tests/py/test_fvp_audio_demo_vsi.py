@@ -32,10 +32,11 @@ class ProtocolTests(unittest.TestCase):
     def test_reject_invalid_frames(self):
         """Reject truncated frames, unknown flags and out-of-bounds sample counts."""
         valid = protocol.AudioBlock(pcm=b"\0\0").encode()
+        unknown_flag = 1 << protocol.WAITING.bit_length()
         frames = [valid[:-1], b"FAIL" + valid[4:], valid + b"\0",
                   protocol.HEADER.pack(protocol.MAGIC, 0, 321, 0, 0) + bytes(640),
                   protocol.HEADER.pack(protocol.MAGIC, 0, 0, 0, 0) + bytes(640),
-                  protocol.HEADER.pack(protocol.MAGIC, 0, 1, 8, 0) + bytes(640)]
+                  protocol.HEADER.pack(protocol.MAGIC, 0, 1, unknown_flag, 0) + bytes(640)]
         for frame in frames:
             with self.subTest(frame=frame[:24]), self.assertRaises(ValueError):
                 protocol.AudioBlock.decode(frame)

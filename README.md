@@ -67,6 +67,10 @@ To run evaluations using this software, we suggest using:
 
 ## Quick Start
 
+For native Windows with Corstone-320, start with the
+[Windows build and FVP guide](docs/sections/windows.md). It runs image classification
+from a fresh checkout using the bundled sample and a downloaded MobileNetV2 model.
+
 To run ML applications on the Cortex-M and Ethos-U NPU:
 
 1. First, verify that you have installed all of [the required prerequisites](docs/sections/building.md#build-prerequisites).
@@ -85,7 +89,7 @@ To run ML applications on the Cortex-M and Ethos-U NPU:
     git submodule update --init --recursive
     ```
 
-4. Next, run the `build_default` Python script. It handles the downloading of the neural network models, compiling using 
+4. Next, run the `build_default` Python script. It handles the downloading of the neural network models, compiling using
 [Vela](https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela), and building the project using CMake.
 
     Ensure that `python3` resolves to a supported version of Python (3.10, 3.11 or 3.12).
@@ -159,6 +163,8 @@ To run ML applications on the Cortex-M and Ethos-U NPU:
   - [Repository structure](./docs/documentation.md#repository-structure)
   - [Models and resources](./docs/documentation.md#models-and-resources)
   - **[Building](./docs/documentation.md#building)**
+  - [Native Windows build and FVP](docs/sections/windows.md)
+  - [Windows FVP and FPGA demos](docs/sections/demos/README.md)
   - [Deployment](./docs/documentation.md#deployment)
   - [Running code samples applications](./docs/documentation.md#running-code-samples-applications)
   - [Implementing custom ML application](./docs/documentation.md#implementing-custom-ml-application)

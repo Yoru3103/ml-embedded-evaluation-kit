@@ -16,13 +16,14 @@ FVP 通过 semihosting 读取图像，在 LCD 显示输入图像、旋转检测�
 
 ## 构建
 
-从仓库根目录执行 PowerShell：
+按 [Windows 指南](../windows.md) 准备工具。从仓库根目录执行 PowerShell：
 
 ```powershell
-.\scripts\windows\build-qrcode-fvp-demo.ps1
+.\scripts\windows\build.ps1 -Framework pte -Action Setup
+.\scripts\windows\build.ps1 -Profile QrCode
 ```
 
-默认使用已有的灰度四输出模型：
+需另行提供已编译的灰度四输出 PTE。用 `-ModelPath` 传入文件，或放到默认路径：
 `resources_downloaded/yolo_QRcode/usr_quant_nhwc_angle3d/pte/best_bifpn_gray_nhwc_angle3d_u85_1024_384KiB.pte`。
 配置为 Dedicated SRAM、384 KiB cache、U85 1024 MAC，默认构建目录为
 `build/fvp-qrcode/dedicated-384k`。需要本机 ATFE、CMake/Ninja、SSE-320 FVP，
@@ -35,7 +36,7 @@ FVP 通过 semihosting 读取图像，在 LCD 显示输入图像、旋转检测�
 ## 启动和换图
 
 ```powershell
-.\scripts\windows\run-qrcode-fvp-demo.ps1 -ImagePath resources/qrcode/smaples/01.bmp
+.\scripts\windows\run-fvp.ps1 -Profile QrCode -ImagePath resources/qrcode/smaples/01.bmp
 ```
 
 默认弹出 FVP LCD。首张图由脚本准备后自动识别；在原终端按 **Ctrl+C** 或 **Q**
@@ -56,7 +57,7 @@ FVP 和模型保持运行，无须重新编译或重启。文件传输采用“�
 ## 摄像头按键拍摄
 
 ```powershell
-.\scripts\windows\run-qrcode-fvp-demo.ps1 -Camera
+.\scripts\windows\run-fvp.ps1 -Profile QrCode -Camera
 ```
 
 启动 FVP LCD 和 PC 摄像头预览。点击摄像头预览窗口使其获得焦点：
@@ -75,11 +76,10 @@ FVP 和模型保持运行，无须重新编译或重启。文件传输采用“�
 支持情况决定。多摄像头或打开失败时，可指定编号及后端：
 
 ```powershell
-.\scripts\windows\run-qrcode-fvp-demo.ps1 -Camera -CameraIndex 1 -CameraBackend msmf
+.\scripts\windows\run-fvp.ps1 -Profile QrCode -Camera -CameraIndex 1 -CameraBackend msmf
 ```
 
-摄像头模式需要带 GUI 的 OpenCV Python 包（不是 headless 版本），安装到脚本使用的
-同一 Python 环境。本机已安装；重建环境时执行：
+摄像头模式需要带 GUI 的 OpenCV Python 包，安装到启动脚本使用的环境：
 
 ```powershell
 .\resources_downloaded\windows-executorch\env\Scripts\python.exe -m pip install -r scripts/windows/requirements-qrcode-camera.txt
@@ -103,7 +103,7 @@ FVP semihosting 读取并校验尺寸/长度/CRC32 → 输入量化 → NPU 推�
 无需打开 LCD 的单次冒烟检查：
 
 ```powershell
-.\scripts\windows\run-qrcode-fvp-demo.ps1 `
+.\scripts\windows\run-fvp.ps1 -Profile QrCode `
     -ImagePath resources/qrcode/smaples/01.bmp -Headless -SmokeTimeoutSeconds 180
 ```
 

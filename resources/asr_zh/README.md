@@ -10,12 +10,12 @@ The upstream model card declares Apache-2.0.
 - `Validation.hpp` contains three fixed feature inputs plus per-chunk PT2 argmax paths
   and state samples for the demo.
 - `validation.json` records source hashes, sample length, and PT2 reference results.
-- Full first-three-chunk PT2 outputs and the PTE are under the ignored
+- Local FP32-state regression artifacts use the ignored
   `resources_downloaded/asr_zh/dedicated-768k/` directory.
 - Native Fbank fixtures are deterministic synthetic PCM, generated with seed 20261028;
   they require no external dataset files.
 
-The PTE is supplied separately and must target U85-1024, Dedicated_Sram,
-768 KiB and COP1. See `docs/sections/demos/asr_zh.md` for demo build and input
-instructions and the requirements for a replacement model.
-
+Download the [INT8-state demo inputs](https://github.com/Yoru3103/ml-embedded-evaluation-kit/releases/download/model-resourse/asr-zh-zipformer-u85-dedicated-768k-int8-inputs.zip)
+for U85-1024, Dedicated SRAM 768 KiB and COP1. The
+[Chinese ASR demo guide](../../docs/sections/demos/asr_zh.md) shows where to place
+the PTE and its state quantization metadata.

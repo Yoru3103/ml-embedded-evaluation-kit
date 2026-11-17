@@ -123,6 +123,24 @@ class CameraTests(unittest.TestCase):
             finally:
                 session.close()
 
+    def test_img_class_file_is_published_as_rgb_capture(self):
+        """Send one RGB request through the same path used for camera captures."""
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            build = Path(directory)
+            (build / "CMakeCache.txt").write_text(
+                "img_class_IMAGE_SIZE:STRING=32\n", encoding="utf-8")
+            (build / "img-class-fvp.log").touch()
+            image = build / "source.png"
+            Image.new("RGB", (64, 32), (255, 0, 0)).save(image)
+            with patch.object(CAMERA.secrets, "randbits", return_value=234):
+                result = CAMERA.main(["--build-directory", str(build), "--demo", "img-class",
+                                      "--image", str(image)])
+            self.assertEqual(result, 0)
+            packet = (build / "demo-input/img-class-input.bin").read_bytes()
+            self.assertEqual(struct.unpack("<4sIIIII", packet[:24]),
+                             (b"ICD1", 234, 32, 32, 3072, zlib.crc32(packet[24:])))
+            self.assertEqual(packet[24:], bytes((255, 0, 0)) * (32 * 32))
+
     def test_preview_publishes_only_space_without_overlay(self):
         """A live preview must not auto-submit or burn instructions into model pixels."""
         frame = np.zeros((32, 64, 3), dtype=np.uint8)

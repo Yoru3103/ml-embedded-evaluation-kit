@@ -41,23 +41,27 @@ push API. The padded final model chunk follows the existing Python evaluation po
 
 ## Build
 
-Prepare model resources in WSL as described in `resources/asr_zh/README.md`.
-Use the existing Windows toolchain wrapper:
+For the Dedicated 768 KiB INT8-state PTE, follow the
+[demo model setup](../sections/demos/asr_zh.md#环境与模型). The FP32-state Dedicated
+and INT8-state Shared builds require their own compiled models. See the
+[Zipformer resource notes](../../resources/asr_zh/README.md) for the model source.
+After the Windows ExecuTorch setup, use the following build profiles:
 
 ```powershell
 # Three fixed reference feature chunks: isolate the NPU/backend from Fbank.
-./scripts/windows/build-asr-zh.ps1 -Target FVP -FixedFeatures
+./scripts/windows/build.ps1 -Profile AsrZh -Target FVP -Int8State -FixedFeatures
 
 # Complete static-audio frontend, streaming inference and decoding.
-./scripts/windows/build-asr-zh.ps1 -Target FVP
+./scripts/windows/build.ps1 -Profile AsrZh -Target FVP -Int8State
 
 # Recommended INT8 state interface; Dedicated 768 KiB.
-./scripts/windows/build-asr-zh.ps1 -Target FPGA -Int8State `
-  -InputPath resources_downloaded/asr_zh/zh1/zh1.wav -NoValidation -NoTensorDump
+./scripts/windows/build.ps1 -Profile AsrZh -Target FPGA -Int8State `
+  -InputPath 'D:/audio/zh1.wav' -NoValidation -NoTensorDump
 
 # Standard shared SRAM: 3 MiB SRAM temp pool, method/planned pool in DRAM.
-./scripts/windows/build-asr-zh.ps1 -Target FPGA -MemoryMode Shared_Sram `
-  -InputPath resources_downloaded/asr_zh/zh1/zh1.wav -NoValidation -NoTensorDump
+./scripts/windows/build.ps1 -Profile AsrZh -Target FPGA -MemoryMode Shared_Sram `
+  -ModelPath 'D:/models/zipformer-shared-int8-state.pte' `
+  -InputPath 'D:/audio/zh1.wav' -NoValidation -NoTensorDump
 ```
 
 The static wrapper accepts `-TimingOutput AUTO|OFF|SUMMARY|DETAILED` (default `DETAILED`).
@@ -83,6 +87,14 @@ The `all` build skips this model when its target configuration or local PTE is u
 CPU-only and TFLM execution of this PTE are not supported.
 
 ## FVP validation
+
+```powershell
+.\scripts\windows\run-fvp.ps1 -Profile Firmware -BuildDirectory build/asr_zh/fvp-768k-fixed-int8-state
+.\scripts\windows\run-fvp.ps1 -Profile Firmware -BuildDirectory build/asr_zh/fvp-768k-int8-state
+```
+
+The Linux/WSL regression commands use a separately built FP32-state model and
+expect validation logs from that configuration.
 
 ```bash
 # Linux/WSL; FVP_PATH can override the default installed model.

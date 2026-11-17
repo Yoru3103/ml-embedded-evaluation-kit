@@ -25,10 +25,11 @@ python source/app/use_case/tinystories/tools/export_encoder.py \
 From the repository root in PowerShell:
 
 ```powershell
-./source/app/use_case/tinystories/tools/build_fpga_demo.ps1
+./scripts/windows/build.ps1 -Profile TinyStoriesFpga
 ```
 
-The compiler directory can be supplied with `-CompilerBin`. Output is separate
+Obtain the compiled PTE and tokenizer files separately. The compiler directory can
+be supplied with `-CompilerBin`. Output is separate
 from the test firmware:
 
 ```text
@@ -54,11 +55,10 @@ From the repository root, pass the milestone PTE explicitly and use a separate
 build directory. Build and start the functional FVP from PowerShell:
 
 ```powershell
-$tools = 'source/app/use_case/tinystories/tools'
 $model = (Resolve-Path 'resources_downloaded/tinystories42m/npu_relu1e3_ctx128/tinystories42m_u85_1024_ctx128_relu1e3_terminal_int16.pte').Path
-& "$tools/build_fvp_demo.ps1" -ModelPath $model -Context 128 `
+./scripts/windows/build.ps1 -Profile TinyStoriesFvp -ModelPath $model -Context 128 `
   -BuildDirectory build/tinystories42m/acceptance/fvp
-& "$tools/run_fvp_demo.ps1" -BuildDirectory build/tinystories42m/acceptance/fvp
+./scripts/windows/run-fvp.ps1 -Profile TinyStories -BuildDirectory build/tinystories42m/acceptance/fvp
 ```
 
 The FVP launch window displays output only: typing at its `Prompt>` does not
@@ -103,11 +103,11 @@ only in the FVP build; inference output and CPU tracing must still validate.
 
 For FPGA:
 
-Build the same milestone PTE for the board using the `$tools` and `$model`
-variables above. The FPGA sectors are under the resulting `bin/sectors` directory.
+Build the same milestone PTE for the board using the `$model` variable above.
+The FPGA sectors are under the resulting `bin/sectors` directory.
 
 ```powershell
-& "$tools/build_fpga_demo.ps1" -ModelPath $model -Context 128 -TimingAdapter `
+./scripts/windows/build.ps1 -Profile TinyStoriesFpga -ModelPath $model -Context 128 -TimingAdapter `
   -BuildDirectory build/tinystories42m/acceptance/fpga
 ```
 

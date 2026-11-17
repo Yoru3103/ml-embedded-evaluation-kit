@@ -9,39 +9,22 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 
 在 Windows 本地磁盘上准备项目源码及完整依赖、Python 3.12（含 `py` 启动器）、GNU Arm Embedded 工具链或 Arm Toolchain for Embedded（ATFE）。GNU 工具链应包含 `arm-none-eabi-gcc.exe`、`arm-none-eabi-g++.exe`、`arm-none-eabi-objcopy.exe`；ATFE 应包含 `clang.exe`、`llvm-ar.exe`、`llvm-objcopy.exe`。此脚本不支持 AC6。调试还需 Arm DS，以及 SSE-320 FVP 或 MPS4 板卡与调试连接。
 
-脚本要求 `dependencies/executorch` 为 1.3.1。`-ModelPath` 指向预先导出的 `.pte`，Pose 的 Dedicated SRAM 构建可省略并使用默认模型；脚本不会将 `.pt` / `.pth` checkpoint 转换为 `.pte`。模型的用例、输入输出、Ethos-U 配置和内存模式须与固件一致。
+使用仓库锁定的 ExecuTorch 子模块版本。`-ModelPath` 指向预先导出的 `.pte`。Pose
+的 Dedicated SRAM 构建也可使用下文的默认模型路径。构建前应先导出 checkpoint，
+使 PTE 的输入输出、Ethos-U 配置和内存模式与固件一致。
 
-## `build-executorch.ps1` 的功能与参数
+## 构建参数
 
-推荐通过统一入口 `scripts/windows/build.ps1 -Framework pte` 调用。
-`build-executorch.ps1` 保留为兼容入口；两侧共用目录命名、缓存/构建类型/TA/PMU
-参数和 `build-info.json`。完整对照命令见 [二维码复现指南](qrcode_reproduction.md)。
+`scripts/windows/build.ps1 -Framework pte` 安装构建工具、配置 CMake、生成模型代码并
+交叉编译固件。框架共用构建目录命名规则、缓存和 PMU 等选项以及 `build-info.json`。
+并排构建示例见 [二维码复现指南](qrcode_reproduction.md)。
 
-`scripts/windows/build-executorch.ps1` 安装和检查 Windows 工具，配置 CMake，生成模型代码并交叉编译固件。构建前会给 ExecuTorch 1.3.1 的 `third-party/CMakeLists.txt` 应用项目提供的补丁，以复用 Python 包中的 Windows `flatc.exe`；因此 `dependencies/executorch` 会出现本地修改。脚本结束时恢复临时修改的进程环境变量。
+构建可能给 ExecuTorch 子模块应用补丁，以复用 Python 包中的 Windows `flatc.exe`。
+此时 `dependencies/executorch` 会显示本地修改。脚本退出时恢复临时环境变量。
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `-Action` | `Build` | `Setup` 安装并检查工具；`Configure` 只配置和生成；`Build` 先配置再编译；`All` 执行全部步骤。首次使用先执行 Setup。 |
-| `-BuildType` | `Debug` | `Debug`、`Release`、`RelWithDebInfo` 或 `MinSizeRel`。 |
-| `-CacheSizeKiB` | 不覆盖 | NPU cache 容量，单位 KiB；须与 PTE 编译缓存一致。 |
-| `-TimingAdapterConfig` | 不覆盖 | TA 配置名，映射到 `TA_CONFIG_FILE`。 |
-| `-PmuGroup` | 不覆盖 | PMU 组，例如 `BW`。 |
-| `-Toolchain` | `GNU` | `GNU` 或 `ATFE`；不支持 AC6。 |
-| `-Target` | `FVP` | `FVP` 为 SSE-320 虚拟平台；`FPGA` 为 MPS4 SSE-320 实板。 |
-| `-UseCase` | `img_class` | 单个用例名，映射到 `USE_CASE_BUILD`，例如 `yolov8_detection`。 |
-| `-CompilerBin` | 自动查找 | 编译器 `bin` 目录；优先于 `MLEK_GNU_BIN` / `MLEK_ATFE_BIN`、`PATH` 和常见安装目录。 |
-| `-ModelPath` | Pose Dedicated 使用默认模型；其他情况必填 | 已导出的 `.pte` 文件，映射到 `<UseCase>_MODEL_PATH`；Setup 不需要。 |
-| `-InputPath` | 用例默认输入 | 样本文件或目录，映射到 `<UseCase>_FILE_PATH`。`yolov8_detection` 未指定时使用 `resources/gesture_detection/samples`。 |
-| `-LabelsPath` | 用例默认标签 | 标签文件，映射到 `<UseCase>_LABELS_YAML_FILE`。 |
-| `-ImageSize` | 不覆盖 | 图像尺寸，允许 1–4096；映射到 `<UseCase>_IMAGE_SIZE`。 |
-| `-NumClasses` | 不覆盖 | 类别数，允许 1–1000；映射到 `<UseCase>_NUM_CLASSES`。 |
-| `-ActivationBufferSize` | 不覆盖 | 激活区大小，传给 `<UseCase>_ACTIVATION_BUF_SZ`。 |
-| `-BuildDirectory` | 按用例/框架/工具链/目标/内存/缓存/构建类型/PMU 分层 | 构建目录；相对路径从项目根目录解析。完成后保存 `build-info.json`。 |
-| `-MemoryMode` | `Dedicated_Sram` | `Dedicated_Sram` 或 `Shared_Sram`，映射到 `ETHOS_U_NPU_MEMORY_MODE`；须与 PTE 一致。 |
-| `-Jobs` | `4` | 编译并行数，允许 1–128。 |
-| `-CMakeArgs` | 空 | 额外的 `-DNAME=value` 定义，例如 `-DETHOS_U_NPU_CONFIG_ID=Z1024`；不能覆盖脚本控制的编译器、框架、平台、资源路径、用例和内存模式等选项。 |
+完整的参数、默认值和双平台示例见 [Windows 构建参数手册](windows_build_options.md#firmware)。
 
-脚本固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=executorch`、`USE_SINGLE_INPUT=ON` 和 `CMAKE_BUILD_TYPE=Debug`。构建类型默认 Debug，可通过 `-BuildType Release` 选择 Release。`-Target FVP` 设置 `FPGA_PLATFORM_SSE_320=OFF`，默认 U85 Z1024；`-Target FPGA` 设置为 `ON`，使用 U85 Z1024。模型若按其他 NPU 配置导出，需通过 `-CMakeArgs` 指定对应的 `ETHOS_U_NPU_CONFIG_ID`。修改目标或内存模式不会重新导出 PTE。FVP 模型的 MAC 数也必须设为 1024；如果使用 Z256 模型，须显式覆盖 `ETHOS_U_NPU_CONFIG_ID=Z256` 并设置对应的 FVP MAC 数。尺寸、类别数等覆盖参数仅在用例声明相应 CMake 选项时使用。
+脚本固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=executorch` 和 `USE_SINGLE_INPUT=ON`。构建类型默认 Debug，可通过 `-BuildType Release` 选择 Release。`-Target FVP` 设置 `FPGA_PLATFORM_SSE_320=OFF`，默认 U85 Z1024；`-Target FPGA` 设置为 `ON`，使用 U85 Z1024。模型若按其他 NPU 配置导出，需通过 `-CMakeArgs` 指定对应的 `ETHOS_U_NPU_CONFIG_ID`。修改目标或内存模式不会重新导出 PTE。FVP 模型的 MAC 数也必须设为 1024；如果使用 Z256 模型，须显式覆盖 `ETHOS_U_NPU_CONFIG_ID=Z256` 并设置对应的 FVP MAC 数。尺寸、类别数等覆盖参数仅在用例声明相应 CMake 选项时使用。
 
 脚本每次配置会清除 `SRAM_*`、`EXT_*` 的旧 TA 缓存，然后加载所选配置；自定义 TA 寄存器参数请通过 `-CMakeArgs` 传入，例如 `-DEXT_MAXR=48`，不要只依赖旧构建目录的缓存。直接运行 CMake 切换 TA 配置时，使用新构建目录或添加 `-U "SRAM_*" -U "EXT_*"`，再传入需要的 `-D` 覆盖。
 
@@ -52,7 +35,7 @@ Arm ML Embedded Evaluation Kit 提供在 Cortex-M CPU 和 Ethos-U NPU 上运行�
 在项目根目录打开 PowerShell，首次执行 Setup（需要网络连接）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-executorch.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps1 -Framework pte `
     -Action Setup
 ```
 
@@ -61,7 +44,7 @@ Setup 将共用的 CMake/Ninja 安装在 `resources_downloaded/windows-tools/env
 以下是 GNU、FVP、`img_class` 的 Debug 构建示例；替换为本机实际编译器目录和 PTE：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-executorch.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps1 -Framework pte `
     -Action Build -Toolchain GNU -CompilerBin "path-to-arm-gnu/bin" `
     -Target FVP -UseCase img_class -ModelPath "path-to-your-pte"
 ```
@@ -69,7 +52,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-ex
 使用 ATFE 构建 MPS4 FPGA：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-executorch.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps1 -Framework pte `
     -Action Build -Toolchain ATFE -Target FPGA -UseCase img_class `
     -ModelPath "D:/models/img-class-u85-z1024.pte" `
     -BuildDirectory "build/et-atfe-fpga-img-class" -Jobs 8
@@ -78,7 +61,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-ex
 `yolov8_detection` 等自定义用例可传入图片、标签、尺寸、类别数和激活区大小。例如 PTE 按 FVP 的 U85 Z1024、Dedicated SRAM 导出时：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-executorch.ps1 `
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build.ps1 -Framework pte `
     -Action Build -Toolchain ATFE -Target FVP -UseCase yolov8_detection `
     -ModelPath "D:/models/gesture-u85-z1024.pte" `
     -InputPath "resources/gesture_detection/samples" `
@@ -104,10 +87,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-ex
 | Arguments | 下方单行参数；替换本机编译器和 PTE 路径。 |
 
 ```text
--NoProfile -ExecutionPolicy Bypass -File "scripts/windows/build-executorch.ps1" -Action Build -Toolchain GNU -CompilerBin "path-to-arm-gnu/bin" -Target FVP -UseCase img_class -ModelPath "path-to-your-pte" -BuildDirectory "build/et-gnu-fvp-img-class" -Jobs 4
+-NoProfile -ExecutionPolicy Bypass -File "scripts/windows/build.ps1" -Framework pte -Action Build -Toolchain GNU -CompilerBin "path-to-arm-gnu/bin" -Target FVP -UseCase img_class -ModelPath "path-to-your-pte" -BuildDirectory "build/et-gnu-fvp-img-class" -Jobs 4
 ```
 
-点击 `Apply`、`Run`，在 Console 中确认 AXF 构建完成。首次使用可另建 Setup 配置，Arguments 为 `-NoProfile -ExecutionPolicy Bypass -File "scripts/windows/build-executorch.ps1" -Action Setup`。为 ATFE、FPGA 或其他用例复制配置，并同步修改名称、模型和构建目录。
+点击 `Apply`、`Run`，在 Console 中确认 AXF 构建完成。首次使用可另建 Setup 配置，Arguments 为 `-NoProfile -ExecutionPolicy Bypass -File "scripts/windows/build.ps1" -Framework pte -Action Setup`。为 ATFE、FPGA 或其他用例复制配置，并同步修改名称、模型和构建目录。
 
 调试连接和 trace 的设置也与 TFLM 相同，直接参阅 [加载 AXF 调试](windows_armds.md#加载-axf-调试) 和 [MPS4 实板调试](windows_armds.md#mps4-实板调试)。选择 ExecuTorch 本次构建生成的 AXF，并确保构建目标、PTE 的 NPU 配置及调试连接一致。
 
@@ -115,7 +98,7 @@ FVP 的启动参数应与固件配置一致：U85 Z1024 使用 `-C mps4_board.su
 
 ## YOLOv8 Pose 构建与调试
 
-先执行 `build-executorch.ps1 -Action Setup` 准备环境，再手动把新后端导出的模型放入
+先执行 `build.ps1 -Framework pte -Action Setup` 准备环境，再手动把新后端导出的模型放入
 `resources_downloaded/yolov8_pose/`。该目录已被 Git 忽略，Setup 不下载或导出 Pose 模型。
 图片和标签保留在 `resources/yolov8_pose/`；两个旧的 `dedicated_128k` PTE 已移除。
 
@@ -131,7 +114,7 @@ FVP 的启动参数应与固件配置一致：U85 Z1024 使用 `-C mps4_board.su
 $fvp = 'C:/Program Files/Arm/FVP_Corstone_SSE-320/models/Win64_VC2019/FVP_Corstone_SSE-320.exe'
 $compilerBin = 'C:/Program Files/Arm/Development Studio 2026.0-1/sw/atfe-pro22.1.0/bin'
 $model = '.\resources_downloaded\yolov8_pose\yolo_hand_pose_u85-1024_ded_256KiB.pte'
-.\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target FVP `
+.\scripts\windows\build.ps1 -Framework pte -Action Build -Toolchain ATFE -Target FVP `
     -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
     -MemoryMode Dedicated_Sram `
     -BuildDirectory build/windows-ATFE-et-FVP-yolov8_pose-Dedicated_Sram-256k `
@@ -157,7 +140,7 @@ FVP 测试检查 `YOLOv8 pose use case terminated successfully`，超时为 300 
 使用上面定义的 `$compilerBin` 和 `$model`：
 
 ```powershell
-.\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target FPGA `
+.\scripts\windows\build.ps1 -Framework pte -Action Build -Toolchain ATFE -Target FPGA `
     -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
     -MemoryMode Dedicated_Sram `
     -BuildDirectory build/windows-ATFE-et-FPGA-yolov8_pose-Dedicated_Sram-256k `
@@ -183,7 +166,7 @@ foreach ($size in $sizesKiB) {
     $model = ".\resources_downloaded\yolov8_pose\yolo_hand_pose_u85-1024_ded_${size}KiB.pte"
     if (-not (Test-Path -LiteralPath $model)) { throw "Missing model: $model" }
     foreach ($target in $targets) {
-        .\scripts\windows\build-executorch.ps1 -Action Build -Toolchain ATFE -Target $target `
+        .\scripts\windows\build.ps1 -Framework pte -Action Build -Toolchain ATFE -Target $target `
             -UseCase yolov8_pose -CompilerBin $compilerBin -ModelPath $model `
             -MemoryMode Dedicated_Sram `
             -BuildDirectory "build/pose-et-$target-ded-${size}k" `

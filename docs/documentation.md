@@ -34,8 +34,9 @@
 
 Before starting the setup process, please make sure that you have:
 
-- A Linux x86_64 based machine. If using Microsoft® Windows®, Windows Subsystem for Linux (WSL) is preferable.
-  > **Note:** Currently, Microsoft® Windows® is not supported as a build environment.
+- A Linux x86_64 environment for the general build instructions below. On a Windows host, use WSL for
+  those instructions or follow the [native Windows guide](sections/windows.md) for Corstone-320 FVP
+  and MPS4 SSE-320 builds.
 
 - At least one of the following toolchains:
   - GNU Arm Toolchain (version 13.2.1 or above) -

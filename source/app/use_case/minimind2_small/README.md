@@ -14,6 +14,14 @@ per-node 版逐节点调整 RMSNorm 的 rsqrt 查表输入范围。固定生成�
 
 ## 128-token 流式对话
 
+先按 [Windows ExecuTorch 构建指南](../../../../docs/sections/windows_executorch.md#安装配置与构建)
+准备工具。将 [MiniMind2 Small 发布包](https://github.com/Yoru3103/ml-embedded-evaluation-kit/releases/download/model-resourse/minimind2-small-u85-ctx128-inputs.zip)
+解压到仓库根目录可获得 `resources_downloaded/minimind2_small/` 下的
+`minimind2_ctx128_int16kv_prequant_512k.pte`、`tokenizer_bytes.bin` 和 `hf_tokenizer/`。
+发布包是 prequant 模型。下文的测量和构建参数对应另行准备的 per-node rsqrt 模型，
+其中 `-CacheOffsets` 描述该 PTE 的状态内存布局。构建发布包中的模型时需要提供
+与其 PTE 匹配的缓存偏移。
+
 当前 128-token PTE 使用已验证的 per-node rsqrt 查表缩放、INT16 持久 KV 和 512 KiB Dedicated SRAM。PTE 为
 `resources_downloaded/minimind2_small/minimind2_small_u85_1024_ctx128_w8a16_embedding8_per_node_warp_int16kv_512k.pte`，大小 28,651,392 B。Vela fast scratch 为 395,472 B。
 
@@ -26,7 +34,7 @@ FPGA 客户端使用单字节 `?` 握手，收到 `HELLO` 后才开放输入。�
 从仓库根目录构建：
 
 ```powershell
-.\source\app\use_case\minimind2_small\tools\build_test.ps1 `
+.\scripts\windows\build.ps1 -Profile MiniMind2Test `
   -Target FPGA `
   -BuildDirectory build/minimind2_small/test/fpga_uart_demo_ctx128 `
   -ModelPath resources_downloaded/minimind2_small/minimind2_small_u85_1024_ctx128_w8a16_embedding8_per_node_warp_int16kv_512k.pte `
@@ -47,7 +55,7 @@ FPGA 客户端使用单字节 `?` 握手，收到 `HELLO` 后才开放输入。�
 构建后可用功能 FVP 检查交互流程（FVP `--fast` 时间不代表 FPGA 性能）：
 
 ```powershell
-.\source\app\use_case\minimind2_small\tools\build_test.ps1 `
+.\scripts\windows\build.ps1 -Profile MiniMind2Test `
   -Target FVP `
   -BuildDirectory build/minimind2_small/test/fvp_demo_fast_ctx128 `
   -ModelPath resources_downloaded/minimind2_small/minimind2_small_u85_1024_ctx128_w8a16_embedding8_per_node_warp_int16kv_512k.pte `
@@ -56,7 +64,7 @@ FPGA 客户端使用单字节 `?` 握手，收到 `HELLO` 后才开放输入。�
 ```
 
 ```powershell
-.\source\app\use_case\minimind2_small\tools\run_fvp_test.ps1 `
+.\scripts\windows\run-fvp.ps1 -Profile MiniMind2Test `
   -BuildDirectory build/minimind2_small/test/fvp_demo_fast_ctx128 -UartPort 15660
 ```
 
@@ -75,7 +83,7 @@ FPGA 客户端使用单字节 `?` 握手，收到 `HELLO` 后才开放输入。�
 在 Windows PowerShell 的仓库根目录启动演示固件：
 
 ```powershell
-.\source\app\use_case\minimind2_small\tools\run_fvp_test.ps1 -BuildDirectory build/minimind2_small/test/fvp_demo_fast
+.\scripts\windows\run-fvp.ps1 -Profile MiniMind2Test -BuildDirectory build/minimind2_small/test/fvp_demo_fast
 ```
 
 在另一个 Windows PowerShell 窗口，从仓库根目录运行客户端。默认 UART0 端口为 15650。如果 FVP 输出的 `telnetterminal0` 端口不同，在客户端追加 `--port <实际端口>`：

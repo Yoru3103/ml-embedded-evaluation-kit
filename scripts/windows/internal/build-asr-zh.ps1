@@ -31,7 +31,7 @@ if (-not $PSBoundParameters.ContainsKey('ModelPath')) {
         $ModelPath = 'resources_downloaded/asr_zh/dedicated-768k/zipformer_small_ctc_zh_u85_1024_dedicated_768k.pte'
     }
 }
-$root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if (-not $BuildDirectory) {
     $suffix = if ($FixedFeatures) { '-fixed' } else { '' }
     if ($Int8State) { $suffix += '-int8-state' }

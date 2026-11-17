@@ -8,7 +8,7 @@ param(
     [ValidateRange(1, 65532)][int]$TcpPort = 5000
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if (-not [IO.Path]::IsPathRooted($BuildDirectory)) {
     $BuildDirectory = Join-Path $repoRoot $BuildDirectory
 }

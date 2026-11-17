@@ -23,7 +23,7 @@ param(
     [string]$FvpExecutable = 'C:/Program Files/Arm/FVP_Corstone_SSE-320/models/Win64_VC2019/FVP_Corstone_SSE-320.exe'
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 . (Join-Path $PSScriptRoot 'fvp-audio-process-tools.ps1')
 if (-not $PSBoundParameters.ContainsKey('QueueMs')) {
     $QueueMs = if ($UseCase -eq 'kws_zh') { 5000 } else { 30000 }

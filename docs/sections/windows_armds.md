@@ -7,6 +7,8 @@ Arm ML Embedded Evaluation Kit 提供面向 Cortex-M CPU 和 Ethos-U NPU 的机�
 
 ## 准备环境
 
+首次克隆及 FVP 验证步骤见 [Windows 快速入门](windows.md)。
+
 在 Windows 本地磁盘上准备完整项目源码及依赖，安装 Python 3.12（含 `py` 启动器）、Arm DS，以及 AC6 或 Arm Toolchain for Embedded（ATFE）编译器。FVP 调试还需安装 SSE-320 FVP；实板调试需 MPS4 板卡及调试连接。在项目根目录打开 PowerShell，用 `py -3.12 --version` 检查 Python。
 
 脚本依次从 `-CompilerBin`、`MLEK_AC6_BIN` / `MLEK_ATFE_BIN` 环境变量、`PATH` 和本地磁盘常见安装目录查找编译器。`-CompilerBin` 应指向包含 `armclang.exe`（AC6）或 `clang.exe`（ATFE）的 `bin` 目录。
@@ -18,27 +20,7 @@ Arm ML Embedded Evaluation Kit 提供面向 Cortex-M CPU 和 Ethos-U NPU 的机�
 此入口同时支持 `-Framework tflm`（默认）和 `-Framework pte`。
 两侧统一的转换、缓存编译、FPGA build 和打包命令见 [二维码复现指南](qrcode_reproduction.md)。
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `-Action` | `Build` | `Setup` 安装工具并准备资源；`Configure` 只配置和生成；`Build` 先配置再编译；`All` 执行全部步骤。首次使用先执行 Setup。 |
-| `-Framework` | `tflm` | `tflm` 或 `pte`；`executorch` 是 `pte` 的别名。PTE 支持 ATFE/GNU，TFLM 支持 AC6/ATFE。 |
-| `-BuildType` | `Debug` | `Debug`、`Release`、`RelWithDebInfo` 或 `MinSizeRel`。 |
-| `-CacheSizeKiB` | 不覆盖 | NPU cache 容量，单位 KiB；须与已编译模型一致。 |
-| `-TimingAdapterConfig` | 不覆盖 | TA 配置名，映射到 `TA_CONFIG_FILE`。 |
-| `-PmuGroup` | 不覆盖 | PMU 组，例如 `BW`。 |
-| `-Toolchain` | `AC6` | `AC6` 或 `ATFE`。两种编译器使用不同构建目录。 |
-| `-Target` | `FPGA` | `FPGA` 为 MPS4 SSE-320 实板；`FVP` 为 SSE-320 虚拟平台。 |
-| `-UseCase` | `img_class` | 应用用例，传给 CMake 的 `USE_CASE_BUILD`；Setup 按此用例准备资源。 |
-| `-CompilerBin` | 自动查找 | 编译器 `bin` 目录；Setup 不需要交叉编译器。 |
-| `-ModelPath` | 用例默认模型 | `.tflite` 路径，映射到 `<UseCase>_MODEL_PATH`。 |
-| `-InputPath` | 用例默认输入 | 样本文件或目录，映射到 `<UseCase>_FILE_PATH`。 |
-| `-LabelsPath` | 用例默认标签 | 标签文件，映射到 `<UseCase>_LABELS_YAML_FILE`。 |
-| `-ImageSize` | 不覆盖 | 图像尺寸，允许 1–4096；映射到 `<UseCase>_IMAGE_SIZE`。 |
-| `-NumClasses` | 不覆盖 | 类别数，允许 1–1000；映射到 `<UseCase>_NUM_CLASSES`。 |
-| `-ActivationBufferSize` | 不覆盖 | 激活区大小，传给 `<UseCase>_ACTIVATION_BUF_SZ`。 |
-| `-BuildDirectory` | 按用例/框架/工具链/目标/内存/缓存/构建类型/PMU 分层 | 构建目录；相对路径从项目根目录解析。完成后保存 `build-info.json`。 |
-| `-CMakeArgs` | 空 | 额外 `-DNAME=value` 定义；可配置 TA、FVP 测试及 Pose PMU。框架、平台和工具链由命名参数控制。 |
-| `-Jobs` | `4` | Setup 下载及编译并行数，允许 1–128。 |
+完整的参数、默认值和双平台示例见 [Windows 构建参数手册](windows_build_options.md#firmware)。
 
 TFLM 路线选择 `windows-ac6-mps4`、`windows-atfe-mps4`、`windows-ac6-fvp` 或 `windows-atfe-fvp` 预设。预设固定 `TARGET_PLATFORM=mps4`、`TARGET_SUBSYSTEM=sse-320`、`ML_FRAMEWORK=tflm`，默认 `CMAKE_BUILD_TYPE=Debug`。`FPGA` 设置 `FPGA_PLATFORM_SSE_320=ON`，`FVP` 设置为 `OFF`。使用 `-BuildType Release` 构建 Release；旧的 `-CMakeArgs` 覆盖仍可使用。Debug 构建的性能不代表 Release 性能。
 

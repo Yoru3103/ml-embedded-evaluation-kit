@@ -9,16 +9,17 @@ param(
     [Parameter(ParameterSetName='Camera')][ValidateRange(0, 32)][int]$CameraIndex = 0,
     [Parameter(ParameterSetName='Camera')][ValidateSet('auto', 'dshow', 'msmf')]
     [string]$CameraBackend = 'dshow',
-    [ValidateSet('qrcode', 'hand-pose')][string]$Demo = 'qrcode',
+    [ValidateSet('qrcode', 'hand-pose', 'img-class')][string]$Demo = 'qrcode',
     [ValidateSet('square', 'letterbox')][string]$CaptureFraming = 'letterbox',
     [string]$BuildDirectory = 'build/fvp-qrcode/dedicated-384k',
     [string]$Python = 'resources_downloaded/windows-executorch/env/Scripts/python.exe',
     [string]$FvpExecutable = 'C:/Program Files/Arm/FVP_Corstone_SSE-320/models/Win64_VC2019/FVP_Corstone_SSE-320.exe',
     [switch]$Headless,
+    [switch]$Fast,
     [ValidateRange(0, 86400)][int]$SmokeTimeoutSeconds = 0
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 . (Join-Path $PSScriptRoot 'fvp-audio-process-tools.ps1')
 function Resolve-QrRunPath {
     param([string]$Path)
@@ -27,15 +28,23 @@ function Resolve-QrRunPath {
 }
 $BuildDirectory = Resolve-QrRunPath $BuildDirectory
 $FvpExecutable = Resolve-QrRunPath $FvpExecutable
-$useCase = if ($Demo -eq 'hand-pose') { 'yolov8_pose' } else { 'qrcode' }
-$marker = if ($Demo -eq 'hand-pose') { 'HAND_POSE' } else { 'QRCODE' }
+$useCase = @{ 'hand-pose'='yolov8_pose'; 'qrcode'='qrcode'; 'img-class'='img_class' }[$Demo]
+$marker = $Demo.ToUpperInvariant().Replace('-', '_')
+$inputSetting = if ($Demo -eq 'img-class') { 'img_class_SEMIHOST_INPUT=ON' }
+    else { "${useCase}_INPUT_MODE=SEMIHOST" }
 $cache = Get-Content -LiteralPath (Join-Path $BuildDirectory 'CMakeCache.txt')
-foreach ($setting in @("${useCase}_INPUT_MODE=SEMIHOST", 'SEMIHOSTING_ENABLED=ON',
+$fastFirmware = $cache -match '^ETHOS_U_NPU_TIMING_ADAPTER_ENABLED:[^=]+=(OFF|FALSE|0)$'
+if ($Fast -and -not $fastFirmware) {
+    throw '-Fast requires firmware built with the timing adapter disabled.'
+}
+$timing = if ($Demo -eq 'img-class' -and -not $fastFirmware) { 'ON' } else { 'OFF' }
+foreach ($setting in @($inputSetting, 'SEMIHOSTING_ENABLED=ON',
         'TARGET_PLATFORM=mps4', 'TARGET_SUBSYSTEM=sse-320', 'FPGA_PLATFORM_SSE_320=OFF',
         'MPS4_DISPLAY_ENABLED=ON', 'ETHOS_U_NPU_ID=U85', 'ETHOS_U_NPU_CONFIG_ID=Z1024',
-        'ETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF')) {
+        "ETHOS_U_NPU_TIMING_ADAPTER_ENABLED=$timing")) {
     $key, $value = $setting.Split('=')
-    if (-not ($cache -match "^${key}:[^=]+=$value`$")) { throw "Expected $Demo setting: $setting" }
+    $expected = if ($value -eq 'OFF') { '(OFF|FALSE|0)' } else { [regex]::Escape($value) }
+    if (-not ($cache -match "^${key}:[^=]+=$expected`$")) { throw "Expected $Demo setting: $setting" }
 }
 $firmware = Resolve-QrRunPath (Join-Path $BuildDirectory "bin/mlek_$useCase.axf")
 if ($Camera -and $SmokeTimeoutSeconds -gt 0) {
@@ -53,7 +62,7 @@ try {
     $lock = [IO.File]::Open((Join-Path $BuildDirectory 'demo.lock'), [IO.FileMode]::OpenOrCreate,
         [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     [Mlek.FvpAudioConsole]::Start()
-    if ($Camera) {
+    if ($Camera -or $Demo -eq 'img-class') {
         $inputDirectory = Join-Path $BuildDirectory 'demo-input'
         New-Item -ItemType Directory -Force -Path $inputDirectory | Out-Null
         # Wait for an explicit capture; never replay a previous run's image.
@@ -63,14 +72,14 @@ try {
         $sender = if ($Demo -eq 'hand-pose') { 'send-hand-pose-image.ps1' } else { 'send-qrcode-image.ps1' }
         $sendOptions = @{ ImagePath=$ImagePath; BuildDirectory=$BuildDirectory; Python=$Python }
         if ($Demo -eq 'hand-pose') { $sendOptions.Framing = $CaptureFraming }
-        & (Join-Path $PSScriptRoot $sender) @sendOptions
+        & (Join-Path $PSScriptRoot "../$sender") @sendOptions
     }
     $arguments = @('-a', $firmware, '-C', 'mps4_board.subsystem.ethosu.num_macs=1024',
-        '-C', 'mps4_board.subsystem.ethosu.extra_args=--fast',
         '-C', 'mps4_board.subsystem.cpu0.semihosting-enable=1',
         '-C', 'mps4_board.visualisation.disable-visualisation=1',
         '-C', "vis_hdlcd.disable_visualisation=$(if ($Headless) {1} else {0})",
         '-C', 'mps4_board.uart0.shutdown_on_eot=0')
+    if ($timing -eq 'OFF') { $arguments += @('-C', 'mps4_board.subsystem.ethosu.extra_args=--fast') }
     foreach ($uart in @(0, 1, 2, 5)) {
         $arguments += @('-C', "mps4_board.telnetterminal$uart.start_telnet=0")
     }
@@ -80,20 +89,26 @@ try {
     $quoted = $arguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }
     $log = Join-Path $BuildDirectory "$Demo-fvp.log"
     $fvp = Start-Process -FilePath $FvpExecutable -ArgumentList $quoted -PassThru `
-        -WindowStyle Hidden -WorkingDirectory (Join-Path $BuildDirectory 'demo-input') `
+        -NoNewWindow -WorkingDirectory (Join-Path $BuildDirectory 'demo-input') `
         -RedirectStandardOutput $log `
         -RedirectStandardError (Join-Path $BuildDirectory "$Demo-fvp.err.log")
     $null = $fvp.Handle
     $stream = [IO.File]::Open($log, [IO.FileMode]::Open, [IO.FileAccess]::Read,
         [IO.FileShare]::ReadWrite)
     $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::UTF8)
+    if ($Demo -eq 'img-class' -and -not $Camera) {
+        & $Python (Join-Path $repoRoot 'scripts/py/qrcode_camera_demo.py') --demo img-class `
+            --build-directory $BuildDirectory --framing $CaptureFraming `
+            --image (Resolve-QrRunPath $ImagePath)
+        if ($LASTEXITCODE -ne 0) { throw 'img_class image preparation failed.' }
+    }
     if ($Camera) {
         $cameraArguments = @((Join-Path $repoRoot 'scripts/py/qrcode_camera_demo.py'),
             '--build-directory', $BuildDirectory, '--camera-index', "$CameraIndex",
             '--backend', $CameraBackend, '--demo', $Demo, '--framing', $CaptureFraming)
         $quotedCamera = $cameraArguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }
         $cameraProcess = Start-Process -FilePath $Python -ArgumentList $quotedCamera -PassThru `
-            -WindowStyle Hidden -WorkingDirectory $repoRoot `
+            -NoNewWindow -WorkingDirectory $repoRoot `
             -RedirectStandardOutput (Join-Path $BuildDirectory "$Demo-camera.log") `
             -RedirectStandardError (Join-Path $BuildDirectory "$Demo-camera.err.log")
         $null = $cameraProcess.Handle
@@ -102,9 +117,13 @@ try {
     $tail = ''
     $deadline = [DateTime]::UtcNow.AddSeconds($SmokeTimeoutSeconds)
     if ($Demo -eq 'qrcode') { Write-Host 'QR/barcode detection only; no encoded-content decoding.' }
-    else { Write-Host 'Hand pose: RGB image, 21 keypoints and 20 skeleton edges.' }
+    elseif ($Demo -eq 'hand-pose') {
+        Write-Host 'Hand pose: RGB image, 21 keypoints and 20 skeleton edges.'
+    }
     Write-Host 'Press Ctrl+C or Q in this terminal to stop.'
-    if (-not $Camera) { Write-Host 'Send another image from a second terminal.' }
+    if (-not $Camera -and $Demo -ne 'img-class') {
+        Write-Host 'Send another image from a second terminal.'
+    }
     while (-not (Test-FvpAudioStopRequested)) {
         $chunk = $reader.ReadToEnd()
         if ($chunk) {

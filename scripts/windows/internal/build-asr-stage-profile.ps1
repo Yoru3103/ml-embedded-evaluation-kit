@@ -7,7 +7,7 @@ Build optional wav2letter stage profiling from a caller-supplied TFLite model.
 Reuses the standard Windows build environment. No local reports or previously
 extracted build dependencies are required. Use -Package to create an FPGA ZIP.
 .EXAMPLE
-./scripts/windows/build-asr-stage-profile.ps1 -ModelPath model.tflite -MemoryMode Dedicated_Sram
+./scripts/windows/build.ps1 -Profile AsrStageProfile -ModelPath model.tflite -MemoryMode Dedicated_Sram
 #>
 [CmdletBinding()]
 param(
@@ -27,7 +27,7 @@ param(
     [switch]$Package
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if ($Package -and ($Target -ne 'FPGA' -or $Action -ne 'Build')) {
     throw '-Package requires -Target FPGA -Action Build.'
 }
@@ -50,7 +50,7 @@ try {
             '-DASR_ET_STAGE_PROFILING=OFF') + $CMakeArgs
     }
     if ($MemoryMode -eq 'Dedicated_Sram') { $options.CacheSizeKiB = $CacheSizeKiB }
-    & (Join-Path $PSScriptRoot 'build.ps1') @options
+    & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options
     $flag = if ($TimingMode -eq 'Simple') {'ASR_SIMPLE_STAGE_PROFILING'} else {'ASR_STAGE_PROFILING'}
     if (-not (Select-String -LiteralPath "$BuildDirectory/CMakeCache.txt" `
             -Pattern "^${flag}:BOOL=ON$" -Quiet)) {
@@ -70,7 +70,7 @@ try {
         New-Item -ItemType Directory -Force -Path $PackageDirectory | Out-Null
         Copy-Item -LiteralPath 'docs/sections/wav2letter_stage_timing.md' `
             -Destination (Join-Path $PackageDirectory 'TIMING_GUIDE.md')
-        & (Join-Path $PSScriptRoot 'package-fpga.ps1') -BuildDirectory $BuildDirectory `
+        & (Join-Path $PSScriptRoot '../package-fpga.ps1') -BuildDirectory $BuildDirectory `
             -CompilerBin $compiler -OutputDirectory $PackageDirectory
     }
 } finally {

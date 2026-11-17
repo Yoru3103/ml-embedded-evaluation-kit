@@ -52,6 +52,17 @@ USER_OPTION(${use_case}_IMAGE_SIZE "Square image size in pixels. Images will be 
     224
     STRING)
 
+USER_OPTION(${use_case}_SEMIHOST_INPUT "Read RGB capture requests from the FVP host" OFF BOOL)
+if (${${use_case}_SEMIHOST_INPUT})
+    if (NOT TARGET_PLATFORM STREQUAL "mps4" OR NOT TARGET_SUBSYSTEM STREQUAL "sse-320" OR
+        FPGA_PLATFORM_SSE_320 OR NOT SEMIHOSTING_ENABLED OR FVP_VSI_ENABLED OR
+        ${${use_case}_BUTTON_CAPTURE})
+        message(FATAL_ERROR "img_class_SEMIHOST_INPUT requires SSE-320 FVP with semihosting")
+    endif()
+    list(APPEND ${use_case}_COMPILE_DEFS IMG_CLASS_SEMIHOST_INPUT
+        "IMG_CLASS_INPUT_SIZE=${${use_case}_IMAGE_SIZE}")
+endif()
+
 if ("${ML_FRAMEWORK}" STREQUAL "${ML_FRAMEWORK_TFLM}")
     set(DEFAULT_ACTIVATION_BUF_SZ  0x00200000)
     set(LABELS_TXT_FILE ${MLEK_ROOT}/resources/${use_case}/labels/labels_mobilenet_v2_1.0_224.txt)

@@ -36,10 +36,27 @@ Both firmware configurations target SSE-320 FVP, U85 Z1024, Dedicated SRAM with 
 256 KiB NPU cache, LCD enabled, semihosting disabled, and timing adapters disabled.
 The runner uses functional NPU fast mode; its timings are not FPGA performance results.
 
-## Existing environment
+## Setup and models
 
-Run PowerShell commands from the repository root. The build wrapper reuses the existing
-Windows environments and model resources without setting them up again:
+Follow the [native Windows prerequisites](../windows.md) and run the
+following from the repository root to prepare the ExecuTorch build environment:
+
+```powershell
+.\scripts\windows\build.ps1 -Framework pte -Action Setup
+```
+
+Supply an external, compiled U85-1024 Dedicated SRAM 256 KiB PTE that matches the
+selected use case. Use `-ModelPath` to pass its location or put it in the profile's
+default location:
+
+| Use case | Default model |
+| --- | --- |
+| `kws_zh` | `resources_downloaded/kws_zh/pte_Dedicated_Sram_256k/wekws_dstcn_u85.pte` |
+| `asr` | `resources_downloaded/asr/et151-u85-1024-dedicated-256k/conformer_fp32_cln_wer_6_47_arm_delegate_ethos-u85-1024_Dedicated_Sram.pte` |
+
+The required input and output layouts are documented in the
+[Chinese KWS](../../use_cases/kws_zh.md) and [English ASR](../../use_cases/asr.md) use cases.
+For a fresh setup of the Chinese Zipformer demo, see [Chinese ASR](asr_zh.md).
 
 | Component | Location |
 | --- | --- |
@@ -59,8 +76,8 @@ Do not use Python 3.12 or 3.14 extensions in the embedded Python 3.9 interpreter
 ## Build
 
 ```powershell
-./scripts/windows/build-fvp-audio-demo.ps1 -UseCase kws_zh -Jobs 4
-./scripts/windows/build-fvp-audio-demo.ps1 -UseCase asr -Jobs 4
+./scripts/windows/build.ps1 -Profile AudioDemo -UseCase kws_zh -Jobs 4
+./scripts/windows/build.ps1 -Profile AudioDemo -UseCase asr -Jobs 4
 ```
 
 The separate output directories are `build/fvp-audio/kws_zh` and `build/fvp-audio/asr`.
@@ -70,11 +87,12 @@ and `-BuildDirectory` for a separate output directory. Existing unrelated builds
 `-InputMode STATIC` selects the existing embedded sample path in a separate `-static` directory.
 The default input mode is `VSI`; it does not enable the camera-oriented `FVP_VSI_ENABLED` option.
 
-ASR microphone sentence detection can be tuned with `-VadRms 800 -SilenceMs 500`.
+ASR microphone sentence detection can be tuned with `-VadRms`, `-PreRollMs` and
+`-SilenceMs`. The default build uses `-VadRms 800 -PreRollMs 600 -SilenceMs 1000`.
 These ASR-only options set `asr_VSI_VAD_RMS` (1–32767 PCM RMS units) and
 `asr_VSI_SILENCE_MS` (20–5000 milliseconds). Raise the RMS threshold when ambient noise
 prevents sentence termination. The host does not perform sentence detection.
-ASR uses energy VAD with 200 milliseconds of pre-roll and a default 500-millisecond
+ASR uses energy VAD with 600 milliseconds of pre-roll and a default 1000-millisecond
 silence endpoint. It requires 120 milliseconds of consecutive speech to start, uses
 half the starting RMS threshold to maintain an active capture, and ignores utterances
 with less than 250 milliseconds of voiced samples. Status changes and empty results
@@ -84,15 +102,20 @@ tokens, and splits at the 30-second maximum utterance length.
 ## Run
 
 ```powershell
-./scripts/windows/run-fvp-audio-demo.ps1 -UseCase kws_zh `
+./scripts/windows/run-fvp.ps1 -Profile AudioDemo -UseCase kws_zh `
     -Wav resources/kws_zh/samples/01_hi_xiaowen.wav
-./scripts/windows/run-fvp-audio-demo.ps1 -UseCase asr `
+./scripts/windows/run-fvp.ps1 -Profile AudioDemo -UseCase asr `
     -Wav resources/asr/samples/another_door.wav
-./scripts/windows/run-fvp-audio-demo.ps1 -UseCase asr -Microphone -Device 1 `
+./scripts/windows/run-fvp.ps1 -Profile AudioDemo -UseCase asr -Microphone -Device 1 `
     -QueueMs 30000 -Duration 30
 ```
 
-Microphone input requires `sounddevice` in the selected host Python environment.
+Install `sounddevice` in the selected host Python environment for microphone input:
+
+```powershell
+.\resources_downloaded\windows-executorch\env\Scripts\python.exe -m pip install sounddevice
+```
+
 Enumerate devices before selecting an index:
 
 ```powershell
@@ -126,7 +149,7 @@ there is no blocking foreground FVP invocation. Logs are kept even in interactiv
 For bounded smoke tests, suppress the LCD window while retaining firmware display support:
 
 ```powershell
-./scripts/windows/run-fvp-audio-demo.ps1 -UseCase kws_zh `
+./scripts/windows/run-fvp.ps1 -Profile AudioDemo -UseCase kws_zh `
     -Wav resources/kws_zh/samples/01_hi_xiaowen.wav -Headless -SmokeTimeoutSeconds 120
 ```
 

@@ -64,7 +64,7 @@ class VideoClient:
                     break
                 else:
                     self.conn = None
-            except Exception:
+            except (OSError, EOFError) as err:
                 self.conn = None
                 if _ == 0 :
                     logger.error(
@@ -207,7 +207,7 @@ def init(address : tuple[str, int], authkey: str):
 
     server_address = (
         environ.get("VSI_VIDEO_HOST", "127.0.0.1"),
-        6000,
+        int(environ.get("VSI_VIDEO_PORT", "6000")),
     )
 
     # logger.info("Connecting to video server: %s", server_address)

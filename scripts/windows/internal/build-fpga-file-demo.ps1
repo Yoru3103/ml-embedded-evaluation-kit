@@ -13,7 +13,7 @@ param(
     [ValidateRange(1,128)][int]$Jobs = 4
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 $case = if ($UseCase -eq 'hand-pose') { 'yolov8_pose' } else { $UseCase }
 if (-not $BuildDirectory) { $BuildDirectory = "build/$($Target.ToLowerInvariant())-file/$UseCase" }
 $models = @{
@@ -66,5 +66,5 @@ switch ($UseCase) {
     }
 }
 Push-Location $repoRoot
-try { & (Join-Path $PSScriptRoot 'build.ps1') @options }
+try { & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options }
 finally { Pop-Location }

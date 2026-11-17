@@ -12,13 +12,16 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 
 ## 启动
 
-从仓库根目录运行 PowerShell，首次构建：
+按 [Windows 指南](../windows.md) 准备工具。从仓库根目录启动 PowerShell，
+先安装 ExecuTorch 构建环境，再构建：
 
 ```powershell
-.\scripts\windows\build-hand-pose-fvp-demo.ps1
+.\scripts\windows\build.ps1 -Framework pte -Action Setup
+.\scripts\windows\build.ps1 -Profile HandPose
 ```
 
-默认使用已有模型：
+需另行提供与以下接口匹配的 PTE。运行构建命令时，可用 `-ModelPath` 指定文件，
+也可放到默认路径：
 `resources_downloaded/yolov8_pose/hand_pose_u85-1024_ded_256KiB_mixed.pte`，
 输入 224 × 224 RGB，split 四输出、像素坐标，U85 1024 MAC、Dedicated SRAM 256 KiB。
 默认 LCD 按 1:1 显示 224 × 224 模型输入，便于观察手部关键点及连线。
@@ -27,7 +30,7 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 同一 PTE 的 FPGA 静态图片固件使用：
 
 ```powershell
-.\scripts\windows\build-hand-pose-fvp-demo.ps1 -Target FPGA
+.\scripts\windows\build.ps1 -Profile HandPose -Target FPGA
 ```
 
 产物为 `build/fpga-hand-pose/dedicated-256k/bin/mlek_yolov8_pose.axf`。
@@ -35,7 +38,7 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 启动摄像头模式（默认；也可显式加 `-Camera`）：
 
 ```powershell
-.\scripts\windows\run-hand-pose-fvp-demo.ps1
+.\scripts\windows\run-fvp.ps1 -Profile HandPose
 ```
 
 点击摄像头预览窗口使其获得焦点：
@@ -55,18 +58,18 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 同一构建目录只运行一个实例。相机编号或后端可调整：
 
 ```powershell
-.\scripts\windows\run-hand-pose-fvp-demo.ps1 -CameraIndex 1 -CameraBackend msmf
+.\scripts\windows\run-fvp.ps1 -Profile HandPose -CameraIndex 1 -CameraBackend msmf
 ```
 
 保留完整摄像头视野、恢复此前等比例补边方式：
 
 ```powershell
-.\scripts\windows\run-hand-pose-fvp-demo.ps1 -Framing letterbox
+.\scripts\windows\run-fvp.ps1 -Profile HandPose -Framing letterbox
 ```
 
 此时预览仍显示模型实际接收的 224×224 图像及补边，而不是原始宽幅画面。
 
-需要与二维码拍摄相同的 OpenCV / Pillow 环境，本机已经安装；如需补装 OpenCV：
+摄像头模式使用带 GUI 的 OpenCV，安装到启动脚本所用的 Python 环境：
 
 ```powershell
 .\resources_downloaded\windows-executorch\env\Scripts\python.exe -m pip install -r scripts/windows/requirements-qrcode-camera.txt
@@ -77,7 +80,7 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 不用摄像头，也可运行一张图片；正常模式会保持结果：
 
 ```powershell
-.\scripts\windows\run-hand-pose-fvp-demo.ps1 -ImagePath resources/yolov8_pose/samples/test03.jpg
+.\scripts\windows\run-fvp.ps1 -Profile HandPose -ImagePath resources/yolov8_pose/samples/test03.jpg
 ```
 
 另一个终端可以向同一实例发送下一张图：
@@ -89,7 +92,7 @@ LCD 保持本次结果，直到下一次拍摄开始处理。终端同时打印�
 无界面轻量检查（输出 `HAND_POSE_RESULT` 后退出）：
 
 ```powershell
-.\scripts\windows\run-hand-pose-fvp-demo.ps1 `
+.\scripts\windows\run-fvp.ps1 -Profile HandPose `
     -ImagePath resources/yolov8_pose/samples/test03.jpg -Headless -SmokeTimeoutSeconds 180
 ```
 

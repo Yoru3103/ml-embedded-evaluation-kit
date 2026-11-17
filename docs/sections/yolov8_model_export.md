@@ -353,7 +353,7 @@ raw errors and per-image score/box metrics, including those for the optional ref
 These numerical checks do not measure labeled detection accuracy.
 Reports created before the angle correction used incorrect confidence semantics;
 rerun validation to obtain current score metrics. See
-[QR-code processing review notes](qrcode_processing_fix.md) for the code locations and
+[QR-code processing and verification](qrcode_processing_optimization.md#验证与复现) for the code locations and
 real-model C++ verification command.
 
 Outputs are under `resources_downloaded/yolo_QRcode/`:

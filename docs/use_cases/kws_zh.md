@@ -79,16 +79,16 @@ resources/kws_zh/
 
 ```powershell
 # 构建两种内存模式并生成固件ZIP
-./scripts/windows/build-kws-zh.ps1 -Package
+./scripts/windows/build.ps1 -Profile KwsZh -Package
 
 # 只构建Shared
-./scripts/windows/build-kws-zh.ps1 -MemoryModes Shared_Sram -Package
+./scripts/windows/build.ps1 -Profile KwsZh -MemoryModes Shared_Sram -Package
 
 # 更换输入样本
-./scripts/windows/build-kws-zh.ps1 -InputPath C:/data/my_kws_wavs -Package
+./scripts/windows/build.ps1 -Profile KwsZh -InputPath C:/data/my_kws_wavs -Package
 ```
 
-脚本复用 `build.ps1`、`build-executorch.ps1` 和 `package-fpga.ps1`。
+`KwsZh` profile 支持为两个内存模式分别构建，也可用 `-Package` 生成 FPGA 固件包。
 构建配置为MPS4/SSE-320、FPGA、Release、PMU A、
 `ta_config_u85_sys_dram_1024`。音频选择设置为 `USE_SINGLE_INPUT=OFF`。
 
@@ -152,7 +152,7 @@ WSL原生测试编译启用AddressSanitizer和UndefinedBehaviorSanitizer。
 ## FVP与PTE参考对齐
 
 ```powershell
-./scripts/windows/build-kws-zh.ps1 -Target FVP -DumpOutput
+./scripts/windows/build.ps1 -Profile KwsZh -Target FVP -DumpOutput
 ```
 
 在Corstone-320 FVP中加载对应 `bin/mlek_kws_zh.axf`，设置U85为1024 MAC，
@@ -177,4 +177,4 @@ Dedicated 256 KiB和Shared FVP与PT2E参考的最大逐帧误差均为 `4.66e-10
 - [WakeWordDecoder](../../source/lib/mlek/use_case/kws_zh/WakeWordDecoder.cc)：平台无关后处理。
 - [MainLoop](../../source/app/use_case/kws_zh/src/MainLoop.cc)：HAL音频、EtModel、Profiler与UART。
 - [usecase.cmake](../../source/app/use_case/kws_zh/usecase.cmake)：模型/音频/标签生成和PTE算子库。
-- [Windows包装脚本](../../scripts/windows/build-kws-zh.ps1)：构建和固件打包。
+- [Windows 构建入口](../../scripts/windows/build.ps1) 使用 `-Profile KwsZh` 选择此用例。

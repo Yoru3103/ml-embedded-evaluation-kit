@@ -9,6 +9,20 @@ SPDX-License-Identifier: Apache-2.0
 输入为 NHWC `[1,256,256,1]`；三个检测头各包含 32 个 DFL 通道和 15 个类别
 logit，另一个输出包含 1,344 个角度 logit。置信度只由类别输出决定。
 
+## 原始输出接口
+
+旧 RGB ONNX 模型的原始检测头每个位置有 `4 × 16 + 15 = 79` 个通道，
+灰度 QOperator 模型有 `4 × 8 + 15 = 47` 个通道。前一部分是四组 DFL，
+后一部分是 15 个类别 logit。三个检测头之外的第四个张量存放展平后的角度
+logit，按各自的输出量化参数读取。类别与角度的计算如下：
+
+```text
+类别 = argmax(class_logits)
+置信度 = sigmoid(class_logits[类别])
+角度（弧度） = (sigmoid(angle_logit) - 0.25) × pi
+DFL bins = (检测头通道数 - 类别数) / 4
+```
+
 ## 修改位置
 
 | 文件 | 修改内容 |
@@ -127,14 +141,25 @@ DFL 的整数差乘 scale 与原来先反量化再相减的表达式，在实数
 量化输出与同一输出反量化后的 FP32 解码结果比较。
 
 ```bash
-cd /home/xx/ml-embedded-evaluation-kit
-resources_downloaded/env/bin/cmake \
-  -S tests/processing/yolov8_detection \
-  -B /tmp/qrcode-processing-tests -DCMAKE_BUILD_TYPE=Release
-resources_downloaded/env/bin/cmake --build /tmp/qrcode-processing-tests -j4
-resources_downloaded/env/bin/ctest \
-  --test-dir /tmp/qrcode-processing-tests --output-on-failure
+cmake -S tests/processing/yolov8_detection -B build/qrcode-processing-tests \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build/qrcode-processing-tests --parallel 4
+ctest --test-dir build/qrcode-processing-tests --output-on-failure
 ```
+
+在准备好 [模型导出环境](../../scripts/model_export/README.md) 后，可提供原始 ONNX
+模型以及仓库样例，用同一批真实输出交叉核对 Python 和 C++ 的类别、置信度及旋转框：
+
+```bash
+PYTHONPATH=scripts python -m model_export.tools.validate_processing \
+  --model resources_downloaded/yolo_QRcode/best.onnx \
+  --model resources_downloaded/yolo_QRcode/best_bifpn_gray_qop_int8_boardcal_20260819.onnx \
+  --samples resources/qrcode/smaples \
+  --decoder build/qrcode-processing-tests/yolov8_processing_tests \
+  --report build/qrcode-processing-tests/postprocessing_validation.json
+```
+
+这里核对的是解码与后处理。样例没有标注，检测准确率需要用带标注的验证集另测。
 
 已有的 FVP 单图构建目录可以直接增量编译，无需重新校准或运行 Vela：
 

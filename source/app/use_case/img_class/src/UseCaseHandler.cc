@@ -17,6 +17,11 @@
  */
 #include "UseCaseHandler.hpp"
 
+#if defined(IMG_CLASS_SEMIHOST_INPUT)
+#    include "../../../image_demo/include/ImageRequest.hpp"
+#    include "BufAttributes.hpp"
+#endif
+
 #include "UseCaseCommonUtils.hpp"
 #include "hal.h"
 #include "mlek/common/Classifier.hpp"
@@ -67,6 +72,37 @@ namespace app {
         info("KEY0 pressed: capturing one frame\n");
     }
 #endif /* IMG_CLASS_BUTTON_CAPTURE */
+
+#if defined(IMG_CLASS_SEMIHOST_INPUT)
+    static uint8_t s_capture[IMG_CLASS_INPUT_SIZE * IMG_CLASS_INPUT_SIZE * 3] IFM_BUF_ATTRIBUTE;
+
+    static bool ReadCapture(bool havePrevious, uint32_t previous, uint32_t& request)
+    {
+        for (;;) {
+            FILE* file = std::fopen("img-class-input.bin", "rb");
+            if (file) {
+                const auto status = image_demo::ReadRequest(file,
+                                                            IMG_CLASS_INPUT_SIZE,
+                                                            IMG_CLASS_INPUT_SIZE,
+                                                            {"ICD1", 3},
+                                                            s_capture,
+                                                            sizeof(s_capture),
+                                                            havePrevious,
+                                                            previous,
+                                                            request);
+                std::fclose(file);
+                if (status == image_demo::ReadStatus::READY) {
+                    return true;
+                }
+                if (status == image_demo::ReadStatus::ERROR) {
+                    printf_err("IMG_CLASS_ERROR invalid capture request\n");
+                    return false;
+                }
+            }
+            for (volatile uint32_t delay = 0; delay < 1000000U; ++delay) {}
+        }
+    }
+#endif
 
     /* Image classification inference handler. */
     bool ClassifyImageHandler(ApplicationContext& ctx)
@@ -145,6 +181,15 @@ namespace app {
                                 ctx.Get<ImgClassClassifier&>("classifier"),
                                 ctx.Get<std::vector<std::string>&>("labels"),
                                 results);
+#if defined(IMG_CLASS_SEMIHOST_INPUT)
+        if (nRows != IMG_CLASS_INPUT_SIZE || nCols != IMG_CLASS_INPUT_SIZE) {
+            printf_err("IMG_CLASS_ERROR capture size differs from model input\n");
+            return false;
+        }
+        uint32_t previous = 0;
+        bool havePrevious = false;
+        info("IMG_CLASS_READY width=%" PRIu32 " height=%" PRIu32 "\n", nCols, nRows);
+#else
         if (!hal_camera_init()) {
             printf_err("Failed to initialise camera.\n");
             return false;
@@ -155,29 +200,39 @@ namespace app {
             printf_err("Failed to configure camera.\n");
             return false;
         }
+#endif
 
         while (true) {
-#if defined(IMG_CLASS_BUTTON_CAPTURE)
+#if defined(IMG_CLASS_SEMIHOST_INPUT)
+            uint32_t request = 0;
+            if (!ReadCapture(havePrevious, previous, request)) {
+                return false;
+            }
+            previous                         = request;
+            havePrevious                     = true;
+            const uint8_t* imgSrc            = s_capture;
+            const uint32_t capturedFrameSize = sizeof(s_capture);
+#else
+#    if defined(IMG_CLASS_BUTTON_CAPTURE)
             WaitForCaptureButton();
-#elif defined(INTERACTIVE_MODE)
+#    elif defined(INTERACTIVE_MODE)
             AwaitUserInput(); // Wait for user input before moving forward.
-#endif /* IMG_CLASS_BUTTON_CAPTURE / INTERACTIVE_MODE */
+#    endif
 
-            hal_display_clear(COLOR_BLACK);
             if (!hal_camera_start()) {
                 printf_err("Failed to start camera.\n");
                 return false;
             }
-
-            /* Strings for presentation/logging. */
-            std::string str_inf{"Running inference... "};
 
             uint32_t capturedFrameSize = 0;
             const uint8_t* imgSrc      = hal_camera_get_captured_frame(&capturedFrameSize);
             if (!imgSrc || !capturedFrameSize) {
                 break;
             }
+#endif
 
+            hal_display_clear(COLOR_BLACK);
+            std::string str_inf{"Running inference... "};
             /* Display this image on the LCD. */
             hal_display_show_image(imgSrc,
                                    nCols,
@@ -227,7 +282,11 @@ namespace app {
             }
 
             profiler.PrintProfilingResult();
+#if defined(IMG_CLASS_SEMIHOST_INPUT)
+            info("IMG_CLASS_RESULT id=%" PRIu32 " count=%zu\n", request, results.size());
+#else
             hal_camera_stop();
+#endif
         }
 
         return true;

@@ -78,7 +78,7 @@ Other than the obvious link between the linker script and the target profile des
 CMake files, there are other parameters linked to what the reserved space for activation
 buffers is. These are:
 
-- The file [npu_config.py](../../scripts/py/mlek_tools/setup/npu_config.py) contains a
+- The file [optimizer.py](../../scripts/py/mlek_tools/config/optimizer.py) contains a
   parameter called `_DEFAULT_SHARED_SRAM_ARENA_SIZE`:
 
   ```python

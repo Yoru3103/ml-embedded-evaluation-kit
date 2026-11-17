@@ -10,7 +10,7 @@ param(
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 Push-Location $repoRoot
 try {
     $buildPath = (Resolve-Path -LiteralPath $BuildDirectory).ProviderPath
@@ -21,7 +21,7 @@ try {
             'SEMIHOSTING_ENABLED=ON', 'noise_reduction_SAVE_WAV=ON')) {
         $key, $value = $setting.Split('=')
         if (-not ($cache -match "^${key}:[^=]+=$value`$")) {
-            throw "Expected build setting $setting. Run build-noise-reduction-fvp-demo.ps1."
+            throw "Expected build setting $setting. Run build.ps1 -Profile NoiseReduction."
         }
     }
     if (-not $OutputDirectory) {

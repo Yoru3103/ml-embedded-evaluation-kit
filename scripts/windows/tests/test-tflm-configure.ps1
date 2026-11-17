@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$CMake)
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../windows-tflm-configure.ps1')
+. (Join-Path $PSScriptRoot '../internal/windows-tflm-configure.ps1')
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 $testRoot = Join-Path $repoRoot ('build/tflm-configure-tests/' + [Guid]::NewGuid().ToString('N'))
 $project = Join-Path $testRoot 'project'

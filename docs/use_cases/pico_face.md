@@ -16,7 +16,7 @@ then the [DiT authors' project page](https://www.wpeebles.com/DiT).
 Pico-face uses rectified-flow velocity prediction and Euler integration rather
 than the traditional noise-prediction sampler used in some introductory lessons.
 
-## Reproduce on this Windows workstation
+## Build and run on Windows
 
 Run from the MLEK root. The existing sibling checkout supplies the prepared
 export Python environment and checkpoint files. It is read only during export;
@@ -35,18 +35,18 @@ a Windows abnormal exit after simulation; the runner does not ignore that exit.
 
 ```powershell
 # Export once: a16w8 DiT, a8w8 decoder, 16 calibration trajectories.
-.\scripts\windows\pico-face.ps1 -Action Export
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Export
 
 # Build the FVP firmware; no LCD initialization or framebuffer accesses.
-.\scripts\windows\pico-face.ps1 -Action Build `
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build `
     -CompilerBin 'C:\Program Files\Arm\Development Studio 2026.0-1\sw\atfe-pro22.1.0\bin'
 
 # Generate seed 3 / four steps / class 1 / guidance 4, save RGB and PNG.
-.\scripts\windows\pico-face.ps1 -Action Run
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace
 ```
 
-`-Action All` performs all three stages. Once exported, routine firmware builds
-do not export again. `-Toolchain GNU` selects the existing GNU toolchain path;
+After exporting, build with the same model variant. `-Toolchain GNU` selects
+the GNU toolchain path;
 the validation reported here uses ATFE 22.1.0, not GNU. Override `-ExportPython`, `-Checkpoints`,
 `-CompilerBin`, `-BuildDirectory` or `-FvpExecutable` for another workstation.
 The checkpoint directory must contain `m3_long_cfg/{dit_qat.pt,vae_final.pt,latent_stats.npz}`.
@@ -54,7 +54,7 @@ The export environment needs the Arm backend dependencies used by the pinned
 CMSIS-ExecuTorch 1.5.1 example (including TOSA tools and Vela).
 
 Set the firmware defaults with `-Seed`, `-Steps` (1/2/4/8), `-ClassId` (0..3 or
-unconditional 4) and `-Guidance` on **Build** or **All**. FVP **Run -Preview**
+unconditional 4) and `-Guidance` on **Build**. The FVP launcher with `-Preview`
 also accepts runtime `-Seed` and `-ClassId` overrides.
 Default output directory:
 
@@ -195,11 +195,11 @@ separate PTE exported with `Shared_Sram`, without an arena-cache-size flag.
 
 ```powershell
 # Dedicated model is already available after the FVP reproduction.
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA -MemoryMode Dedicated_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA -MemoryMode Dedicated_Sram
 
 # Export Shared once, then build its FPGA firmware.
-.\scripts\windows\pico-face.ps1 -Action Export -MemoryMode Shared_Sram
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA -MemoryMode Shared_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Export -MemoryMode Shared_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA -MemoryMode Shared_Sram
 ```
 
 Both builds use ATFE by default, Release optimization, UART 115200 8N1,
@@ -257,8 +257,8 @@ use the path appropriate to the actual board. Do not substitute the FVP ELF.
 For packaging an existing successful FPGA build without rebuilding:
 
 ```powershell
-.\scripts\windows\pico-face.ps1 -Action Package -Target FPGA -MemoryMode Dedicated_Sram
-.\scripts\windows\pico-face.ps1 -Action Package -Target FPGA -MemoryMode Shared_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Package -Target FPGA -MemoryMode Dedicated_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Package -Target FPGA -MemoryMode Shared_Sram
 ```
 
 On-board success is indicated by UART `PICO_FACE_PASS`; the RGB buffer address
@@ -293,8 +293,8 @@ The physical runs confirm the corresponding runtime pool peaks shown above.
 Build with `-UartImage` to keep the final image available on the application UART:
 
 ```powershell
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA -MemoryMode Dedicated_Sram -UartImage
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA -MemoryMode Shared_Sram -UartImage
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA -MemoryMode Dedicated_Sram -UartImage
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA -MemoryMode Shared_Sram -UartImage
 ```
 
 The archives have suffix `-uart.zip`; install those versions to use the receiver.
@@ -384,7 +384,7 @@ schedule/conditioning setup. Steps can be changed at build time without exportin
 the existing PTE again:
 
 ```powershell
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA -MemoryMode Dedicated_Sram -UartImage -Steps 8
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA -MemoryMode Dedicated_Sram -UartImage -Steps 8
 ```
 
 The two native CTest targets include sampling tests and eight Python tests:
@@ -490,14 +490,14 @@ checkpoint、导出环境和生成的 PTE/参数表/manifest 均不随本次 fea
 
 ```powershell
 # 首次导出；后续只改 seed 或支持的步数时不需要重新导出。
-.\scripts\windows\pico-face.ps1 -Action Export -MemoryMode Dedicated_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Export -MemoryMode Dedicated_Sram
 
 # 构建 seed 3、4 步、class 1、guidance 4 的固件。
-.\scripts\windows\pico-face.ps1 -Action Build -Target FVP `
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FVP `
     -MemoryMode Dedicated_Sram -Seed 3 -Steps 4 -ClassId 1 -Guidance 4
 
 # 运行已经构建的固件。
-.\scripts\windows\pico-face.ps1 -Action Run -Target FVP -MemoryMode Dedicated_Sram
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace -Target FVP -MemoryMode Dedicated_Sram
 ```
 
 成功标志为 `PICO_FACE_PASS`、模拟器正常退出，并生成 49,152 字节 RGB。
@@ -518,12 +518,12 @@ FVP 用于验证功能和数值；当前 MDK FVP 的时钟寄存器读数存在�
 主机界面使用支持 Tkinter 的 Python 3，可通过 `-PreviewPython` 指定解释器。
 
 ```powershell
-.\scripts\windows\pico-face.ps1 -Action Build -Preview
-.\scripts\windows\pico-face.ps1 -Action Run -Preview
-.\scripts\windows\pico-face.ps1 -Action Run -Preview -Seed 7 -ClassId 3
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Preview
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace -Preview
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace -Preview -Seed 7 -ClassId 3
 
 # 无界面执行一轮，检查九帧、CRC 和 FVP 正常退出。
-.\scripts\windows\pico-face.ps1 -Action Run -Preview -Headless
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace -Preview -Headless
 ```
 
 `-Action Run -Preview -Seed` 可在运行时选择 0 到 4294967295 的 seed，
@@ -545,15 +545,15 @@ FVP 用于验证功能和数值；当前 MDK FVP 的时钟寄存器读数存在�
 
 ```powershell
 $variant = 'm3_decD_deep_full'
-.\scripts\windows\pico-face.ps1 -Action Export -Variant $variant
-.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Preview
-.\scripts\windows\pico-face.ps1 -Action Run -Variant $variant -Preview -Seed 3
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Export -Variant $variant
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Variant $variant -Preview
+.\scripts\windows\run-fvp.ps1 -Profile PicoFace -Variant $variant -Preview -Seed 3
 
 # 8 步主测固件，支持计时结束后通过 UART 取图。
-.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Target FPGA -Steps 8 -UartImage
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Variant $variant -Target FPGA -Steps 8 -UartImage
 
 # 4 步独立构建目录，保留两套可部署包。
-.\scripts\windows\pico-face.ps1 -Action Build -Variant $variant -Target FPGA -Steps 4 -UartImage `
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Variant $variant -Target FPGA -Steps 4 -UartImage `
     -BuildDirectory build/pico_face/quality-fpga-4steps
 ```
 
@@ -585,12 +585,12 @@ Dedicated 可以复用前面导出的模型。Shared 必须单独导出，不能
 
 ```powershell
 # Dedicated：384 KiB NPU SRAM 快速区，开启串口图片服务。
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA `
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA `
     -MemoryMode Dedicated_Sram -UartImage -Seed 3 -Steps 8 -ClassId 1 -Guidance 4
 
 # Shared：仅首次需要导出该模式的模型。
-.\scripts\windows\pico-face.ps1 -Action Export -MemoryMode Shared_Sram
-.\scripts\windows\pico-face.ps1 -Action Build -Target FPGA `
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Export -MemoryMode Shared_Sram
+.\scripts\windows\build.ps1 -Profile PicoFace -Action Build -Target FPGA `
     -MemoryMode Shared_Sram -UartImage -Seed 3 -Steps 8 -ClassId 1 -Guidance 4
 ```
 

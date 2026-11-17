@@ -14,7 +14,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($ImageSize % 32) { throw 'ImageSize must be a multiple of 32.' }
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if (-not $BuildDirectory) {
     $BuildDirectory = if ($Target -eq 'FVP') { 'build/fvp-hand-pose/dedicated-256k' }
         else { 'build/fpga-hand-pose/dedicated-256k' }
@@ -41,5 +41,5 @@ $options = @{
         '-DHDLCD_FRAME_BUFFER_BASE_ADDRESS=0x74000000')
 }
 Push-Location $repoRoot
-try { & (Join-Path $PSScriptRoot 'build.ps1') @options }
+try { & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options }
 finally { Pop-Location }

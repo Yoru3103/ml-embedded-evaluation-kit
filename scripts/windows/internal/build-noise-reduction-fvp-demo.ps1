@@ -13,7 +13,7 @@ param(
     [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 $options = @{
     Framework='tflm'; Toolchain=$Toolchain; Target='FVP'; Action=$Action
     UseCase='noise_reduction'; InputPath=$InputPath; ModelPath=$ModelPath
@@ -26,5 +26,5 @@ $options = @{
         '-DETHOS_U_NPU_TIMING_ADAPTER_ENABLED=OFF', '-DFVP_VSI_ENABLED=OFF') + $CMakeArgs
 }
 Push-Location $repoRoot
-try { & (Join-Path $PSScriptRoot 'build.ps1') @options }
+try { & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options }
 finally { Pop-Location }

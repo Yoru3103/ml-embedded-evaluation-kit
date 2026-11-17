@@ -14,7 +14,7 @@ param(
     [switch]$PlanOnly
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 Push-Location $repoRoot
 try {
     $DatasetDirectory = (Resolve-Path -LiteralPath $DatasetDirectory).ProviderPath

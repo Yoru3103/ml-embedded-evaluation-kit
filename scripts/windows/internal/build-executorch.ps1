@@ -31,7 +31,7 @@ param(
     [string[]]$CMakeArgs = @()
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 . (Join-Path $PSScriptRoot 'windows-build-options.ps1')
 if ($UseCase -notmatch '^[a-z0-9_]+$') { throw 'Select one use case per invocation.' }
 foreach ($argument in $CMakeArgs) {
@@ -121,7 +121,7 @@ try {
     }
     # Newer sources accept FLATC_EXECUTABLE directly. Keep the tracked patch
     # only for the current 1.3.1 source; never apply it to a newer dependency.
-    $hostPatch = Join-Path $PSScriptRoot 'patches/executorch-host-flatc.patch'
+    $hostPatch = Join-Path $PSScriptRoot '../patches/executorch-host-flatc.patch'
     $thirdPartyCmake = Join-Path $etSource 'third-party/CMakeLists.txt'
     $nativeHostFlatc = Select-String -LiteralPath $thirdPartyCmake `
         -Pattern 'if\(FLATC_EXECUTABLE\)' -Quiet

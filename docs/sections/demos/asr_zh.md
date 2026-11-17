@@ -8,18 +8,34 @@ SPDX-License-Identifier: Apache-2.0
 使用当前 INT8 状态 Zipformer、U85-1024、Dedicated SRAM 768 KiB。
 沿用已有模型及数值表现；替换兼容 PTE 后重新构建即可。
 
+## 环境与模型
+
+按 [Windows 指南](../windows.md) 准备工具，并下载
+[Zipformer PTE 与输入资料](https://github.com/Yoru3103/ml-embedded-evaluation-kit/releases/download/model-resourse/asr-zh-zipformer-u85-dedicated-768k-int8-inputs.zip)。
+把压缩包解压到仓库根目录。它会在 `resources_downloaded/asr_zh/int8-state-768k/`
+提供 `zipformer_small_ctc_zh_u85_1024_dedicated_768k_int8_state.pte` 和配套的
+`StateQuantization.hpp`。如使用其他目录，在构建命令中添加 `-ModelPath`，并使头文件
+与 PTE 位于同一目录。
+
+```powershell
+.\scripts\windows\build.ps1 -Framework pte -Action Setup
+```
+
+VSI 启动所需的 FVP Python 3.9 扩展与 Windows 麦克风环境见 [音频配置](audio.md#setup-and-models)。
+用麦克风前按 [音频运行说明](audio.md#run) 安装 `sounddevice`。
+
 ## FVP：WAV、按键录音或自动分句
 
 ```powershell
-.\scripts\windows\build-fvp-audio-demo.ps1 -UseCase asr_zh
-.\scripts\windows\run-fvp-audio-demo.ps1 -UseCase asr_zh `
+.\scripts\windows\build.ps1 -Profile AudioDemo -UseCase asr_zh
+.\scripts\windows\run-fvp.ps1 -Profile AudioDemo -UseCase asr_zh `
     -Wav resources/asr_zh/samples/demo.wav
 ```
 
 按键录音：
 
 ```powershell
-.\scripts\windows\run-fvp-audio-demo.ps1 -UseCase asr_zh -Microphone
+.\scripts\windows\run-fvp.ps1 -Profile AudioDemo -UseCase asr_zh -Microphone
 ```
 
 在弹出的窗口点击 **Start recording**，说完点击 **Stop / Recognize**。
@@ -29,7 +45,7 @@ SPDX-License-Identifier: Apache-2.0
 自动收音分句（可选，识别后继续收听）：
 
 ```powershell
-.\scripts\windows\run-fvp-audio-demo.ps1 -UseCase asr_zh -Microphone -AutoVad
+.\scripts\windows\run-fvp.ps1 -Profile AudioDemo -UseCase asr_zh -Microphone -AutoVad
 ```
 
 自动模式复用英文 ASR 的原始 PCM 能量检测：RMS 800 起句、400 延续，
@@ -46,7 +62,7 @@ WAV 必须为 16 kHz、单声道、PCM16，最长 30 秒。识别结果在终端
 ## FPGA：文件上传
 
 ```powershell
-.\scripts\windows\build-fpga-file-demo.ps1 -UseCase asr_zh
+.\scripts\windows\build.ps1 -Profile FpgaFileDemo -UseCase asr_zh
 .\scripts\windows\send-fpga-demo-file.ps1 -UseCase asr_zh `
     -InputPath resources/asr_zh/samples/demo.wav -Port COM5
 ```

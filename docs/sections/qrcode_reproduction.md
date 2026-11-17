@@ -51,7 +51,7 @@ PTE 固件从配置方法读取参数；TFLM 从 FlatBuffer 读取参数。
 ## 统一入口与目录
 
 Windows 固件构建统一使用 `scripts/windows/build.ps1 -Framework tflm|pte`。
-`build-executorch.ps1` 继续作为兼容入口，和 TFLM 共用目录生成及参数映射。
+两个框架共用目录生成规则和参数映射，通过 `-Framework` 选择。
 两侧均在构建前重新配置、生成模型/图片/标签源代码，再编译，并写出
 `build-info.json`（实际 CMake 配置、模型 SHA256、配置与构建命令、完成状态）。
 

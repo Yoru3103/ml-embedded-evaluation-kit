@@ -82,9 +82,10 @@ If you already have a matching Vela model, pass it as `-ModelPath`.
 
 ```powershell
 $inputWav = 'resources/noise_reduction/samples/p232_113.wav'
-.\scripts\windows\build-noise-reduction-fvp-demo.ps1 -InputPath $inputWav
-.\scripts\windows\run-noise-reduction-fvp-demo.ps1 -Headless -OutputDirectory build/rnnoise-listening
-python scripts/py/noise_reduction_report.py --noisy $inputWav `
+.\scripts\windows\build.ps1 -Profile NoiseReduction -Action Setup
+.\scripts\windows\build.ps1 -Profile NoiseReduction -InputPath $inputWav
+.\scripts\windows\run-fvp.ps1 -Profile NoiseReduction -Headless -OutputDirectory build/rnnoise-listening
+py -3.12 scripts/py/noise_reduction_report.py --noisy $inputWav `
     --denoised build/rnnoise-listening/denoised_loop0.wav `
     --output-dir build/rnnoise-listening
 Invoke-Item build/rnnoise-listening/report.html
@@ -113,19 +114,22 @@ common interval. For long recordings the self-contained HTML grows with audio le
 The dataset evaluator pairs files by sorted filename. Build the noisy test
 directory as one firmware input set so each utterance starts with a fresh
 recurrent state and exports as `denoised_loopN.wav` in the same sorted order.
-Build and FVP output together contain hundreds of megabytes of generated audio
-and artifacts for the full 824-utterance test set.
+For a full test set, `run-fvp.ps1 -Profile NoiseReductionDataset` builds and runs
+batches, then generates the report. Supply `-DatasetDirectory` and a compatible
+`-ModelPath`. Use `-Profile NoiseReductionDataset -ProfileHelp` for options.
+The following commands show how to run and score one set manually. Build and
+FVP output together can contain hundreds of megabytes of generated audio and artifacts.
 
 ```powershell
 $dataset = 'resources_downloaded/noise_reduction'
 $build = 'build/fvp-noise-reduction-voicebank'
 $out = 'build/fvp-noise-reduction-voicebank/results'
-.\scripts\windows\build-noise-reduction-fvp-demo.ps1 `
+.\scripts\windows\build.ps1 -Profile NoiseReduction `
     -InputPath "$dataset/noisy_testset_wav" `
     -ModelPath 'resources_downloaded/linux-batch/dedicated/noise_reduction/rnnoise_INT8_vela_Z1024_Dedicated_Sram.tflite' `
     -BuildDirectory $build
-.\scripts\windows\run-noise-reduction-fvp-demo.ps1 -BuildDirectory $build -Headless -Quiet -OutputDirectory $out
-python scripts/py/noise_reduction_dataset_report.py `
+.\scripts\windows\run-fvp.ps1 -Profile NoiseReduction -BuildDirectory $build -Headless -Quiet -OutputDirectory $out
+py -3.12 scripts/py/noise_reduction_dataset_report.py `
     --noisy-dir "$dataset/noisy_testset_wav" `
     --clean-dir "$dataset/clean_testset_wav" `
     --denoised-dir $out --output-dir $out/report

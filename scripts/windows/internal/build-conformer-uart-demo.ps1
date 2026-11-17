@@ -14,7 +14,7 @@ param(
     [switch]$Package
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if ($Package -and ($Action -ne 'Build' -or $Target -ne 'FPGA')) {
     throw '-Package requires -Action Build -Target FPGA.'
 }
@@ -30,7 +30,7 @@ if ($Package) {
     New-Item -ItemType Directory -Force -Path $hostDirectory | Out-Null
     foreach ($file in @('send-asr-audio.ps1', 'asr-uart-tools.ps1', 'asr-uart-transfer.ps1',
             'asr-tcp-transport.ps1', 'asr-denoise-tools.ps1')) {
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $hostDirectory
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot "../$file") -Destination $hostDirectory
     }
     Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/py/denoise_asr_wav.py') `
         -Destination (Join-Path $hostDirectory 'denoise_asr_wav.py')

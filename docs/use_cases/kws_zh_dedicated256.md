@@ -68,7 +68,7 @@ Vela 调度保持 30 个 pass；slice、cat 和布局算子的消除、转换流
 ## 重建与上板
 
 ```powershell
-./scripts/windows/build-kws-zh.ps1 -MemoryModes Dedicated_Sram -CacheSizeKiB 256 -Package
+./scripts/windows/build.ps1 -Profile KwsZh -MemoryModes Dedicated_Sram -CacheSizeKiB 256 -Package
 ```
 
 模型：`resources_downloaded/kws_zh/pte_Dedicated_Sram_256k/wekws_dstcn_u85.pte`。
@@ -81,8 +81,8 @@ Vela 调度保持 30 个 pass；slice、cat 和布局算子的消除、转换流
 
 代码依据：
 
-- [U85 STATUS 位定义](../../dependencies/core-driver/src/ethosu_interface_u85.h)
+- [U85 STATUS 位定义](../../dependencies/core-driver/src/ethosu85_interface.h)
 - [HAL region 接口配置](../../source/hal/source/components/npu/CMakeLists.txt)
 - [ExecuTorch scratch 分配](../../dependencies/executorch/backends/arm/runtime/EthosUBackend.cpp)
-- [构建脚本](../../scripts/windows/build-kws-zh.ps1)
+- [Windows 构建入口](../../scripts/windows/build.ps1) 使用 `-Profile KwsZh`。
 - [使用指南](kws_zh.md)

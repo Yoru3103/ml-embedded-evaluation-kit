@@ -4,8 +4,11 @@
 [CmdletBinding()]
 param(
     [ValidateSet(64, 128)][int]$Context = 64,
-    [ValidateRange(1, 65532)][int]$TcpPort = 5000
+    [ValidateRange(1, 65532)][int]$TcpPort = 5000,
+    [string]$FvpExecutable = $env:FVP_PATH
 )
 $ErrorActionPreference = 'Stop'
 $build = "build/tinystories42m/fvp-demo/demo-ctx$Context"
-& (Join-Path $PSScriptRoot 'run_fvp_demo.ps1') -BuildDirectory $build -TcpPort $TcpPort
+$options = @{ BuildDirectory=$build; TcpPort=$TcpPort }
+if ($FvpExecutable) { $options.FvpExecutable = $FvpExecutable }
+& (Join-Path $PSScriptRoot 'run_fvp_demo.ps1') @options

@@ -8,10 +8,12 @@ Shared SRAM is not supported by this first version.
 
 ## Build and package
 
-From the repository root, supply the existing PTE matching the hardware and cache:
+Prepare the [Windows ExecuTorch build environment](windows_executorch.md#安装配置与构建)
+and obtain an external Conformer PTE matching the hardware and cache.
+From the repository root, pass its path when you build:
 
 ```powershell
-./scripts/windows/build-conformer-uart-demo.ps1 `
+./scripts/windows/build.ps1 -Profile ConformerUart `
     -ModelPath <dedicated-256k.pte> -Package
 ```
 
@@ -134,9 +136,9 @@ The PTE is shared with the FPGA build, but the AXF must be rebuilt for FVP. In
 Windows PowerShell at the repository root:
 
 ```powershell
-./scripts/windows/build-conformer-uart-demo.ps1 -Target FVP `
+./scripts/windows/build.ps1 -Profile ConformerUart -Target FVP `
     -ModelPath <dedicated-256k.pte>
-./scripts/windows/run-conformer-uart-fvp.ps1
+./scripts/windows/run-fvp.ps1 -Profile ConformerUart
 ```
 
 The default FVP build directory is `build/asr-uart/dedicated-256k-fvp`. The runner

@@ -8,7 +8,7 @@ The model must target U85-1024 and match MemoryMode and the dedicated cache
 budget. Shared SRAM uses the MPS4 4 MiB layout: 1 MiB method pool and 3 MiB
 scratch pool. No dated export directory or local report is required.
 .EXAMPLE
-./scripts/windows/build-conformer-stage-profile.ps1 -ModelPath model.pte -MemoryMode Shared_Sram
+./scripts/windows/build.ps1 -Profile ConformerStageProfile -ModelPath model.pte -MemoryMode Shared_Sram
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +26,7 @@ param(
     [switch]$Package
 )
 $ErrorActionPreference = 'Stop'
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if ($Package -and ($Target -ne 'FPGA' -or $Action -ne 'Build')) {
     throw '-Package requires -Target FPGA -Action Build.'
 }
@@ -66,7 +66,7 @@ try {
         if (-not $PackageDirectory) {
             $PackageDirectory = "build/board-test-packages/asr-stage/executorch-$tag"
         }
-        & (Join-Path $PSScriptRoot 'package-fpga.ps1') -BuildDirectory $BuildDirectory `
+        & (Join-Path $PSScriptRoot '../package-fpga.ps1') -BuildDirectory $BuildDirectory `
             -CompilerBin $compiler -OutputDirectory $PackageDirectory
     }
 } finally {

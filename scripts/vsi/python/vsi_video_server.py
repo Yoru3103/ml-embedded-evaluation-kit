@@ -18,12 +18,16 @@
 
 # Python VSI Video Server module
 
+from __future__ import annotations
+
 try:
     import argparse
     import ipaddress
     import logging
     import os
     from multiprocessing.connection import Listener
+    from pathlib import Path
+    from threading import Condition, Thread
 
     import cv2
     import numpy as np
@@ -59,8 +63,117 @@ MODE_IO_Msk           = 1<<0
 MODE_Input            = 0<<0
 MODE_Output           = 1<<0
 
+class CameraPreview:
+    """Keep the OpenCV window and camera on the main thread."""
+
+    WIDTH = 640
+    IMAGE_HEIGHT = 320
+    HEADER_HEIGHT = 40
+
+    def __init__(self, camera: cv2.VideoCapture, capture_on_space: bool):
+        """Prepare the preview and the frame shared with the VSI thread.
+
+        :param camera:            Open camera device.
+        :param capture_on_space:  Wait for Space before satisfying each frame request.
+        """
+        self.camera = camera
+        self.capture_on_space = capture_on_space
+        self.condition = Condition()
+        self.latest = None
+        self.selected = None
+        self.sent = None
+        self.closed = False
+
+    def get_frame(self) -> np.ndarray | None:
+        """Return the current frame or wait for a preview capture."""
+        with self.condition:
+            if not self.capture_on_space:
+                return self.latest
+            self.condition.wait_for(lambda: self.selected is not None or self.closed)
+            frame, self.selected = self.selected, None
+            return frame
+
+    def show(self, window: str) -> bool:
+        """Refresh the window and report whether the user kept it open.
+
+        :param window: Title of the OpenCV window.
+        :returns:      Whether to keep the camera running.
+        """
+        ok, frame = self.camera.read()
+        if not ok or frame is None:
+            raise RuntimeError("Failed to read from the camera")
+        with self.condition:
+            self.latest = frame
+            sent = self.sent
+
+        width = self.WIDTH
+        height = self.IMAGE_HEIGHT
+        header = self.HEADER_HEIGHT
+        panel_height = height + header
+        display = np.zeros((panel_height * 2, width, 3), dtype=np.uint8)
+        shutter = "Space to capture" if self.capture_on_space else "FVP KEY0 to capture"
+        prompt = f"Live camera - {shutter} | Q / Esc to quit"
+        sent_label = ("Last sent frame - waiting for an FVP request" if sent is None else
+                      f"Last sent frame - {sent.shape[1]} x {sent.shape[0]}")
+        self._draw_panel(display, 0, prompt, frame)
+        self._draw_panel(display, panel_height, sent_label, sent)
+
+        cv2.imshow(window, display)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord(" ") and self.capture_on_space:
+            with self.condition:
+                self.selected = frame
+                self.condition.notify()
+        return (key not in (ord("q"), 27) and
+                cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) >= 1)
+
+    def _draw_panel(self, display: np.ndarray, offset: int, label: str, image: np.ndarray | None):
+        """Draw a labeled frame centered within one panel.
+
+        :param display: Composite preview image.
+        :param offset:  First row of the panel in the preview.
+        :param label:   Text displayed above the image.
+        :param image:   Optional BGR frame.
+        """
+        width = self.WIDTH
+        height = self.IMAGE_HEIGHT
+        header = self.HEADER_HEIGHT
+        display[offset:offset + header] = (35, 35, 35)
+        cv2.putText(display, label, (12, offset + 27), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6, (240, 240, 240), 1, cv2.LINE_AA)
+        if image is None:
+            return
+
+        rows, cols = image.shape[:2]
+        scale = min(width / cols, height / rows)
+        if offset:
+            scale = min(scale, 1.0)
+        resized_width = max(1, min(width, int(cols * scale)))
+        resized_height = max(1, min(height, int(rows * scale)))
+        left = (width - resized_width) // 2
+        top = offset + header + (height - resized_height) // 2
+        display[top:top + resized_height, left:left + resized_width] = cv2.resize(
+            image, (resized_width, resized_height), interpolation=cv2.INTER_AREA)
+
+    def close(self):
+        """Wake a pending frame request and release camera and GUI resources."""
+        with self.condition:
+            self.closed = True
+            self.condition.notify()
+        self.camera.release()
+        cv2.destroyAllWindows()
+
+
 class VideoServer:
-    def __init__(self, address, authkey):
+    def __init__(self, address: tuple[str, int], authkey: str,
+                 image: Path | None = None, camera_index: int = 0):
+        """Listen for a VSI connection and configure the host input source.
+
+        :param address:         Loopback address and port for the video listener.
+        :param authkey:         Authentication key shared with the VSI client.
+        :param image:           Optional still image served on each capture.
+        :param camera_index:    Index of the OpenCV camera device.
+        """
         # Server commands
         self.SET_FILENAME     = 1
         self.STREAM_CONFIGURE = 2
@@ -78,6 +191,9 @@ class VideoServer:
         self.NV21             = 6
         # Variables
         self.listener         = Listener(address, authkey=authkey.encode('utf-8'))
+        self.image            = image
+        self.camera_index     = camera_index
+        self.preview: CameraPreview | None = None
         self.filename         = ""
         self.mode             = None
         self.active           = False
@@ -139,6 +255,19 @@ class VideoServer:
 
         return True
 
+    def _configure_default_source(self, mode: int):
+        """Select camera or display defaults when no filename has been set.
+
+        :param mode:    VSI stream mode bit field.
+        """
+        if self.filename:
+            return
+        self.video = True
+        self.mode = mode & MODE_IO_Msk
+        if self.mode == MODE_Input and self.image is not None:
+            self.video = False
+            self.filename = str(self.image)
+
     # Enable video stream
     def _enableStream(self, mode):
         if self.active:
@@ -152,19 +281,15 @@ class VideoServer:
             self.stream.release()
             self.stream = None
 
-        if self.filename == "":
-            self.video = True
-            if (mode & MODE_IO_Msk) == MODE_Input:
-                # Device mode: camera
-                self.mode = MODE_Input
-            else:
-                # Device mode: display
-                self.mode = MODE_Output
+        self._configure_default_source(mode)
 
         if self.video:
             if self.mode == MODE_Input:
                 if self.filename == "":
-                    self.stream = cv2.VideoCapture(0)
+                    if self.preview is not None:
+                        self.active = True
+                        return
+                    self.stream = cv2.VideoCapture(self.camera_index)
                     if not self.stream.isOpened():
                         logger.error("Failed to open Camera interface")
                         return
@@ -309,7 +434,10 @@ class VideoServer:
         if self.eos:
             return frame
 
-        if self.video:
+        if self.preview is not None and self.filename == "" and self.mode == MODE_Input:
+            tmp_frame = self.preview.get_frame()
+            self.eos = tmp_frame is None
+        elif self.video:
             if self.frame_ratio > 1:
                 _, tmp_frame = self.stream.read()
                 self.frame_drop += (self.frame_ratio - 1)
@@ -328,8 +456,8 @@ class VideoServer:
                 logger.debug("End of stream.")
         else:
             tmp_frame = cv2.imread(self.filename)
-            self.eos  = True
-            logger.debug("End of stream.")
+            # The launcher-provided image acts as a camera frame for every capture.
+            self.eos = tmp_frame is None or self.filename != str(self.image)
 
         if tmp_frame is not None:
             tmp_frame = self.__resizeFrame(tmp_frame, self.resolution)
@@ -374,7 +502,7 @@ class VideoServer:
         while True:
             try:
                 recv = conn.recv()
-            except EOFError:
+            except (EOFError, ConnectionResetError):
                 return
 
             cmd     = recv[0]  # Command
@@ -387,7 +515,8 @@ class VideoServer:
 
             elif cmd == self.STREAM_CONFIGURE:
                 logger.info("Stream configure called")
-                configuration_valid = self._configureStream(payload[0], payload[1], payload[2], payload[3])
+                configuration_valid = self._configureStream(
+                    payload[0], payload[1], payload[2], payload[3])
                 conn.send(configuration_valid)
 
             elif cmd == self.STREAM_ENABLE:
@@ -405,6 +534,13 @@ class VideoServer:
                 frame = self._readFrame()
                 conn.send_bytes(frame)
                 conn.send(self.eos)
+                if frame and self.preview is not None and self.color_format == self.RGB888:
+                    width, height = self.resolution
+                    pixels = np.frombuffer(frame, np.uint8).reshape(height, width, 3)
+                    sent = cv2.cvtColor(pixels, cv2.COLOR_RGB2BGR)
+                    with self.preview.condition:
+                        self.preview.sent = sent
+                print(f"VSI video sent {len(frame)} bytes", flush=True)
 
             elif cmd == self.FRAME_WRITE:
                 logger.info("Write frame called")
@@ -413,7 +549,7 @@ class VideoServer:
 
             elif cmd == self.CLOSE_SERVER:
                 logger.info("Close server connection")
-                self.stop()
+                return
 
     # Stop Video Server
     def stop(self):
@@ -449,13 +585,54 @@ def parse_arguments():
     parser_optional.add_argument("--authkey", dest="authkey",  metavar="<Auth Key>",
                                         help=f"Authorization key (default: {default_authkey})",
                                         type=str, default=default_authkey)
+    parser_optional.add_argument("--image", type=Path, help="Serve a still image on capture")
+    parser_optional.add_argument("--camera-index", type=int, default=0)
+    parser_optional.add_argument("--preview", action="store_true", help="Show the live camera")
+    parser_optional.add_argument("--capture-on-space", action="store_true",
+                                 help="Wait for Space in the live preview before sending a frame")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (args.preview and args.image) or (args.capture_on_space and not args.preview):
+        parser.error("Preview requires a live camera, and --capture-on-space requires --preview")
+
+    return args
+
+def main():
+    """Run the VSI server alongside the optional OpenCV preview."""
+    args = parse_arguments()
+    preview = None
+    server = None
+    window = "VSI camera preview"
+    try:
+        if args.preview:
+            camera = cv2.VideoCapture(args.camera_index)
+            preview = CameraPreview(camera, args.capture_on_space)
+            if not camera.isOpened():
+                raise RuntimeError(f"Cannot open camera {args.camera_index}")
+            cv2.namedWindow(window, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+            cv2.resizeWindow(
+                window, preview.WIDTH, 2 * (preview.IMAGE_HEIGHT + preview.HEADER_HEIGHT))
+            if not preview.show(window):
+                raise RuntimeError("Camera preview closed before the VSI server started")
+
+        server = VideoServer((args.ip, args.port), args.authkey, args.image, args.camera_index)
+        server.preview = preview
+        print(f"VSI video listening {args.ip}:{args.port}", flush=True)
+        if preview is None:
+            server.run()
+        else:
+            worker = Thread(target=server.run, daemon=True)
+            worker.start()
+            while worker.is_alive() and preview.show(window):
+                pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if preview is not None:
+            preview.close()
+        if server is not None:
+            server.stop()
+
 
 if __name__ == '__main__':
-    args = parse_arguments()
-    Server = VideoServer((args.ip, args.port), args.authkey)
-    try:
-        Server.run()
-    except KeyboardInterrupt:
-        Server.stop()
+    main()

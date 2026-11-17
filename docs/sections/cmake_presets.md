@@ -11,7 +11,7 @@ For further information on how to enable the use of CMake and presets in VS Code
 
 Once the presets are enabled in VS Code and the root folder of the project is opened in the editor - VS Code should automatically find the `CMakePresets.json` (or `CMakeUserPresets.json`) in the root folder and parse them accordingly.
 From that point user can switch between configurations and build the selected preset using the toolbar at the bottom of the editor:
-![VS Code build and preset toolbar](../media/VS Code_presets_toolbar.png)
+![VS Code build and preset toolbar](../media/VS%20Code_presets_toolbar.png)
 The project provides basing configuration and build presets along with one CTest test preset (for native platform only). Each configuration preset has only one build preset. All build presets have different use-cases listed as targets for user convenience.
 
 It is encouraged to create a personal `CMakeUserPreset.json` with personal user presets that are based on the provided default presets. User's preset file automatically includes the default preset file. An example of such a user preset can be find below:

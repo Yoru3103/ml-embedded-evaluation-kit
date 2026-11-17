@@ -26,11 +26,13 @@ class DemoFormat(NamedTuple):
     marker: str
     mode: str
     framing: str = "letterbox"
+    rgb_magic: bytes = b""
 
 
 FORMATS = {
     "qrcode": DemoFormat("qrcode", "qrcode", "QRCODE", "L"),
-    "hand-pose": DemoFormat("yolov8_pose", "hand-pose", "HAND_POSE", "RGB", "square"),
+    "hand-pose": DemoFormat("yolov8_pose", "hand-pose", "HAND_POSE", "RGB", "square", b"HPD1"),
+    "img-class": DemoFormat("img_class", "img-class", "IMG_CLASS", "RGB", "square", b"ICD1"),
 }
 
 
@@ -41,8 +43,8 @@ class CaptureSession:
         """Read model dimensions and open the log without loading old results.
 
         :param build:   Existing semihosted image demo build directory.
-        :param demo:    QR or hand-pose model selection.
-        :param framing: Optional field-of-view override for hand pose.
+        :param demo:    Image demo selection.
+        :param framing: Optional field-of-view override for RGB inputs.
         """
         cache = (build / "CMakeCache.txt").read_text(encoding="utf-8")
         dimensions = []
@@ -50,7 +52,7 @@ class CaptureSession:
         if framing is not None:
             self.format = self.format._replace(framing=framing)
         for axis in ("WIDTH", "HEIGHT"):
-            key = "SIZE" if demo == "hand-pose" else axis
+            key = "SIZE" if self.format.mode == "RGB" else axis
             match = re.search(rf"^{self.format.use_case}_IMAGE_{key}:[^=]+=(\d+)$",
                               cache, re.MULTILINE)
             if match is None:
@@ -71,7 +73,8 @@ class CaptureSession:
             match = re.search(rf"{self.format.marker}_RESULT id={self.pending} count=(\d+)\b",
                               self.tail)
             if match:
-                self.status = f"Detections: {match[1]} | SPACE: capture again"
+                result = "Classes" if self.format.use_case == "img_class" else "Detections"
+                self.status = f"{result}: {match[1]} | SPACE: capture again"
                 print(f"Camera result: id={self.pending} count={match[1]}", flush=True)
                 self.pending = None
 
@@ -96,9 +99,10 @@ class CaptureSession:
         image = self.prepare(frame)
         request = secrets.randbits(32)
         image.save(self.build / f"{self.format.stem}-input-preview.png")
-        encode = encode_hand_request if self.format.mode == "RGB" else encode_request
+        packet = (encode_hand_request(image, request, self.format.rgb_magic)
+                  if self.format.mode == "RGB" else encode_request(image, request))
         publish_request(self.build / f"demo-input/{self.format.stem}-input.bin",
-                        encode(image, request))
+                        packet)
         self.pending = request
         self.status = "Processing capture..."
         print(f"Camera capture: id={request}", flush=True)
@@ -110,7 +114,7 @@ class CaptureSession:
 
 
 def preview_frame(frame: np.ndarray, session: CaptureSession, cv: object) -> tuple:
-    """Magnify hand model pixels threefold, with a separate instruction strip.
+    """Magnify RGB model pixels threefold, with a separate instruction strip.
 
     :param frame:   Raw BGR frame from the camera.
     :param session: Capture settings and preprocessing.
@@ -170,7 +174,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--backend", choices=("auto", "dshow", "msmf"), default="dshow")
     parser.add_argument("--demo", choices=tuple(FORMATS), default="qrcode")
     parser.add_argument("--framing", choices=("square", "letterbox"))
+    parser.add_argument("--image", type=Path, help="Submit a single image file")
     options = parser.parse_args(argv)
+    if options.image:
+        session = None
+        try:
+            session = CaptureSession(options.build_directory, options.demo, options.framing)
+            with Image.open(options.image) as source:
+                session.submit(source)
+            return 0
+        except (OSError, ValueError) as error:
+            print(f"Image preparation failed: {error}", flush=True)
+            return 1
+        finally:
+            if session is not None:
+                session.close()
     # Keep image-file mode usable without installing the optional camera dependency.
     cv = importlib.import_module("cv2")
     camera = None

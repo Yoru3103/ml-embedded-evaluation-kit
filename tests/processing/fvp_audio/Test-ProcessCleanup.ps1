@@ -4,7 +4,7 @@
 <# Small software acceptance: cancellation state and cleanup of owned dummy processes. #>
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
-. (Join-Path $repoRoot 'scripts/windows/fvp-audio-process-tools.ps1')
+. (Join-Path $repoRoot 'scripts/windows/internal/fvp-audio-process-tools.ps1')
 $python = Join-Path $repoRoot 'resources_downloaded/windows-executorch/env/Scripts/python.exe'
 $children = @()
 try {

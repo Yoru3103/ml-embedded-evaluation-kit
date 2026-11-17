@@ -32,17 +32,18 @@ def prepare_hand_pixels(source: Image.Image, size: int, framing: str = "square")
     return prepare_pixels(oriented, size, size, "RGB")
 
 
-def encode_request(image: Image.Image, request_id: int) -> bytes:
-    """Encode packed RGB pixels with a hand-specific protocol magic.
+def encode_request(image: Image.Image, request_id: int, magic: bytes = b"HPD1") -> bytes:
+    """Encode packed RGB pixels for a semihosted image request.
 
     :param image:       Prepared RGB model image.
     :param request_id:  Unique unsigned 32-bit capture identifier.
+    :param magic:       Four-byte firmware protocol identifier.
     :returns:           Header, pixel count and CRC-protected RGB payload.
     """
-    if image.mode != "RGB" or not 0 <= request_id <= 0xFFFFFFFF:
-        raise ValueError("Expected RGB image and uint32 request ID")
+    if image.mode != "RGB" or not 0 <= request_id <= 0xFFFFFFFF or len(magic) != 4:
+        raise ValueError("Expected RGB image, uint32 request ID and four-byte magic")
     pixels = image.tobytes()
-    return HEADER.pack(b"HPD1", request_id, image.width, image.height, len(pixels),
+    return HEADER.pack(magic, request_id, image.width, image.height, len(pixels),
                        zlib.crc32(pixels)) + pixels
 
 

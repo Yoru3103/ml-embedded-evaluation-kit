@@ -39,11 +39,11 @@
 输入是已由 Vela 编译、与内存模式和 cache 匹配的模型。
 
 ```powershell
-./scripts/windows/build-asr-stage-profile.ps1 `
+./scripts/windows/build.ps1 -Profile AsrStageProfile `
     -ModelPath <dedicated-model.tflite> -MemoryMode Dedicated_Sram `
     -CacheSizeKiB 256 -TimingMode Simple -Package
 
-./scripts/windows/build-asr-stage-profile.ps1 `
+./scripts/windows/build.ps1 -Profile AsrStageProfile `
     -ModelPath <shared-model.tflite> -MemoryMode Shared_Sram `
     -TimingMode Simple -Package
 ```

@@ -5,7 +5,7 @@
 .SYNOPSIS
 Build and optionally package the fixed-window WeKWS PTE use case.
 .EXAMPLE
-./scripts/windows/build-kws-zh.ps1 -Package
+./scripts/windows/build.ps1 -Profile KwsZh -Package
 #>
 [CmdletBinding()]
 param(
@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($Package -and $Target -ne 'FPGA') { throw '-Package requires -Target FPGA.' }
 if ($BuildTag -notmatch '^[a-zA-Z0-9_-]+$') { throw 'BuildTag accepts letters, digits, _ and -.' }
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 Push-Location $repoRoot
 try {
     foreach ($mode in $MemoryModes) {
@@ -57,7 +57,7 @@ try {
         } else {
             $options.CMakeArgs += '-DETHOS_U_NPU_CACHE_SIZE=0'
         }
-        & (Join-Path $PSScriptRoot 'build.ps1') @options
+        & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options
         if ($Package) {
             . (Join-Path $PSScriptRoot 'windows-venv.ps1')
             $compiler = Resolve-WindowsToolchainBin -Toolchain ATFE -CompilerBin $CompilerBin
@@ -90,7 +90,7 @@ try {
             if (Test-Path -LiteralPath $frontendReport) {
                 Copy-Item -LiteralPath $frontendReport -Destination (Join-Path $output 'validation')
             }
-            & (Join-Path $PSScriptRoot 'package-fpga.ps1') -BuildDirectory $directory `
+            & (Join-Path $PSScriptRoot '../package-fpga.ps1') -BuildDirectory $directory `
                 -CompilerBin $compiler -OutputDirectory $output
         }
     }

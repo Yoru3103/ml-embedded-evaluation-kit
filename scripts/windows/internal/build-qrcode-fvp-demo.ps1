@@ -15,7 +15,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Width % 32 -or $Height % 32) { throw 'Width and Height must be multiples of 32.' }
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 $downscale = [Math]::Max(1, [Math]::Max([Math]::Ceiling($Width / 160.0),
     [Math]::Ceiling($Height / 192.0)))
 $options = @{
@@ -33,5 +33,5 @@ $options = @{
         '-DHDLCD_FRAME_BUFFER_BASE_ADDRESS=0x74000000')
 }
 Push-Location $repoRoot
-try { & (Join-Path $PSScriptRoot 'build.ps1') @options }
+try { & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options }
 finally { Pop-Location }

@@ -21,7 +21,7 @@ if ($UseCase -ne 'asr' -and
         $PSBoundParameters.ContainsKey('PreRollMs'))) {
     throw '-VadRms, -SilenceMs and -PreRollMs apply only to -UseCase asr.'
 }
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).ProviderPath
 if (-not $BuildDirectory) {
     $BuildDirectory = "build/fvp-audio/$UseCase"
     if ($InputMode -ne 'VSI') { $BuildDirectory += '-static' }
@@ -69,7 +69,7 @@ if ($UseCase -eq 'kws_zh') {
 }
 Push-Location $repoRoot
 try {
-    & (Join-Path $PSScriptRoot 'build.ps1') @options
+    & (Join-Path $PSScriptRoot 'build-firmware.ps1') @options
 } finally {
     Pop-Location
 }

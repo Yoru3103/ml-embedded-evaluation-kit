@@ -61,12 +61,12 @@ positions can be compared directly. The build helpers expose it as `-LogitDump`:
 
 ```powershell
 # DEMO (default)
-.\source\app\use_case\tinystories\tools\build_fpga_demo.ps1
-.\source\app\use_case\tinystories\tools\build_fvp_demo.ps1
+.\scripts\windows\build.ps1 -Profile TinyStoriesFpga
+.\scripts\windows\build.ps1 -Profile TinyStoriesFvp
 
 # TEST (fixed 10+16 regression; optional logits dump)
-.\source\app\use_case\tinystories\tools\build_test.ps1 -Target FVP -LogitDump
-.\source\app\use_case\tinystories\tools\build_test.ps1 -Target FPGA
+.\scripts\windows\build.ps1 -Profile TinyStoriesTest -Target FVP -LogitDump
+.\scripts\windows\build.ps1 -Profile TinyStoriesTest -Target FPGA
 ```
 
 Both helpers pin the 128-context PTE and accept `-ModelPath`, `-BuildDirectory`
